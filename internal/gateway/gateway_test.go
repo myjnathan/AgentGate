@@ -21,11 +21,20 @@ import (
 // testEnv spins up a gateway backed by the demo seed and a mock upstream.
 type testEnv struct {
 	srv     *httptest.Server
+	st      *store.Store
 	byoaTok string
 	mgdTok  string
 }
 
 func setup(t *testing.T) *testEnv {
+	return setupWithPolicy(t, gateway.Policy{
+		BannedWords:   seed.DemoBannedWords,
+		CustomWords:   seed.DemoCustomWords,
+		RedactForTier: map[store.Tier]bool{store.TierManaged: true},
+	})
+}
+
+func setupWithPolicy(t *testing.T, pol gateway.Policy) *testEnv {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := store.New(dir)
@@ -50,11 +59,7 @@ func setup(t *testing.T) *testEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gw := gateway.New(st, au, box, al, gateway.Policy{
-		BannedWords:   seed.DemoBannedWords,
-		CustomWords:   seed.DemoCustomWords,
-		RedactForTier: map[store.Tier]bool{store.TierManaged: true},
-	})
+	gw := gateway.New(st, au, box, al, pol)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/models", gw.Models)
 	mux.HandleFunc("POST /v1/chat/completions", gw.ChatCompletions)
@@ -81,7 +86,7 @@ func setup(t *testing.T) *testEnv {
 		}
 		return plain
 	}
-	return &testEnv{srv: srv,
+	return &testEnv{srv: srv, st: st,
 		byoaTok: mkToken("lixiaofeng", store.TierBYOA),
 		mgdTok:  mkToken("chenjing", store.TierManaged)}
 }
