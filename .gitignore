@@ -1,0 +1,6 @@
+/data/
+*.jsonl
+agentgate
+ag-setup
+*.tmp
+.DS_Store

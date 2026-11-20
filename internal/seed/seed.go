@@ -1,0 +1,85 @@
+// Package seed creates the PoC demo company "星河精密" (Xinghe
+// Precision, a fictional 120-person medical-device company) so the full
+// loop can be experienced in minutes without real enterprise data.
+package seed
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+
+	"github.com/myjnathan/agentgate/internal/auth"
+	"github.com/myjnathan/agentgate/internal/secretbox"
+	"github.com/myjnathan/agentgate/internal/store"
+)
+
+// Demo credentials (documented, demo only):
+//
+//	admin / agentgate-admin   (platform admin)
+//	lixiaofeng / demo12345    (R&D employee)
+//	chenjing / demo12345      (regulatory employee)
+func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
+	var already bool
+	st.Read(func(s *store.State) { already = len(s.Users) > 0 })
+	if already {
+		return fmt.Errorf("store already has users; refusing to seed")
+	}
+	mkUser := func(username, display, dept, role, pw string) *store.User {
+		h, _ := auth.HashPassword(pw)
+		return &store.User{ID: store.NewID("usr"), Username: username, DisplayName: display,
+			PasswordHash: h, Department: dept, Role: role}
+	}
+	admin := mkUser("admin", "系统管理员", "IT", "admin", "agentgate-admin")
+	li := mkUser("lixiaofeng", "李晓峰", "研发部", "employee", "demo12345")
+	chen := mkUser("chenjing", "陈静", "注册部", "employee", "demo12345")
+
+	keyEnc, err := box.Encrypt("mock-upstream-key")
+	if err != nil {
+		return err
+	}
+	st.WithLock(func(s *store.State) {
+		s.Users[admin.ID] = admin
+		s.Users[li.ID] = li
+		s.Users[chen.ID] = chen
+		// Public-cloud-like channel: may receive at most internal data.
+		s.Channels["ch_cloud"] = &store.Channel{
+			ID: "ch_cloud", Name: "cloud-contract (mock)", BaseURL: selfBaseURL + "/mock/v1",
+			APIKeyEnc: keyEnc, KeyMasked: secretbox.Mask("mock-upstream-key"),
+			Models: []string{"mock-eco", "mock-pro"}, MaxDataLevel: store.LevelInternal, Weight: 1,
+		}
+		// Private channel: may receive up to secret data.
+		s.Channels["ch_private"] = &store.Channel{
+			ID: "ch_private", Name: "private-onprem (mock)", BaseURL: selfBaseURL + "/mock/v1",
+			APIKeyEnc: keyEnc, KeyMasked: secretbox.Mask("mock-upstream-key"),
+			Models: []string{"mock-pro"}, MaxDataLevel: store.LevelSecret, Weight: 1,
+		}
+		s.KBDocs["kb_reimburse"] = &store.KBDoc{
+			ID: "kb_reimburse", Title: "差旅报销制度（2026 版）", Department: "财务部",
+			Level: store.LevelInternal, Version: 3,
+			Content: "差旅报销制度：市内交通每日上限 150 元；跨城出差住宿一线城市上限 600 元/晚，二线 450 元/晚。报销需在行程结束后 15 个工作日内提交，附行程单与发票。部门负责人审批后由财务在 5 个工作日内打款。",
+		}
+		s.KBDocs["kb_register"] = &store.KBDoc{
+			ID: "kb_register", Title: "二类医疗器械注册资料清单", Department: "注册部",
+			Level: store.LevelConfidential, Version: 5,
+			Content: "二类医疗器械首次注册资料清单：1) 产品技术要求；2) 检验报告（注册检验）；3) 临床评价资料；4) 产品说明书与标签样稿；5) 生产制造信息；6) 质量管理体系文件。本资料属受控文件，仅限注册部与研发部受管终端访问。内部项目代号：星河 XH-200 手术机器人辅助定位装置。",
+		}
+		s.KBDocs["kb_handbook"] = &store.KBDoc{
+			ID: "kb_handbook", Title: "员工手册（公开版）", Department: "人力部",
+			Level: store.LevelPublic, Version: 1,
+			Content: "员工手册：标准工作时间为 9:00–18:00，午休 12:00–13:00。年假按工龄计算：满 1 年 5 天，满 10 年 10 天。公司提供午餐补贴与年度体检。",
+		}
+		sum := sha256.Sum256([]byte("skill-content-v1"))
+		s.Skills["sk_reimburse_helper"] = &store.Skill{
+			ID: "sk_reimburse_helper", Name: "reimbursement-helper", Version: "1.0.0",
+			Content: "# 报销助手\n\n帮助员工按公司差旅报销制度整理报销材料，先调用 kb_search 查询最新制度再作答，并给出引用来源。",
+			Scope:   "*", Status: "published", AuthorID: admin.ID, Checksum: hex.EncodeToString(sum[:]),
+		}
+	})
+	return st.Save()
+}
+
+// CustomWords for the demo company: project code names treated as confidential.
+var DemoCustomWords = []string{"XH-200", "星河 XH-200"}
+
+// BannedWords placeholder list for the demo.
+var DemoBannedWords = []string{"test_sensitive"}
