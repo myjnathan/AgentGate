@@ -1,0 +1,19 @@
+[Unit]
+Description=AgentGate enterprise agent platform
+After=network.target
+
+[Service]
+Type=simple
+User=agentgate
+EnvironmentFile=/etc/agentgate/agentgate.env
+ExecStart=/usr/local/bin/agentgate
+Restart=on-failure
+RestartSec=3
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/agentgate
+
+[Install]
+WantedBy=multi-user.target
