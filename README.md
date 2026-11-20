@@ -1,9 +1,11 @@
 # AgentGate
 
+[![CI](https://github.com/myjnathan/AgentGate/actions/workflows/ci.yml/badge.svg)](https://github.com/myjnathan/AgentGate/actions/workflows/ci.yml)
+
 **员工的 Agent 随便换，企业的能力、权限和账本不动。**
 *Your employees' agents may change. Your company's capabilities, permissions and audit trail don't.*
 
-AgentGate 是一个**不绑定任何单一桌面 Agent** 的企业级平台（开源、自托管）：
+AgentGate 是一个**不绑定任何单一桌面 Agent** 的企业级平台（源码公开、自托管）：
 
 - 企业把系统、知识、模型与能力沉淀在平台侧；
 - 员工用自己习惯的通用桌面 Agent（DSH、WorkBuddy、Claude Code、Codex 等），经 **OpenAI 兼容协议 + 远程 MCP** 接入；
@@ -62,7 +64,7 @@ go build -o ag-setup ./cmd/ag-setup
 
 - vs **dsh-ee**：它绑定 DSH；AgentGate 不绑任何 Agent，且把 DLP/分级路由/分级信任做成核心。
 - vs **New API**：它只管模型流量；AgentGate 延伸到端侧、能力侧与加密文件通道，密钥加密存储不落明文。
-- vs **WorkBuddy 企业版**：它绑自家 Agent 与生态、闭源靠厂商承诺；AgentGate 开源可审计、中立、自托管。SaaS 型 Agent 自带网盘/同步导致“只能审计、防不住”的结构性问题，见设计文档 §2.1 的准入标准。
+- vs **WorkBuddy 企业版**：它绑自家 Agent 与生态、闭源靠厂商承诺；AgentGate 源码公开可审计、中立、自托管。SaaS 型 Agent 自带网盘/同步导致“只能审计、防不住”的结构性问题，见设计文档 §2.1 的准入标准。
 
 ## 开发
 
@@ -75,4 +77,7 @@ go test ./...
 
 ## License
 
-Apache-2.0
+**PolyForm Noncommercial License 1.0.0（禁止商用）** — 见 [LICENSE](LICENSE)。
+
+- 免费使用：个人学习、研究、实验，以及慈善、教育、公共研究、公共安全/健康、环保组织与政府机构的使用。
+- **商业使用（包括企业内部经营性使用、集成进对外收费的产品或服务）必须另行取得书面商业授权**，请通过 GitHub 联系作者。这保证项目可持续：代码公开接受审计，但不能被白嫖商用。
