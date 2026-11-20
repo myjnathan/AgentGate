@@ -56,3 +56,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 产出 docs/integrations/ipguard.md：三道闸分工、企业 IT 配置清单（含子进程树这一关键坑）、
   8 项验证矩阵、申请材料包、已知边界；探针 5 首个实测对象定为 IP-guard。
 - 另修复 .gitignore 误伤：`agentgate`/`ag-setup` 模式曾把 cmd/ 下同名目录排除在版本控制外，已改根锚定并补提。
+
+## 2026-11-21 · 远端同步方式与 CI 文件限制
+- GitHub 连接器 push-files 仅能用于空仓库首推；增量同步改用 contents API 逐文件 create_or_update_file（已写入 Loop 规程）。
+- `.github/workflows/ci.yml` 被 GitHub 拒绝（App 无 workflows 权限，403），需 Nathan 在网页端手动新建该文件或本地 git 推送；文件内容已随仓库本地提交保存，并单独发给他。
