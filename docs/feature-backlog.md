@@ -8,10 +8,21 @@
 
 ## P0 — 网关可靠性与可观测（先补齐"能用"）
 
-### F1 渠道健康、重试与熔断 `todo`
+### F1 渠道健康、重试与熔断 `done`（2026-11-21）
 - 来源：LiteLLM / Portkey 的 fallback + cooldown：上游连续失败自动冷却、按错误类型重试到备用部署。
 - 适配：重试/切换只能在**密级不高于原渠道**的渠道间发生（数据分级约束优先于可用性）；熔断事件进审计。
 - 验收：mock 上游模拟 5xx 时自动切换到同级备用渠道成功；连续失败 N 次后渠道进入冷却，冷却期内不再被选中；单元测试覆盖。
+- 借鉴点（LiteLLM 官方文档 docs.litellm.ai/docs/router/learn/reliability，2026-11-21 查阅）：
+  按错误类型区分可重试（5xx/429/超时）与不可重试（401/404/内容策略等 4xx）；
+  `allowed_fails`（默认 3 次连续失败）+ `cooldown_time`（默认 60s）两把旋钮；
+  冷却以部署为隔离粒度、冷却期内从所有选路中剔除、到期自动恢复；
+  每次 fallback 逐跳上报路由事件（from/to/原因）。我们照此实现，但把 fallback
+  限定在与首选渠道**同一 MaxDataLevel** 的渠道之间（LiteLLM 是跨模型组 fallback，
+  我们不允许借故障转移之名把数据送到更高密级渠道），且成功会清零连续失败计数。
+- 实现：`internal/gateway`（pickCandidates + 同级故障转移循环 + 熔断），
+  `GET /api/channels` 返回 health/consecutive_failures/cooldown_until，
+  管理台渠道表新增健康列；7 个新测试覆盖 5xx 转移、冷却进入/到期恢复、
+  全渠道冷却 503、拒绝向高密级渠道升级、机密数据不降级、4xx 不重试不计数、成功清零。
 
 ### F2 用量与成本统计 `todo`
 - 来源：Portkey observability（按 key/用户/模型看 latency、tokens、cost）；LiteLLM spend tracking。
