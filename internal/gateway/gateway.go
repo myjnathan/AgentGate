@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +35,13 @@ type Policy struct {
 	// instead of blocked when the channel is allowed to receive the data.
 	RedactForTier map[store.Tier]bool
 	DryRun        bool // record decisions but never block/redact
+	// FailThreshold is the number of consecutive retryable failures
+	// after which a channel is cooled down (0 = default 3, mirroring
+	// LiteLLM's allowed_fails).
+	FailThreshold int
+	// Cooldown is how long a cooled-down channel stays out of rotation
+	// (0 = default 60s, mirroring LiteLLM's cooldown_time).
+	Cooldown time.Duration
 }
 
 type Gateway struct {
@@ -122,16 +131,36 @@ func (g *Gateway) Models(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
 }
 
-// pickChannel selects an enabled channel serving model whose
-// MaxDataLevel >= level. Prefers the least-privileged sufficient
-// channel (lowest MaxDataLevel that still fits) — data goes to the
-// most restricted destination that is allowed to receive it.
-func (g *Gateway) pickChannel(model string, level store.DataLevel) (*store.Channel, string, bool) {
-	var best *store.Channel
-	var key string
+// failThreshold returns the configured consecutive-failure threshold,
+// defaulting to 3.
+func (g *Gateway) failThreshold() int {
+	if g.policy.FailThreshold > 0 {
+		return g.policy.FailThreshold
+	}
+	return 3
+}
+
+// cooldown returns the configured cooldown duration, defaulting to 60s.
+func (g *Gateway) cooldown() time.Duration {
+	if g.policy.Cooldown > 0 {
+		return g.policy.Cooldown
+	}
+	return 60 * time.Second
+}
+
+// pickCandidates lists enabled channels serving model at a sufficient
+// data level, excluding channels currently in cooldown, ordered
+// least-privileged first (lowest MaxDataLevel). Ties break by ID so the
+// order is deterministic.
+func (g *Gateway) pickCandidates(model string, level store.DataLevel) []*store.Channel {
+	now := time.Now()
+	var out []*store.Channel
 	g.st.Read(func(st *store.State) {
 		for _, ch := range st.Channels {
 			if ch.Disabled || ch.MaxDataLevel < level {
+				continue
+			}
+			if ch.Health(now) == "cooling_down" {
 				continue
 			}
 			has := false
@@ -143,21 +172,49 @@ func (g *Gateway) pickChannel(model string, level store.DataLevel) (*store.Chann
 			if !has {
 				continue
 			}
-			if best == nil || ch.MaxDataLevel < best.MaxDataLevel {
-				cp := *ch
-				best = &cp
+			cp := *ch
+			out = append(out, &cp)
+		}
+	})
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].MaxDataLevel != out[j].MaxDataLevel {
+			return out[i].MaxDataLevel < out[j].MaxDataLevel
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+// channelsCoolingDown reports whether any channel serving model at a
+// sufficient data level exists but is currently cooling down.
+func (g *Gateway) channelsCoolingDown(model string, level store.DataLevel) bool {
+	cooling := false
+	now := time.Now()
+	g.st.Read(func(st *store.State) {
+		for _, ch := range st.Channels {
+			if ch.Disabled || ch.MaxDataLevel < level {
+				continue
+			}
+			serves := false
+			for _, m := range ch.Models {
+				if m == model {
+					serves = true
+				}
+			}
+			if serves && ch.Health(now) == "cooling_down" {
+				cooling = true
 			}
 		}
 	})
-	if best == nil {
-		return nil, "", false
-	}
-	k, err := g.box.Decrypt(best.APIKeyEnc)
-	if err != nil {
-		return nil, "", false
-	}
-	key = k
-	return best, key, true
+	return cooling
+}
+
+// retryableStatus reports whether an upstream status is worth failing
+// over for: 5xx and 429. Other 4xx (auth, not found, content policy)
+// are the caller's fault and must not trigger a retry — mirroring
+// LiteLLM's per-error-type retry classification.
+func retryableStatus(code int) bool {
+	return code == http.StatusTooManyRequests || code >= 500
 }
 
 // anyChannelForModel reports whether any enabled channel serves model.
@@ -261,9 +318,15 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "model_not_available", "model is not available on this gateway")
 		return
 	}
-	channel, apiKey, ok := g.pickChannel(req.Model, level)
-	if !ok {
-		// Model exists but no channel is allowed to receive this data level.
+	candidates := g.pickCandidates(req.Model, level)
+	if len(candidates) == 0 {
+		// Model exists but no channel is allowed to receive this data
+		// level — or every eligible channel is cooling down.
+		if g.channelsCoolingDown(req.Model, level) {
+			writeErr(w, http.StatusServiceUnavailable, "channels_in_cooldown",
+				"all eligible model channels are temporarily cooling down after repeated failures")
+			return
+		}
 		g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 			Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
 			Detail: mergeDetail(detail, "reason", "no_channel_for_data_level")})
@@ -271,10 +334,11 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("no configured model channel may receive %s data", level.String()))
 		return
 	}
-	// Note: pickChannel already chose the least-privileged channel that
-	// may receive this data level; when the level forced a restricted
-	// (private) channel for confidential+ data, mark the decision so
-	// operators can see classification routing in the audit log.
+	// Note: pickCandidates already chose the least-privileged channel
+	// that may receive this data level; when the level forced a
+	// restricted (private) channel for confidential+ data, mark the
+	// decision so operators can see classification routing in the
+	// audit log.
 	if level >= store.LevelConfidential {
 		decision = "reroute"
 	}
@@ -295,21 +359,66 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		decision = "dry_run:" + decision
 	}
 
-	// ---- Forward ----
-	upURL := strings.TrimSuffix(channel.BaseURL, "/") + "/chat/completions"
-	upReq, err := http.NewRequestWithContext(context.WithoutCancel(r.Context()), http.MethodPost, upURL, bytes.NewReader(body))
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, "bad_gateway", "cannot build upstream request")
-		return
+	// ---- Forward, with same-level failover ----
+	// Failover may only move between channels whose MaxDataLevel is not
+	// higher than the first pick's: data-level constraints beat
+	// availability, so a request never "upgrades" to a more privileged
+	// channel (or "downgrades" to a less privileged one) just because
+	// the first pick failed. Since candidates are sorted least-
+	// privileged first, the chain is the leading run of channels at the
+	// first pick's level.
+	firstLevel := candidates[0].MaxDataLevel
+	var chain []*store.Channel
+	for _, ch := range candidates {
+		if ch.MaxDataLevel != firstLevel {
+			break
+		}
+		chain = append(chain, ch)
 	}
-	upReq.Header.Set("Content-Type", "application/json")
-	upReq.Header.Set("Authorization", "Bearer "+apiKey)
-	if req.Stream {
-		upReq.Header.Set("Accept", "text/event-stream")
+	var resp *http.Response
+	var channel *store.Channel
+	fallbackFrom := ""
+	for i, ch := range chain {
+		apiKey, err := g.box.Decrypt(ch.APIKeyEnc)
+		if err != nil {
+			continue // misconfigured channel key: never receives the request
+		}
+		upURL := strings.TrimSuffix(ch.BaseURL, "/") + "/chat/completions"
+		upReq, err := http.NewRequestWithContext(context.WithoutCancel(r.Context()), http.MethodPost, upURL, bytes.NewReader(body))
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "bad_gateway", "cannot build upstream request")
+			return
+		}
+		upReq.Header.Set("Content-Type", "application/json")
+		upReq.Header.Set("Authorization", "Bearer "+apiKey)
+		if req.Stream {
+			upReq.Header.Set("Accept", "text/event-stream")
+		}
+		r2, err := g.client.Do(upReq)
+		if err != nil {
+			g.noteFailure(ch)
+			if i+1 < len(chain) {
+				g.auditFallback(user, tok, req.Model, level, ch, chain[i+1], "upstream_unavailable")
+			}
+			continue
+		}
+		if retryableStatus(r2.StatusCode) {
+			g.noteFailure(ch)
+			if i+1 < len(chain) {
+				g.auditFallback(user, tok, req.Model, level, ch, chain[i+1], fmt.Sprintf("upstream_%d", r2.StatusCode))
+			}
+			r2.Body.Close()
+			continue
+		}
+		resp = r2
+		channel = ch
+		if i > 0 {
+			fallbackFrom = chain[0].Name
+		}
+		g.recordSuccess(ch.ID)
+		break
 	}
-	resp, err := g.client.Do(upReq)
-	if err != nil {
-		g.recordFailure(channel.ID)
+	if resp == nil {
 		writeErr(w, http.StatusBadGateway, "upstream_unavailable", "upstream model service unavailable")
 		return
 	}
@@ -335,6 +444,9 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 		_ = g.st.Save()
+	}
+	if fallbackFrom != "" {
+		detail["fallback_from"] = fallbackFrom
 	}
 	g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 		Kind: "model_call", Action: "chat_completions", Model: req.Model, Channel: channel.Name,
@@ -432,12 +544,57 @@ func redactBody(body []byte, det *guard.Detector) ([]byte, map[string]string) {
 	return out, mapping
 }
 
-func (g *Gateway) recordFailure(channelID string) {
+// recordFailure counts a retryable failure for a channel. When the
+// consecutive count reaches the fail threshold and the channel is not
+// already cooling down, it enters cooldown and the second return value
+// is true.
+func (g *Gateway) recordFailure(channelID string) (failures int, cooledDown bool) {
 	g.st.WithLock(func(st *store.State) {
 		if ch, ok := st.Channels[channelID]; ok {
 			ch.Failures++
+			ch.ConsecutiveFailures++
+			failures = ch.ConsecutiveFailures
+			if failures >= g.failThreshold() && time.Now().After(ch.CooldownUntil) {
+				ch.CooldownUntil = time.Now().Add(g.cooldown())
+				cooledDown = true
+			}
 		}
 	})
+	return failures, cooledDown
+}
+
+// recordSuccess resets a channel's consecutive-failure count, so a
+// transient blip does not accumulate toward cooldown.
+func (g *Gateway) recordSuccess(channelID string) {
+	g.st.WithLock(func(st *store.State) {
+		if ch, ok := st.Channels[channelID]; ok {
+			ch.ConsecutiveFailures = 0
+		}
+	})
+}
+
+// noteFailure records a failure and audits the cooldown transition
+// (no request content is logged).
+func (g *Gateway) noteFailure(ch *store.Channel) {
+	failures, cooledDown := g.recordFailure(ch.ID)
+	if !cooledDown {
+		return
+	}
+	g.audit.Append(audit.Event{Actor: "system", Kind: "channel", Action: "channel_cooldown",
+		Channel: ch.Name, Decision: "cooldown",
+		Detail: map[string]string{
+			"channel_id":           ch.ID,
+			"consecutive_failures": strconv.Itoa(failures),
+			"cooldown_seconds":     strconv.Itoa(int(g.cooldown().Seconds())),
+		}})
+}
+
+// auditFallback records a routing hop to the next same-level channel.
+func (g *Gateway) auditFallback(user *store.User, tok *store.APIToken, model string, level store.DataLevel, from, to *store.Channel, reason string) {
+	g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
+		Kind: "channel", Action: "channel_fallback", Model: model, Channel: from.Name,
+		DataLevel: level.String(), Decision: "reroute",
+		Detail: map[string]string{"to_channel": to.Name, "reason": reason}})
 }
 
 func mergeDetail(d map[string]string, k, v string) map[string]string {
