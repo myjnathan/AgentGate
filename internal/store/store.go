@@ -147,6 +147,25 @@ type Channel struct {
 	Weight       int       `json:"weight"`
 	Disabled     bool      `json:"disabled"`
 	Failures     int       `json:"-"`
+	// ConsecutiveFailures counts retryable failures since the last
+	// success; reaching the gateway's fail threshold cools the channel
+	// down (see internal/gateway). Runtime-only, never persisted.
+	ConsecutiveFailures int `json:"-"`
+	// CooldownUntil is set when the channel enters cooldown; while
+	// time.Now() is before it, the gateway never picks this channel.
+	CooldownUntil time.Time `json:"-"`
+}
+
+// Health reports the runtime health of the channel:
+// "disabled" | "cooling_down" | "healthy".
+func (c *Channel) Health(now time.Time) string {
+	if c.Disabled {
+		return "disabled"
+	}
+	if !c.CooldownUntil.IsZero() && now.Before(c.CooldownUntil) {
+		return "cooling_down"
+	}
+	return "healthy"
 }
 
 type Skill struct {
