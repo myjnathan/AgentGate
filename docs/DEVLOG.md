@@ -2,7 +2,24 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
-## 2026-11-21 · 许可证变更为禁止商用
+## 2026-11-21 · F1 渠道健康、重试与熔断
+- 借鉴 LiteLLM 官方文档（docs.litellm.ai/docs/router/learn/reliability）：
+  可重试错误按类型区分（5xx/429 可重试，其余 4xx 不重试）、`allowed_fails`=3 +
+  `cooldown_time`=60s 默认值、冷却按渠道隔离、到期自动恢复、fallback 逐跳上报。
+  差异化收紧：故障转移只在与首选渠道**同一 MaxDataLevel** 的渠道间发生，
+  绝不借故障之名把数据送到更高密级渠道（也不降级到更低密级渠道）。
+- 实现：`pickChannel` 改为 `pickCandidates`（剔除冷却中渠道、按密级升序），
+  转发循环遇传输错误/5xx/429 时记失败并试下一个同级渠道；连续失败达阈值
+  （默认 3 次）进入冷却（默认 60s），成功清零计数；全渠道冷却时返回 503
+  `channels_in_cooldown`；熔断与每次 fallback 均写入审计（不含请求原文）。
+  `GET /api/channels` 返回 health/consecutive_failures/cooldown_until，
+  管理台渠道表新增健康列（中英双语）；smoke 增加渠道健康断言。
+- 关键决策：熔断阈值与冷却时长做成 `gateway.Policy` 可配字段（默认 3 次/60s），
+  不引入 Redis 等外部状态——健康状态为进程内运行时状态，重启即复位（与现有
+  `Failures` 字段一致，`json:"-"` 不持久化）。
+- 测试：新增 7 个测试（5xx 同级转移、冷却进入/到期恢复、全冷却 503、拒绝向高密级
+  升级、机密数据不降级、4xx 不重试不计数、成功清零），`gofmt`/`go vet`/`go test ./...`
+  全绿，`make smoke` 13 项断言 0 失败。
 - 按 Nathan 指示，许可证由 Apache-2.0 变更为 **PolyForm Noncommercial License 1.0.0**：
   源码公开可审计；个人学习/研究与非商业组织免费；**商业使用（含企业内部经营性使用）须另行书面授权**（双许可证模式）。
 - 同步更新 README License 节、蓝图 §11 与决策记录、开发 Loop 红线。
