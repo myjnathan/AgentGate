@@ -1,0 +1,30 @@
+# AgentGate — single-service deployment.
+# Unlike dsh-ee there is no external database to operate: state lives in
+# the /data volume (state.json + hash-chained audit.jsonl). Back up the
+# volume together with AGENTGATE_MASTER_KEY from .env.
+services:
+  agentgate:
+    image: ${AGENTGATE_IMAGE:-ghcr.io/myjnathan/agentgate:latest}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      AGENTGATE_MASTER_KEY: ${AGENTGATE_MASTER_KEY:?set AGENTGATE_MASTER_KEY in .env}
+      AGENTGATE_ADDR: 0.0.0.0:8787
+      AGENTGATE_DATA: /data
+      AGENTGATE_DEMO: ${AGENTGATE_DEMO:-}
+      AGENTGATE_BANNED_WORDS: ${AGENTGATE_BANNED_WORDS:-}
+      AGENTGATE_CUSTOM_WORDS: ${AGENTGATE_CUSTOM_WORDS:-}
+    ports:
+      - "${AGENTGATE_PORT:-8787}:8787"
+    volumes:
+      - agentgate-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8787/healthz"]
+      interval: 15s
+      timeout: 3s
+      start_period: 10s
+
+volumes:
+  agentgate-data:
