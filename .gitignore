@@ -1,6 +1,7 @@
+/agentgate
+/ag-setup
 /data/
 *.jsonl
-agentgate
-ag-setup
 *.tmp
 .DS_Store
+dist/
