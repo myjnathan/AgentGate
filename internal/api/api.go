@@ -187,13 +187,37 @@ func (a *API) deviceApprove(w http.ResponseWriter, r *http.Request, u *store.Use
 	writeJSON(w, http.StatusOK, map[string]any{"status": "approved"})
 }
 
+// channelView is the admin-facing channel shape: the stored fields
+// plus runtime health (healthy | cooling_down | disabled). The
+// encrypted key is never exposed.
+type channelView struct {
+	ID                  string          `json:"id"`
+	Name                string          `json:"name"`
+	BaseURL             string          `json:"base_url"`
+	KeyMasked           string          `json:"key_masked"`
+	Models              []string        `json:"models"`
+	MaxDataLevel        store.DataLevel `json:"max_data_level"`
+	Weight              int             `json:"weight"`
+	Disabled            bool            `json:"disabled"`
+	Health              string          `json:"health"`
+	ConsecutiveFailures int             `json:"consecutive_failures"`
+	CooldownUntil       *time.Time      `json:"cooldown_until,omitempty"`
+}
+
 func (a *API) listChannels(w http.ResponseWriter, r *http.Request, u *store.User) {
-	var out []*store.Channel
+	var out []channelView
+	now := time.Now()
 	a.st.Read(func(st *store.State) {
 		for _, ch := range st.Channels {
-			cp := *ch
-			cp.APIKeyEnc = "" // never expose, even encrypted form is fine but keep surface minimal
-			out = append(out, &cp)
+			v := channelView{ID: ch.ID, Name: ch.Name, BaseURL: ch.BaseURL,
+				KeyMasked: ch.KeyMasked, Models: ch.Models, MaxDataLevel: ch.MaxDataLevel,
+				Weight: ch.Weight, Disabled: ch.Disabled, Health: ch.Health(now),
+				ConsecutiveFailures: ch.ConsecutiveFailures}
+			if ch.Health(now) == "cooling_down" {
+				t := ch.CooldownUntil
+				v.CooldownUntil = &t
+			}
+			out = append(out, v)
 		}
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"channels": out})
