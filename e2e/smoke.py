@@ -91,6 +91,36 @@ def main():
           and all(c.get("health") == "healthy" for c in chans["channels"]))
     s, ver = call("/api/audit/verify", token=alogin["session"], method="GET")
     check("audit chain valid", s == 200 and ver.get("chain_valid") is True)
+    s, stats = call("/api/stats", token=alogin["session"], method="GET")
+    check("stats reconcile with audit", s == 200
+          and stats.get("totals", {}).get("calls", 0) == 3
+          and stats.get("totals", {}).get("blocked", 0) == 2
+          and stats.get("totals", {}).get("tokens", 0) > 0
+          and any(b.get("key") == "mock-eco" for b in stats.get("by_model", []))
+          and any(b.get("key") == "研发部" for b in stats.get("by_department", [])))
+    s, stats = call("/api/stats", token=sess, method="GET")
+    check("stats forbidden for employee", s == 403)
+
+    # F3: per-token RPM. The smoke token already made 3 chat calls
+    # above (allowed + 2 blocked — all counted at the gateway door),
+    # so RPM=5 admits 2 more and rejects the 6th with 429.
+    s, toks = call("/api/tokens", token=alogin["session"], method="GET")
+    tok_id = next(t["id"] for t in toks.get("tokens", []) if t.get("agent_type") == "claude-code")
+    s, upd = call("/api/tokens/" + tok_id, {"rpm_limit": 5}, token=alogin["session"], method="PATCH")
+    check("token rpm update", s == 200 and upd.get("rpm_limit") == 5)
+    codes, err_code = [], ""
+    for _ in range(3):
+        try:
+            req = urllib.request.Request(BASE + "/v1/chat/completions",
+                data=json.dumps({"model": "mock-eco", "messages": [{"role": "user", "content": "限流测试"}]}).encode())
+            req.add_header("Authorization", "Bearer " + tok)
+            req.add_header("Content-Type", "application/json")
+            with urllib.request.urlopen(req) as r:
+                codes.append(r.status)
+        except urllib.error.HTTPError as e:
+            codes.append(e.code)
+            err_code = json.loads(e.read() or b"{}").get("error", {}).get("code", "")
+    check("rpm limit enforced at 6th call", codes == [200, 200, 429] and err_code == "rate_limit_exceeded")
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
