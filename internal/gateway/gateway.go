@@ -23,6 +23,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
 	"github.com/myjnathan/agentgate/internal/guard"
+	"github.com/myjnathan/agentgate/internal/ratelimit"
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/store"
 )
@@ -42,20 +43,60 @@ type Policy struct {
 	// Cooldown is how long a cooled-down channel stays out of rotation
 	// (0 = default 60s, mirroring LiteLLM's cooldown_time).
 	Cooldown time.Duration
+	// DefaultRPM/DefaultTPM are the per-minute limits applied to a
+	// token without an explicit limit (0 = built-in tier default:
+	// managed 60 RPM / 100k TPM, BYOA 20 RPM / 20k TPM — managed
+	// agents are supervised, self-provided ones are held tighter).
+	DefaultRPM map[store.Tier]int
+	DefaultTPM map[store.Tier]int
 }
 
 type Gateway struct {
-	st     *store.Store
-	auth   *auth.Service
-	box    *secretbox.Box
-	audit  *audit.Log
-	policy Policy
-	client *http.Client
+	st      *store.Store
+	auth    *auth.Service
+	box     *secretbox.Box
+	audit   *audit.Log
+	policy  Policy
+	client  *http.Client
+	limiter *ratelimit.Limiter
 }
 
 func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log, pol Policy) *Gateway {
 	return &Gateway{st: st, auth: au, box: box, audit: al, policy: pol,
-		client: &http.Client{Timeout: 10 * time.Minute}}
+		client: &http.Client{Timeout: 10 * time.Minute}, limiter: ratelimit.New()}
+}
+
+// rateLimits resolves the effective RPM/TPM for a token: its own
+// configured limit wins, otherwise the tier default.
+func (g *Gateway) rateLimits(tok *store.APIToken) (rpm, tpm int) {
+	rpm, tpm = tok.RPM, tok.TPM
+	if rpm <= 0 {
+		rpm = g.policy.DefaultRPM[tok.Tier]
+		if rpm <= 0 {
+			rpm = defaultRPM(tok.Tier)
+		}
+	}
+	if tpm <= 0 {
+		tpm = g.policy.DefaultTPM[tok.Tier]
+		if tpm <= 0 {
+			tpm = defaultTPM(tok.Tier)
+		}
+	}
+	return rpm, tpm
+}
+
+func defaultRPM(tier store.Tier) int {
+	if tier == store.TierManaged {
+		return 60
+	}
+	return 20
+}
+
+func defaultTPM(tier store.Tier) int {
+	if tier == store.TierManaged {
+		return 100_000
+	}
+	return 20_000
 }
 
 func (g *Gateway) detector() *guard.Detector {
@@ -240,6 +281,24 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	tok, user, ok := g.authenticate(r)
 	if !ok {
 		writeErr(w, http.StatusUnauthorized, "unauthorized", "invalid or expired token")
+		return
+	}
+	// Per-token rate limit (F3): RPM counts the request now, TPM is
+	// checked against tokens recorded from completed responses.
+	// A denied request is audited but never reaches the pipeline or
+	// an upstream channel.
+	rpm, tpm := g.rateLimits(tok)
+	if allowed, kind, retryAfter := g.limiter.Allow(tok.ID, rpm, tpm, time.Now()); !allowed {
+		g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
+			Kind: "rate_limit", Action: "rate_limited", Decision: "block",
+			Detail: map[string]string{"limit": kind, "token_id": tok.ID}})
+		secs := int(retryAfter.Round(time.Second).Seconds())
+		if secs < 1 {
+			secs = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		writeErr(w, http.StatusTooManyRequests, "rate_limit_exceeded",
+			fmt.Sprintf("token %s limit exceeded, retry after %d seconds", kind, secs))
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 32<<20))
@@ -438,6 +497,10 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(respBody)
 	}
 	if usedTokens > 0 {
+		// Tokens are recorded only after the response completes, so
+		// requests already in flight are never blocked by tokens
+		// they have not yet consumed (LiteLLM's enforcement model).
+		g.limiter.RecordTokens(tok.ID, usedTokens, time.Now())
 		g.st.WithLock(func(st *store.State) {
 			if t, ok := st.Tokens[tok.ID]; ok {
 				t.UsedTokens += usedTokens
