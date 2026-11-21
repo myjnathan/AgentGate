@@ -123,6 +123,60 @@ def main():
     s, ver = call("/api/audit/verify", token=admin_tok, method="GET")
     check("audit chain still valid after export/archive", s == 200 and ver.get("chain_valid") is True)
 
+    # F5: webhook alerts. A local receiver stands in for the enterprise
+    # chat robot; a banned-word block must deliver a structured alert
+    # with no sensitive text. A second (managed) token is onboarded so
+    # the extra call does not disturb the RPM accounting below.
+    import threading
+    import time as _time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    received = []
+
+    class Receiver(BaseHTTPRequestHandler):
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", "0"))
+            received.append(self.rfile.read(n))
+            self.send_response(200)
+            self.end_headers()
+        def log_message(self, *a):
+            pass
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Receiver)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    hook_url = f"http://127.0.0.1:{httpd.server_address[1]}/hook"
+    s, wh = call("/api/alerts/webhooks",
+                 {"name": "smoke", "url": hook_url, "kind": "generic"}, token=admin_tok)
+    check("webhook create", s == 201 and wh.get("id", "").startswith("wh_"))
+    s, _ = call("/api/alerts/webhooks",
+                {"name": "x", "url": hook_url, "kind": "generic"}, token=sess)
+    check("webhook create forbidden for employee", s == 403)
+    s, start2 = call("/api/setup/device/start", {"agent_type": "dsh", "tier": "managed"})
+    s, _ = call("/api/device/approve", {"code": start2["code"], "device_name": "ci-smoke-alert"}, token=admin_tok)
+    s, poll2 = call("/api/setup/device/poll", {"code": start2["code"], "secret": start2["secret"]})
+    tok2 = poll2.get("token", "")
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-eco", "messages": [{"role": "user", "content": "包含 test_sensitive 内容"}]}, token=tok2)
+    check("alert token banned word blocked", s == 400)
+    for _ in range(100):
+        if received:
+            break
+        _time.sleep(0.1)
+    alert_ok = False
+    if received:
+        try:
+            payload = json.loads(received[0])
+            alert_ok = (payload.get("source") == "agentgate"
+                        and payload.get("severity") == "critical"
+                        and payload.get("action") == "model_call_blocked"
+                        and payload.get("actor") == "admin"
+                        and "test_sensitive" not in received[0].decode(errors="replace"))
+        except json.JSONDecodeError:
+            alert_ok = False
+    check("webhook receives structured alert without sensitive text", alert_ok)
+    s, tst = call("/api/alerts/webhooks/" + wh.get("id", "") + "/test", {}, token=admin_tok, method="POST")
+    check("webhook test endpoint delivers", s == 200 and tst.get("delivered") is True)
+    httpd.shutdown()
+
     # F3: per-token RPM. The smoke token already made 3 chat calls
     # above (allowed + 2 blocked — all counted at the gateway door),
     # so RPM=5 admits 2 more and rejects the 6th with 429.
