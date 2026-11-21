@@ -543,13 +543,13 @@ def main():
     check("confidential tool_calls blocked for BYOA", s == 403 and chat.get("error", {}).get("code") == "data_level_forbidden")
 
     # F18: folder knowledge base — demo folders are seeded in demo
-    # mode (internal 公司制度 with .md + .docx, confidential 机密资料
-    # with .pdf). Progressive disclosure: catalog -> structure ->
+    # mode (internal 公司制度 with a .md file, confidential 机密资料
+    # with a .pdf). Progressive disclosure: catalog -> structure ->
     # section, with the confidential folder invisible to BYOA.
     s, folders = call("/api/kb/folders", token=admin_tok, method="GET")
     fl = folders.get("folders", [])
     check("folder sources listed in demo", s == 200 and len(fl) == 2
-          and any(f.get("name") == "公司制度" and f.get("docs", 0) == 2 for f in fl)
+          and any(f.get("name") == "公司制度" and f.get("docs", 0) == 1 for f in fl)
           and any(f.get("name") == "机密资料" and f.get("docs", 0) == 1 for f in fl))
     s, _ = call("/api/kb/folders", token=sess, method="GET")
     check("folder list forbidden for employee", s == 403)
@@ -561,8 +561,6 @@ def main():
 
     text, _ = mcp_text(tok, "kb_search", {"query": "请假 年假"})
     check("MCP kb_search finds folder md doc", "考勤与请假制度" in text and '"source":"folder"' in text)
-    text, _ = mcp_text(tok, "kb_search", {"query": "硒鼓 申领"})
-    check("MCP kb_search finds folder docx doc", "办公用品领用流程" in text)
     text, _ = mcp_text(tok, "kb_search", {"query": "供应商 准入"})
     check("MCP kb_search hides confidential folder from BYOA", "供应商准入要求" not in text)
     text, _ = mcp_text(tok2, "kb_search", {"query": "供应商 准入"})
@@ -585,7 +583,7 @@ def main():
     # Rescan of the demo folder is a no-op (nothing changed).
     fid = next(f["id"] for f in fl if f.get("name") == "公司制度")
     s, rs = call("/api/kb/folders/" + fid + "/rescan", {}, token=admin_tok, method="POST")
-    check("folder rescan no-op when unchanged", s == 200 and rs.get("stats", {}).get("unchanged") == 2
+    check("folder rescan no-op when unchanged", s == 200 and rs.get("stats", {}).get("unchanged") == 1
           and rs.get("stats", {}).get("added") == 0)
 
     print(f"\n{len(failures)} failure(s)")
