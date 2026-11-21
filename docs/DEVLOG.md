@@ -2,6 +2,34 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-21 · F5 Webhook 告警
+- 本轮先续推 F4：重跑 `/tmp/push_f4b.py`，剩余 8 个文件经校验已与远端一致（主对话并行推完），
+  26/26 文件全部同步，远端 HEAD d761e80、内容与本地 b8907a8 相同，CI 第 51 次运行全绿——
+  自 F2 起困扰三轮的推送阻塞正式解除，远端首次完整绿灯。随后按 Loop 规程取下一条 P0 做 F5。
+- 借鉴企业微信官方群机器人文档（developer.work.weixin.qq.com/document/path/91770）与钉钉自定义机器人
+  安全设置说明：企微 markdown 上限 4096 字节、仅支持有限语法子集、每机器人 20 条/分钟；钉钉同样
+  markdown（title + text）、20 条/分钟、超限停 10 分钟；三家加签同一公式
+  `timestamp(毫秒) + "\n" + secret` 经 HMAC-SHA256、Base64、URL 编码后拼进 `timestamp` 与 `sign` 查询参数。
+  签名公式与通用 HMAC 请求头均以 Python 独立算出测试向量、写入 Go 测试硬编码校验。
+- 实现：新包 `internal/alert`（事件分类 + 四平台载荷 + 签名 + 异步投递器，队列满丢弃计数，
+  失败 1 + 3 次重试后放弃，错误只记 `http_500`/`network_error`/`timeout`/`config_error` 类别，
+  绝不把可能含 bot key 的 URL 写进审计或 API 响应）；`audit.Log.SetNotifyHook`（锁外回调，
+  `alert` 类事件不触发，避免自循环）；`store.Webhook`（签名密钥 AES-GCM 加密后持久化，
+  与 `Channel.APIKeyEnc` 的 `json:"-"` 不同——Webhook 是运行时由管理员配置的，丢密钥等于丢配置）；
+  `GET/POST /api/alerts/webhooks` + `DELETE /api/alerts/webhooks/{id}` + `POST /api/alerts/webhooks/{id}/test`
+  （仅 admin/security，列表 URL 的 query 值打码、密钥永不回显）；登录锁定在 `auth` 层以哨兵错误
+  `ErrAccountLocked` 区分，API 记 `account_locked` 审计事件（可告警），普通失败仍为 `login_failed`（不告警）；
+  管理台新增告警 Webhook 卡片（列表/添加/测试/删除，中英双语）。
+- 关键决策：告警只取审计事件已有字段（处置类别如 banned_word、操作者、密级、渠道），审计 Detail
+  本就不含匹配原文，故告警天然脱敏；限流（rate_limit）不做告警——量大且属软性控制，告警会淹没真实安全信号；
+  投递是异步的（worker + 64 缓冲队列），慢/死的 Webhook 永不阻塞请求路径；已知注意点：
+  `Channel.APIKeyEnc` 带 `json:"-"`、非演示模式重启后渠道密钥会丢失（demo 每次重建故未暴露），与本次
+  Webhook 密钥持久化形成反差，留待后续轮次修（不属于 F5 范围）。
+- 测试：alert 包 13 项 + API 端点 3 项（鉴权/校验/密钥加密存储与不回显/URL 打码/测试端点成功与 502 + 4 次尝试/
+  锁定审计为 account_locked）+ 网关集成 1 项（违禁词拦截→Webhook 收到结构化告警、无敏感原文）；
+  `gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 25 项断言 0 失败（新增 5 项 F5 断言）。
+- 推送：待推送（本轮新提交，见下）。
+
 ## 2026-11-21 · F4 审计导出与合规归档
 - 借鉴 LiteLLM 官方审计日志文档（docs.litellm.ai/docs/proxy/audit_logs）与 Cloudflare Logpull 文档
   （developers.cloudflare.com/logs/logpull）：LiteLLM 审计日志带保留策略、可异步批量导出到外部存储
