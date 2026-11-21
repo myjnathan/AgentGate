@@ -28,7 +28,8 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 测试：alert 包 13 项 + API 端点 3 项（鉴权/校验/密钥加密存储与不回显/URL 打码/测试端点成功与 502 + 4 次尝试/
   锁定审计为 account_locked）+ 网关集成 1 项（违禁词拦截→Webhook 收到结构化告警、无敏感原文）；
   `gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 25 项断言 0 失败（新增 5 项 F5 断言）。
-- 推送：待推送（本轮新提交，见下）。
+- 推送：已全部上远端（17/17 文件逐个哈希核对一致，远端 HEAD b9f045c；另补推 1 个注释修正
+  4efaf18，远端 HEAD 现为 8f45854）。Nathan 在线批卡，推送阻塞解除后第二轮全绿。
 
 ## 2026-11-21 · F4 审计导出与合规归档
 - 借鉴 LiteLLM 官方审计日志文档（docs.litellm.ai/docs/proxy/audit_logs）与 Cloudflare Logpull 文档
