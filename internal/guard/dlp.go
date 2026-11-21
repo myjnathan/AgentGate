@@ -120,27 +120,78 @@ func Classify(findings []Finding) store.DataLevel {
 // mapping must never leave the trust boundary that created it
 // (endpoint sidecar or the enterprise gateway).
 func Redact(text string, findings []Finding) (string, map[string]string) {
-	// Deduplicate identical values; drop overlapping spans (keep earliest/longest).
-	seen := map[string]string{}
+	r := NewRedactor()
+	out := r.Redact(text, findings)
+	return out, r.Mapping()
+}
+
+// Redactor keeps placeholder numbering stable across many texts of one
+// request, so the same value always maps to the same placeholder —
+// whether it appears in message content or in a tool_calls argument.
+// Numbering per Redact call would collide when mappings are merged
+// (each call restarts at _1), so a request is redacted through a single
+// Redactor.
+type Redactor struct {
+	seen map[string]string // original value -> placeholder
+	used map[string]string // placeholder -> original value
+}
+
+// NewRedactor returns an empty Redactor.
+func NewRedactor() *Redactor {
+	return &Redactor{seen: map[string]string{}, used: map[string]string{}}
+}
+
+// Redact replaces findings in text with placeholders, reusing the
+// placeholder of any value seen before in this Redactor.
+func (r *Redactor) Redact(text string, findings []Finding) string {
+	// Drop overlapping spans (keep earliest/longest); banned words are
+	// blocked upstream, never redacted through.
 	var spans []Finding
 	for _, f := range findings {
 		if f.Category == CatBanned {
-			continue // banned words are blocked upstream, never redacted through
+			continue
 		}
-		if _, ok := seen[f.Value]; !ok {
-			seen[f.Value] = fmt.Sprintf("<%s_%d>", strings.ToUpper(string(f.Category)), len(seen)+1)
+		if _, ok := r.seen[f.Value]; !ok {
+			r.seen[f.Value] = fmt.Sprintf("<%s_%d>", strings.ToUpper(string(f.Category)), len(r.seen)+1)
 		}
 		spans = append(spans, f)
 	}
 	sort.Slice(spans, func(i, j int) bool { return spans[i].Start > spans[j].Start })
 	out := text
-	used := map[string]string{}
 	for _, f := range spans {
-		ph := seen[f.Value]
+		ph := r.seen[f.Value]
 		out = out[:f.Start] + ph + out[f.End:]
-		used[ph] = f.Value
+		r.used[ph] = f.Value
 	}
-	return out, used
+	return out
+}
+
+// Mapping returns the placeholder -> original map accumulated so far.
+func (r *Redactor) Mapping() map[string]string {
+	out := make(map[string]string, len(r.used))
+	for k, v := range r.used {
+		out[k] = v
+	}
+	return out
+}
+
+// MaxPlaceholderLength returns the longest byte length a placeholder
+// from mapping can occupy on the wire, counting the JSON-escaped form
+// (\u003c…\u003e) upstream encoders produce. Streaming restore must
+// hold back at least this many trailing bytes so a placeholder split
+// across SSE chunks is never emitted half-restored.
+func MaxPlaceholderLength(mapping map[string]string) int {
+	n := 0
+	for k := range mapping {
+		if len(k) > n {
+			n = len(k)
+		}
+		esc := strings.NewReplacer("<", `\u003c`, ">", `\u003e`, "&", `\u0026`).Replace(k)
+		if len(esc) > n {
+			n = len(esc)
+		}
+	}
+	return n
 }
 
 // Restore reverses Redact on a model response.

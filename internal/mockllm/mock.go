@@ -16,8 +16,14 @@ type chatRequest struct {
 	Model    string `json:"model"`
 	Stream   bool   `json:"stream"`
 	Messages []struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
+		Role      string          `json:"role"`
+		Content   json.RawMessage `json:"content"`
+		ToolCalls []struct {
+			Function struct {
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+			} `json:"function"`
+		} `json:"tool_calls"`
 	} `json:"messages"`
 }
 
@@ -76,13 +82,22 @@ func Handler() http.Handler {
 			return
 		}
 		last := ""
-		for i := len(req.Messages) - 1; i >= 0; i-- {
-			if req.Messages[i].Role == "user" {
-				last = textOf(req.Messages[i].Content)
-				break
+		var toolArgs []string
+		for _, m := range req.Messages {
+			if m.Role == "user" {
+				last = textOf(m.Content)
+			}
+			for _, tc := range m.ToolCalls {
+				toolArgs = append(toolArgs, tc.Function.Arguments)
 			}
 		}
+		// The reply echoes the last user message and any tool_calls
+		// arguments, so gateway tests can observe what the upstream
+		// actually received (redacted or not) after restore.
 		reply := "[mock-model] 我收到了你的消息：" + last
+		if len(toolArgs) > 0 {
+			reply += " 工具调用参数：" + strings.Join(toolArgs, "；")
+		}
 		usage := map[string]any{
 			"prompt_tokens":     len([]rune(last)) + 8,
 			"completion_tokens": len([]rune(reply)),

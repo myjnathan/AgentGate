@@ -199,10 +199,16 @@
   LDAP：本轮只做配置与设计——新包 `internal/ldap`（`Config` + `ConfigFromEnv` + `Validate`，`Implemented()` 为 false）与 docs/ldap.md（绑定→搜索→用户绑定流程、安全约定、实现轮次验收清单）；无 LDAP 测试目录，未实现客户端、未实测。
 - 测试：oidc 包 5 项（Config 默认与 http issuer 拒绝、假 IdP 全流程换码 + userinfo 合并、state 单次有效、ID token 八类拒绝：nonce/aud/iss/过期/无 sub/篡改/alg none/未知 kid、发现文档 issuer 不一致拒绝）+ auth 包 4 项（JIT 开户为 employee 且无本地密码、重复登录同一账号并刷新资料、撞本地用户名自动加后缀、禁用与空 sub 拒绝、用户名清洗与回退）+ API 端点 4 项（假 IdP 下 HTTP 全程：login → IdP → callback → 会话页 → /api/me；坏 state 400；未配置时 503；status 需登录）+ ldap 包 2 项（配置默认与五类拒绝、ldap:// + StartTLS 合法）；另用真实 Duende 演示 IdP 跑通登录闭环并以本仓库 `VerifyIDToken` 对线上 JWKS 验签通过（临时测试，验证后删除、未进仓库）；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 81 项断言 0 失败（新增 5 项 F9 断言）。
 
-### F10 流式脱敏与 tool_calls 防护（探针 3） `todo`
+### F10 流式脱敏与 tool_calls 防护（探针 3） `done`（2026-11-21）
 - 来源：蓝图探针 3；AstrLink 的流式占位符处理思路。
 - 适配：SSE 分片跨界占位符缓冲还原；请求中 tool_calls 参数同样过 DLP 与分级。
 - 验收：构造占位符被分片切断的用例仍正确还原；tool 参数含机密词时按等级拦截/脱敏；测试全绿。
+- 借鉴点（nr-llm ADR 88《Live streaming redaction》netresearch.github.io/t3x-nr-llm/adr/adr088-live-streaming-redaction.html；Sether《PII redaction for LLM applications》sether.ai，2026-11-21 查阅）：
+  流式脱敏的难点是分片边界：秘密可能被切在两个 chunk 之间，逐 chunk 独立处理必然漏检。两家做法同源——**holdback**：nr-llm 每 chunk 对整段已收 buffer 重新脱敏、只放行超出最后 128 字节的安全前缀，尾部在流结束时冲掉；Sether 用 `safeDistanceBytes`（默认 256）做同样的安全距离；关键教训是必须对**原始 buffer**反复处理——已打上的标记（如 `sk-***`）会破坏模式自身的字符类，二次处理会漏掉跨界后半段。
+  我们照此实现，但方向相反：我们要还原的是**占位符**（请求脱敏时已打上），不是现场脱敏秘密——因此每读一块就对整段待发 buffer 做 `Restore`、只放行超出最长占位符长度的安全前缀，流结束时冲掉尾部；多字节 UTF-8 在切分点退让到 rune 边界。差异：holdback 取映射中最长占位符的**转义后**长度（上游 JSON 编码把 `<PII_1>` 写成 `\u003cPII_1\u003e`，比原文长 10 字节），且无映射时走零缓冲直通、不增加延迟。
+- 实现：`internal/guard` 新增 `Redactor`（同一请求内多段文本共享占位符编号——同一值在 content 与 tool_calls 参数里得同一占位符，避免逐段编号合并时冲突）与 `MaxPlaceholderLength`（最长占位符的转义后长度，供流式 holdback 用）；`internal/gateway` 的 `chatRequest` 改为命名类型并解析 `tool_calls`（`scanText` 把参数文本并入防护管线：分级/违禁词/脱敏与 content 同权），`redactBody` 用同一 `Redactor` 处理 content 与各 tool_calls 参数、重组后保留 id/name/tool_call_id；新文件 `internal/gateway/stream.go`（`streamCopy` 带 mapping：无映射直通、有映射缓冲还原 + 用量提取）；`internal/mockllm` 回显 tool_calls 参数（供端到端观测上游实际收到的内容）。另修一个顺带发现的旧 bug：流式用量的旧提取逻辑切片出非法 JSON（前导逗号 + 多余花括号），流式调用一直记 0 tokens、TPM 与统计都漏记，改为按花括号配对解析 usage 对象。
+- 测试：包内 stream 测试 5 项（逐字节/2/3/7 字节分片下转义与原始两种占位符均还原、多字节文本无损、`[DONE]` 收尾、用量提取、流尾占位符冲刷、空映射直通、双占位符不同长度 holdback）+ 包内 redact 测试 3 项（tool_calls 脱敏与字段保留、content/参数共享占位符无冲突、无发现时原文原样直通）+ HTTP 端到端 5 项（流式还原、流式 tool_calls 参数还原、tool_calls 违禁词 400、自带级机密参数 403、受管级机密参数脱敏后 200 且原文还原）+ 冒烟新增 3 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 84 项断言 0 失败。
+- 探针 3 结论：通过——占位符跨分片还原用例全过；同一值在同一请求内跨 content/tool_calls 得同一占位符（跨轮次一致性由每请求从 `_1` 重新编号保证，映射随请求走、不跨请求复用）。
 
 ### F17 渠道信任类型与分级策略梯度 `done`（2026-11-21）
 - 来源：Nathan 2026-11-21 决策：蓝图「分级路由」默认机密走企业自有私有模型的假设不成立——正常公司没有自己的模型（无 GPU/无运维），很多也没有数据库。

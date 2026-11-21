@@ -104,13 +104,45 @@ func (g *Gateway) detector() *guard.Detector {
 }
 
 type chatRequest struct {
-	Model    string `json:"model"`
-	Stream   bool   `json:"stream"`
-	Messages []struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
-	} `json:"messages"`
-	raw map[string]json.RawMessage
+	Model    string        `json:"model"`
+	Stream   bool          `json:"stream"`
+	Messages []chatMessage `json:"messages"`
+	raw      map[string]json.RawMessage
+}
+
+// chatMessage is one OpenAI chat message. ToolCalls carries assistant
+// tool invocations: their function arguments are request payload, not
+// metadata, so they go through the same DLP/classification/redaction
+// pipeline as content (F10).
+type chatMessage struct {
+	Role       string          `json:"role"`
+	Content    json.RawMessage `json:"content"`
+	Name       string          `json:"name,omitempty"`
+	ToolCallID string          `json:"tool_call_id,omitempty"`
+	ToolCalls  []chatToolCall  `json:"tool_calls,omitempty"`
+}
+
+type chatToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+// scanText returns everything in the message the protection pipeline
+// must see: content plus tool_calls function names and arguments.
+func (m chatMessage) scanText() string {
+	var b strings.Builder
+	b.WriteString(contentText(m.Content))
+	for _, tc := range m.ToolCalls {
+		b.WriteString("\n")
+		b.WriteString(tc.Function.Name)
+		b.WriteString("\n")
+		b.WriteString(tc.Function.Arguments)
+	}
+	return b.String()
 }
 
 func contentText(raw json.RawMessage) string {
@@ -358,7 +390,11 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	var allFindings []guard.Finding
 	var fullText strings.Builder
 	for _, m := range req.Messages {
-		t := contentText(m.Content)
+		// Content and tool_calls arguments are both request payload:
+		// a phone number or project code smuggled in a function
+		// argument must classify and block exactly like one in
+		// visible content (F10).
+		t := m.scanText()
 		fullText.WriteString(t)
 		fullText.WriteByte('\n')
 		allFindings = append(allFindings, det.Scan(t)...)
@@ -544,7 +580,9 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	var usedTokens int64
 	if req.Stream {
-		usedTokens = g.streamCopy(w, resp)
+		// Streaming responses restore placeholders too (F10): the
+		// mapping is the same one redactBody built for this request.
+		usedTokens = g.streamCopy(w, resp, mapping)
 	} else {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 		usedTokens = parseUsage(respBody)
@@ -575,49 +613,6 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		DataLevel: level.String(), Decision: decision, Detail: detail, Tokens: usedTokens})
 }
 
-func (g *Gateway) streamCopy(w http.ResponseWriter, resp *http.Response) int64 {
-	for k, vs := range resp.Header {
-		for _, v := range vs {
-			w.Header().Add(k, v)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	fl, _ := w.(http.Flusher)
-	buf := make([]byte, 4096)
-	var tail []byte
-	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			chunk := buf[:n]
-			tail = append(tail, chunk...)
-			if len(tail) > 8192 {
-				tail = tail[len(tail)-8192:]
-			}
-			_, _ = w.Write(chunk)
-			if fl != nil {
-				fl.Flush()
-			}
-		}
-		if err != nil {
-			break
-		}
-	}
-	// Best-effort usage extraction from the final SSE chunk.
-	if i := strings.LastIndex(string(tail), "\"usage\""); i >= 0 {
-		var wrap struct {
-			Usage struct {
-				TotalTokens int64 `json:"total_tokens"`
-			} `json:"usage"`
-		}
-		seg := string(tail)[i-1:]
-		if j := strings.Index(seg, "}"); j >= 0 {
-			_ = json.Unmarshal([]byte(seg[:j+2]), &wrap)
-			return wrap.Usage.TotalTokens
-		}
-	}
-	return 0
-}
-
 func parseUsage(body []byte) int64 {
 	var wrap struct {
 		Usage struct {
@@ -633,24 +628,35 @@ func redactBody(body []byte, det *guard.Detector) ([]byte, map[string]string) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return body, nil
 	}
-	mapping := map[string]string{}
+	// One Redactor for the whole request: the same value in content
+	// and in a tool_calls argument gets the same placeholder, so the
+	// merged mapping never collides (F10).
+	redactor := guard.NewRedactor()
 	changed := false
 	for i, m := range req.Messages {
 		t := contentText(m.Content)
-		findings := det.Scan(t)
-		if len(findings) == 0 {
-			continue
+		if findings := det.Scan(t); len(findings) > 0 {
+			red := redactor.Redact(t, findings)
+			if red != t {
+				changed = true
+				rawMsg, _ := json.Marshal(red)
+				req.Messages[i].Content = rawMsg
+			}
 		}
-		red, mp := guard.Redact(t, findings)
-		for k, v := range mp {
-			mapping[k] = v
-		}
-		if red != t {
-			changed = true
-			rawMsg, _ := json.Marshal(red)
-			req.Messages[i].Content = rawMsg
+		// Tool_calls arguments are redacted in place, exactly like
+		// content; the rest of the tool call (id, name) is untouched.
+		for j, tc := range m.ToolCalls {
+			args := tc.Function.Arguments
+			if findings := det.Scan(args); len(findings) > 0 {
+				red := redactor.Redact(args, findings)
+				if red != args {
+					changed = true
+					req.Messages[i].ToolCalls[j].Function.Arguments = red
+				}
+			}
 		}
 	}
+	mapping := redactor.Mapping()
 	if !changed {
 		return body, mapping
 	}
