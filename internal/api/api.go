@@ -14,6 +14,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/alert"
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
+	"github.com/myjnathan/agentgate/internal/cache"
 	"github.com/myjnathan/agentgate/internal/federation"
 	"github.com/myjnathan/agentgate/internal/folderkb"
 	"github.com/myjnathan/agentgate/internal/oidc"
@@ -32,6 +33,7 @@ type API struct {
 	restAd     *restadapter.Adapter
 	oidc       *oidc.Provider
 	fk         *folderkb.Registry
+	cache      *cache.Cache
 }
 
 func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log) *API {
@@ -63,6 +65,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/audit/export", a.requireAdmin(a.exportAudit))
 	mux.HandleFunc("POST /api/audit/archive", a.requireAdmin(a.archiveAudit))
 	mux.HandleFunc("GET /api/stats", a.requireAdmin(a.getStats))
+	mux.HandleFunc("GET /api/cache", a.requireAdmin(a.getCache))
+	mux.HandleFunc("POST /api/cache", a.requireAdmin(a.setCache))
+	mux.HandleFunc("POST /api/cache/clear", a.requireAdmin(a.clearCache))
 	mux.HandleFunc("GET /api/tokens", a.requireAdmin(a.listTokens))
 	mux.HandleFunc("PATCH /api/tokens/{id}", a.requireAdmin(a.updateTokenLimits))
 	mux.HandleFunc("GET /api/alerts/webhooks", a.requireAdmin(a.listWebhooks))

@@ -73,6 +73,10 @@ func (s *scriptedUpstream) hitCount(name string) int {
 func setupFailover(t *testing.T, pol gateway.Policy, script map[string][]int) (*testEnv, *scriptedUpstream) {
 	t.Helper()
 	e := setupWithPolicy(t, pol)
+	// Failover tests count upstream hits per scripted status sequence;
+	// identical requests would otherwise be served from the
+	// exact-match cache (F11) and never reach the upstream.
+	e.gw.Cache().SetEnabled(false)
 	up := newScriptedUpstream(script)
 	srv := httptest.NewServer(up.handler())
 	t.Cleanup(srv.Close)

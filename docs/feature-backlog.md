@@ -233,10 +233,15 @@
 
 ## P2 — 进阶与差异化
 
-### F11 精确匹配响应缓存 `todo`
+### F11 精确匹配响应缓存 `done`（2026-11-21）
 - 来源：Cloudflare AI Gateway / Portkey cache。
 - 适配：仅 public/internal 且无 DLP 命中时可缓存；缓存键含渠道与密级；管理台可关。
 - 验收：相同请求第二次命中缓存不计上游用量；含敏感内容永不缓存（测试证明）。
+- 借鉴点（Cloudflare AI Gateway 官方文档 developers.cloudflare.com/ai-gateway/features/caching；Portkey 官方文档 portkey.ai/docs/product/ai-gateway/cache-simple-and-semantic，2026-11-21 查阅）：
+  Cloudflare 的缓存键是提供商 + 端点 + 模型 + 认证头 + 整份请求体做 SHA-256，精确匹配才命中，TTL 最小 60 秒、最大一个月，默认关闭、逐请求可跳过（cf-aig-skip-cache）或改 TTL，响应头 cf-aig-cache-status 报告 HIT/MISS；流式响应不缓存（边生成边发送，无法缓存）。Portkey Simple 模式同为整份请求体精确匹配（messages/prompt、model、temperature、max_tokens 及全部参数），另有按 x-portkey-cache-namespace 分区的命名空间、max_age 与强制刷新；语义模式要向量库，只做精确匹配已覆盖确定性调用。我们照此实现，但做三处治理收紧：① 只有请求与响应双向都干净才缓存——请求须公开/内部且 DLP 零命中（有机密词或 PII 的请求根本不查缓存），响应入库前再扫一次（模型也可能对干净提示吐出 PII）；② 键里加渠道 ID 与数据密级，同一请求走不同渠道/密级不共享；③ 命中审计为独立的 `cache_hit` 事件，不进 F2 用量统计（统计只计量上游用量），也不触发 F5 告警。
+- 实现：新包 `internal/cache`（进程内内存缓存：SHA-256 键、TTL 默认 1 小时、最多 1000 条 FIFO 淘汰、仅 200 响应且 ≤1 MiB 才存、命中/未命中计数、停用时不查不存、清空不重置计数；重启即清空，与 F1 的渠道健康状态同为运行时状态）；网关 `Policy.CacheTTL` + `AGENTGATE_CACHE_TTL_SECONDS`（默认 3600，最小 60）与 `AGENTGATE_CACHE_ENABLED`（0/false 启动即停用）；`ChatCompletions` 在管线之后、转发之前查缓存（仅非流式、非 DryRun、公开/内部、无 findings、缓存启用），命中直接返回存体并写 `cache_hit` 审计（0 tokens，不记 TPM/配额/统计），响应头 `X-AgentGate-Cache: HIT/MISS`（不合规请求不查缓存、故无此头）；管理 API `GET /api/cache`（状态与计数）+ `POST /api/cache`（开关）+ `POST /api/cache/clear`（清空，返回条数），仅 admin/security；管理台新增响应缓存卡片（状态/计数 + 启用-停用 + 清空，中英双语）；失败转移时按实际服务渠道的键入库（该渠道成为首选时可再次命中）。
+- 测试：cache 包 7 项（键确定性/渠道与密级区分/参数区分、存取往返与返回体拷贝隔离、过期、停用不查不存、FIFO 淘汰与刷新不驱逐、超大与非 200 拒绝入库、统计与清空不重置计数）+ 网关缓存测试 5 项（命中返回与首份响应逐字节相同且审计恰为 1 次上游调用 + 1 次 cache_hit、变 temperature 不命中、PII 请求两次均走上游且无缓存头、机密请求不查缓存、流式无缓存头、干净请求但响应含 PII 时两次均走上游）+ API 端点 1 项（状态默认值/员工 403/匿名 401/开关往返/缺字段 400/清空）；另修顺带发现的测试精度问题：故障转移测试的相同请求会被缓存截住不再触及上游，`setupFailover` 改为停用缓存（该套测试测的是上游故障计数，与缓存无关）；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 105 项断言 0 失败（新增 13 项 F11 断言）。
+- 已知注意点：同一密级的公开/内部请求若首选渠道相同会共享缓存条目——响应本身无差别（无敏感内容、无脱敏），共享安全；缓存键是整份请求体的精确匹配，键顺序或空白不同即不命中（与 Cloudflare/Portkey 的精确匹配语义一致）；故障转移链中首选渠道故障时按实际服务渠道入库，首选恢复前命中率略降（正确性不受影响）；语义缓存（近似匹配）需要向量库，与零依赖定位冲突，本轮不做。
 
 ### F12 渠道多 Key 与轮换 `todo`
 - 来源：New API 渠道多 key 轮询、LiteLLM key rotation。

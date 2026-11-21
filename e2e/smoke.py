@@ -586,6 +586,67 @@ def main():
     check("folder rescan no-op when unchanged", s == 200 and rs.get("stats", {}).get("unchanged") == 1
           and rs.get("stats", {}).get("added") == 0)
 
+    # F11: exact-match response cache. Only clean public/internal
+    # non-streaming calls are cached; a hit serves the stored body
+    # (the same `created` second proves it — hence the sleep) and
+    # does not count toward upstream usage. Go canonicalizes the
+    # header name to X-Agentgate-Cache on the wire.
+    def chat_raw(token, payload, headers=None):
+        req = urllib.request.Request(BASE + "/v1/chat/completions",
+            data=json.dumps(payload).encode())
+        req.add_header("Authorization", "Bearer " + token)
+        req.add_header("Content-Type", "application/json")
+        if headers:
+            for k, v in headers.items():
+                req.add_header(k, v)
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, dict(r.headers), json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, dict(e.headers), json.loads(e.read() or b"{}")
+
+    s, cache0 = call("/api/cache", token=admin_tok, method="GET")
+    check("cache status reports enabled", s == 200 and cache0.get("enabled") is True
+          and cache0.get("ttl_seconds", 0) >= 60 and "hits" in cache0 and "misses" in cache0)
+    s, _ = call("/api/cache", token=sess, method="GET")
+    check("cache status forbidden for employee", s == 403)
+
+    cache_q = {"model": "mock-eco", "messages": [{"role": "user", "content": "缓存冒烟：星河精密的考勤制度是什么"}]}
+    s1, h1, b1 = chat_raw(tok3, cache_q)
+    check("first identical call is a cache MISS", s1 == 200 and h1.get("X-Agentgate-Cache") == "MISS" and "choices" in b1)
+    _time.sleep(1.2)
+    s2, h2, b2 = chat_raw(tok3, cache_q)
+    check("second identical call is a cache HIT with identical body",
+          s2 == 200 and h2.get("X-Agentgate-Cache") == "HIT" and b2 == b1)
+    s3, h3, _ = chat_raw(tok3, {**cache_q, "temperature": 0.7})
+    check("same prompt with different temperature is a MISS", s3 == 200 and h3.get("X-Agentgate-Cache") == "MISS")
+
+    pii_q = {"model": "mock-eco", "messages": [{"role": "user", "content": "我的手机号是13812345678，帮我记下来"}]}
+    _, hp1, _ = chat_raw(tok3, pii_q)
+    _time.sleep(1.2)
+    _, hp2, _ = chat_raw(tok3, pii_q)
+    check("request with PII never consults the cache",
+          hp1.get("X-Agentgate-Cache") is None and hp2.get("X-Agentgate-Cache") is None)
+
+    s, tog = call("/api/cache", {"enabled": False}, token=admin_tok, method="POST")
+    check("cache toggle off", s == 200 and tog.get("enabled") is False)
+    _, hd1, _ = chat_raw(tok3, cache_q)
+    _, hd2, _ = chat_raw(tok3, cache_q)
+    check("disabled cache serves no hits",
+          hd1.get("X-Agentgate-Cache") is None and hd2.get("X-Agentgate-Cache") is None)
+    s, tog = call("/api/cache", {"enabled": True}, token=admin_tok, method="POST")
+    check("cache toggle on", s == 200 and tog.get("enabled") is True)
+    _, he, be = chat_raw(tok3, cache_q)
+    check("re-enabled cache serves the kept entry", he.get("X-Agentgate-Cache") == "HIT" and be == b1)
+    s, clr = call("/api/cache/clear", {}, token=admin_tok, method="POST")
+    check("cache clear", s == 200 and clr.get("cleared", 0) >= 1)
+    _, hc, _ = chat_raw(tok3, cache_q)
+    check("cleared entry is a MISS again", hc.get("X-Agentgate-Cache") == "MISS")
+    s, cache1 = call("/api/cache", token=admin_tok, method="GET")
+    check("cache counters moved", s == 200
+          and cache1.get("hits", 0) - cache0.get("hits", 0) >= 2
+          and cache1.get("misses", 0) - cache0.get("misses", 0) >= 3)
+
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
 

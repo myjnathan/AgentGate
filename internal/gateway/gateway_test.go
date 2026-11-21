@@ -23,6 +23,7 @@ type testEnv struct {
 	srv     *httptest.Server
 	st      *store.Store
 	al      *audit.Log
+	gw      *gateway.Gateway
 	byoaTok string
 	mgdTok  string
 }
@@ -87,7 +88,7 @@ func setupWithPolicy(t *testing.T, pol gateway.Policy) *testEnv {
 		}
 		return plain
 	}
-	return &testEnv{srv: srv, st: st, al: al,
+	return &testEnv{srv: srv, st: st, al: al, gw: gw,
 		byoaTok: mkToken("lixiaofeng", store.TierBYOA),
 		mgdTok:  mkToken("chenjing", store.TierManaged)}
 }
