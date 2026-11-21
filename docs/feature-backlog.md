@@ -119,15 +119,62 @@
 
 ## P1 — 能力侧扩展（MCP 联邦与企业接入）
 
-### F6 MCP 联邦代理 `todo`
+### F6 MCP 联邦代理 `done`（2026-11-21）
 - 来源：IBM ContextForge：把多个上游 MCP Server 联邦到一个端点，工具名加命名空间前缀防冲突，统一鉴权与限流。
 - 适配：上游工具继承平台的工具级授权与密级标注；上游凭据服务端加密托管（dsh-ee 模式）；工具出入参过 DLP。
 - 验收：注册一个上游 MCP（如本地测试 server）后，其工具以 `upstream.tool` 形式出现在 tools/list 并可调用；未授权等级调用被拒。
+- 借鉴点（ContextForge 官方文档 ibm.github.io/mcp-context-forge/architecture；PyPI mcp-contextforge-gateway，2026-11-21 查阅）：
+  多个 MCP/REST 后端联邦到单一合规端点、注册中心合并各后端能力目录、虚拟服务器按需组合工具子集、
+  定期健康检查与故障转移、工具带输入校验与重试/限流策略、插件式请求/响应钩子（含 PII 过滤）。
+  我们照此实现，但收紧为企业治理语义：联邦只做一层代理（不做对等网关发现/mDNS、不做 Redis 同步，
+  工具列表 60 秒缓存 + 失败回落旧缓存）；命名空间即工具前缀（`hr.leave_balance`），
+  上游只配最高密级与最低等级两把闸（ContextForge 是通用注册中心，我们把授权收进平台分级体系）；
+  凭据用主密钥 AES-GCM 加密托管、只在转发瞬间解密；出入参都过 DLP（ContextForge 的 PII 插件是可选项，
+  我们是强制门禁）。
+- 实现：新包 `internal/federation`（JSON-RPC 2.0 over HTTP 转发、60 秒工具列表缓存、失败回落旧缓存、
+  上游错误不透传原文）；`store.UpstreamServer`（命名空间/URL/加密凭据/最高密级/最低等级）；
+  `/mcp` 的 tools/list 合并本地与联邦工具（高于调用者等级的上游对该调用者隐藏，不可达上游静默缺席）、
+  tools/call 对命名空间工具先做等级授权、再对参数做 DLP（违禁词或密级高于上游上限直接拦截、参数永不外发），
+  结果复用本地工具的 DLP 扫描与自带级脱敏规则；`GET/POST /api/mcp/upstreams` +
+  `DELETE /api/mcp/upstreams/{id}` + `POST /api/mcp/upstreams/{id}/test`（仅 admin/security，
+  命名空间校验、重名 409、凭据永不回显、测试走实时拉取）；管理台新增联邦上游卡片（中英双语）。
+- 测试：federation 包 4 项（列表缓存命中 1 次、刷新失败回落旧缓存、转发带凭据与参数、上游宕机报错）+
+  MCP 集成 6 项（命名空间列表与等级隐藏、转发成功、受管级上游拒自带级、机密参数被拦、违禁词参数被拦、
+  自带级结果脱敏/受管级原文、未知命名空间）+ API 端点测试（鉴权 401/403、命名空间/URL 校验 400、
+  重名 409、凭据加密存储与不回显、死链测试 502、删除 404）+ 冒烟新增 12 项断言；
+  `gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 37 项断言 0 失败。
 
-### F7 REST → MCP 适配 `todo`
+### F7 REST → MCP 适配 `done`（2026-11-21）
 - 来源：ContextForge 的 REST-to-MCP（按 OpenAPI/手工映射把存量 REST API 变成工具）。
 - 适配：映射配置里声明工具密级与最低 Agent 等级；请求头可注入托管凭据。
 - 验收：把一个示例 REST 接口注册为工具并成功调用；参数 schema 校验生效。
+- 借鉴点（ContextForge 官方 README 与文档 ibm.github.io/mcp-context-forge；mcp-rest-forge 配置模型，2026-11-21 查阅）：
+  ContextForge 的 REST 工具是逐端点 JSON 注册（name/url/request_type/input_schema），
+  凭据经 header passthrough 注入；v1.0.5 起可从 OpenAPI 生成单个端点的 schema，但整份 spec
+  导入已明确 not planned——大 API 仍需逐端点注册或自写转换脚本。mcp-rest-forge 的 YAML
+  模型与之同源：method/path 模板（{{param}} 转义替换）/query_params/body/headers。
+  我们照此实现，但收紧为企业治理语义：每个工具只配最高密级与最低等级两把闸（与 F6 同款），
+  参数 schema 由管理员在注册时提供并即时校验（不做 OpenAPI 整份导入——与 ContextForge
+  的取舍一致，留待后续轮次评估）；上游 5xx 只报状态码不回传 body（不透传上游内部细节），
+  响应单体上限 1 MiB；凭据只在调用瞬间解密注入。
+- 实现：新包 `internal/restadapter`（路径模板 {{param}} 转义替换、其余参数 GET/DELETE 走 query、
+  POST/PUT/PATCH 走 JSON body、JSON Schema 子集校验 required/type/enum/未知参数拒绝、
+  上游错误只报状态码、1 MiB 响应上限）；`store.RESTTool`（方法/基址/路径模板/静态头/
+  加密托管凭据/输入 schema/最高密级/最低等级）；`/mcp` tools/list 合并 `rest.<name>` 工具
+  （高于调用者等级的隐藏）、tools/call 走与联邦工具相同的门禁（等级授权 → 参数 DLP →
+  密级上限）与结果 DLP + 自带级脱敏，参数校验失败报 -32602；`GET/POST /api/mcp/rest-tools` +
+  `DELETE /api/mcp/rest-tools/{id}` + `POST /api/mcp/rest-tools/{id}/test`（仅 admin/security，
+  名称 snake_case、方法白名单、路径以 / 开头、schema 注册时校验、重名 409、凭据永不回显，
+  测试端点返回 ok + 200 字内 preview 且不写入审计）；管理台新增 REST 工具卡片（中英双语）；
+  演示：mock 增加 `/mock/demo/hr/leave-balance`（星河精密虚拟 HR 接口），seed 注册
+  `rest.leave_balance` 演示工具。
+- 测试：restadapter 包 6 项（GET 路径模板转义 + query、POST JSON body + 凭据注入、
+  schema 校验四类拒绝、5xx 不泄漏 body、schema 注册校验、名称/方法白名单）+
+  MCP 集成 8 项（命名空间列表与等级隐藏、GET 转发、POST body 转发、受管级工具拒自带级、
+  参数校验 -32602、机密/违禁词参数被拦、自带级结果脱敏/受管级原文、未知工具）+
+  API 端点测试（鉴权 401/403、名称/方法/路径/schema 校验 400、重名 409、凭据加密存储与
+  不回显、测试端点成功/400/404/502）+ 冒烟新增 16 项断言；
+  `gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 53 项断言 0 失败。
 
 ### F8 Prompt 模板库 `todo`
 - 来源：ContextForge Prompt Registry（模板版本管理 + 回滚）、Portkey prompt management。
@@ -143,6 +190,16 @@
 - 来源：蓝图探针 3；AstrLink 的流式占位符处理思路。
 - 适配：SSE 分片跨界占位符缓冲还原；请求中 tool_calls 参数同样过 DLP 与分级。
 - 验收：构造占位符被分片切断的用例仍正确还原；tool 参数含机密词时按等级拦截/脱敏；测试全绿。
+
+### F17 渠道信任类型与分级策略梯度 `todo`
+- 来源：Nathan 2026-11-21 决策：蓝图「分级路由」默认机密走企业自有私有模型的假设不成立——正常公司没有自己的模型（无 GPU/无运维），很多也没有数据库。
+- 适配：分级放行不绑「自有模型」，改绑「通道信任类型」梯度：公开/内部走签约云（零留存/不训练承诺）；机密默认走「网关脱敏后上云」（原文不出公司，云端只见代号、响应还原），厂商专有云/VPC 部署为可选项；绝密走本地小模型（单机可跑）或直接拦截并明确提示「无合规通道」。私有模型从必需项降为可选项之一。默认「保守模式」预设（机密以上默认拦、审计全开），上线路径分三步「先观察（DryRun 只审计不拦截）→ 再提醒 → 后拦截」。
+- 验收：渠道配置信任类型（签约云 / 专有云-VPC / 本地小模型）；机密请求在无合规通道时被拦截并返回明确原因；蓝图与企业级防护设计文档同步修订。
+
+### F18 文件夹即知识库 `todo`
+- 来源：Nathan 2026-11-21 决策：目标客户是传统/保守公司，连知识库也没有——知识散落在共享文件夹的 Word/Excel/PDF 与老员工脑子里。设计原则「零预置假设」：不假设客户有自有模型、数据库、知识库中的任何一样。
+- 适配：指定共享文件夹即自动索引（按文件夹映射密级、增量更新、关键词检索），不要求客户先整理录入；与现有 kb 检索同一流水线（关键词检索，不用向量库——与零依赖定位一致）。关键设计（Nathan 补充）：采用 PageIndex 式索引树 + Wiki 形态 + 渐进式披露——索引分三层（全局目录/Wiki 首页 → 每份文档的摘要页与章节页码索引树 → 原文按需下钻），Agent 先看目录和摘要、判断相关后才取具体章节原文，大幅减少上下文占用，引用可精确到文件+章节+页码；摘要生成本身也必须走分级路由/脱敏，不能成为泄漏通道；副产品是公司直接得到一个可浏览的 Wiki 知识库。与现有无向量库、关键词路线同源（PageIndex 本就是无向量 RAG 思路）。
+- 验收：指定一个含 Word/PDF 的演示文件夹后可检索到内容；文件夹密级映射生效（机密文件夹内容自带级不可见）；增量更新只索引变化文件。
 
 ## P2 — 进阶与差异化
 
