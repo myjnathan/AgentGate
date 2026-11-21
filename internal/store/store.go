@@ -140,6 +140,53 @@ type Webhook struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// UpstreamServer is a federated upstream MCP server (backlog F6).
+// Its tools are exposed through AgentGate's own /mcp endpoint under
+// the "<name>.<tool>" namespace. AuthTokenEnc holds the optional
+// bearer token for the upstream, encrypted with the master key
+// (AES-GCM, see package secretbox); it is never returned by the API.
+// MaxDataLevel caps the data level that may be sent to this upstream;
+// MinTier is the lowest token tier allowed to call its tools.
+type UpstreamServer struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"` // namespace, e.g. "hr"
+	URL          string    `json:"url"`
+	AuthTokenEnc string    `json:"-"`
+	HasToken     bool      `json:"has_token"`
+	MaxDataLevel DataLevel `json:"max_data_level"`
+	MinTier      Tier      `json:"min_tier"`
+	Enabled      bool      `json:"enabled"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// RESTTool is a registered REST endpoint exposed as an MCP tool
+// (backlog F7). It appears in /mcp tools/list as "rest.<name>" and a
+// call is translated into one HTTP request: path template parameters
+// ({{param}}) are substituted and URL-escaped, the remaining
+// arguments go to the query string (GET/DELETE) or a JSON body
+// (POST/PUT/PATCH). AuthTokenEnc holds the optional hosted credential,
+// injected as an Authorization header and decrypted only at call
+// time; it is never returned by the API. InputSchema is the JSON
+// Schema (object) the arguments are validated against before any
+// request is built. MaxDataLevel caps the data level that may be sent
+// to this endpoint; MinTier is the lowest token tier allowed to call it.
+type RESTTool struct {
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description"`
+	BaseURL      string            `json:"base_url"`
+	Method       string            `json:"method"`
+	Path         string            `json:"path"`
+	Headers      map[string]string `json:"headers,omitempty"`
+	AuthTokenEnc string            `json:"-"`
+	HasToken     bool              `json:"has_token"`
+	InputSchema  json.RawMessage   `json:"input_schema"`
+	MaxDataLevel DataLevel         `json:"max_data_level"`
+	MinTier      Tier              `json:"min_tier"`
+	Enabled      bool              `json:"enabled"`
+	CreatedAt    time.Time         `json:"created_at"`
+}
+
 type DeviceCode struct {
 	Code      string    `json:"code"`   // user-facing code, e.g. AG-XXXXXX
 	Secret    string    `json:"secret"` // polling secret held by the setup tool
@@ -210,14 +257,16 @@ type KBDoc struct {
 }
 
 type State struct {
-	Users       map[string]*User       `json:"users"`
-	Devices     map[string]*Device     `json:"devices"`
-	Tokens      map[string]*APIToken   `json:"tokens"` // by ID
-	DeviceCodes map[string]*DeviceCode `json:"device_codes"`
-	Channels    map[string]*Channel    `json:"channels"`
-	Skills      map[string]*Skill      `json:"skills"`
-	KBDocs      map[string]*KBDoc      `json:"kb_docs"`
-	Webhooks    map[string]*Webhook    `json:"webhooks"`
+	Users       map[string]*User           `json:"users"`
+	Devices     map[string]*Device         `json:"devices"`
+	Tokens      map[string]*APIToken       `json:"tokens"` // by ID
+	DeviceCodes map[string]*DeviceCode     `json:"device_codes"`
+	Channels    map[string]*Channel        `json:"channels"`
+	Skills      map[string]*Skill          `json:"skills"`
+	KBDocs      map[string]*KBDoc          `json:"kb_docs"`
+	Webhooks    map[string]*Webhook        `json:"webhooks"`
+	Upstreams   map[string]*UpstreamServer `json:"upstreams"`
+	RESTTools   map[string]*RESTTool       `json:"rest_tools"`
 }
 
 func newState() *State {
@@ -230,6 +279,8 @@ func newState() *State {
 		Skills:      map[string]*Skill{},
 		KBDocs:      map[string]*KBDoc{},
 		Webhooks:    map[string]*Webhook{},
+		Upstreams:   map[string]*UpstreamServer{},
+		RESTTools:   map[string]*RESTTool{},
 	}
 }
 
@@ -271,6 +322,12 @@ func New(dir string) (*Store, error) {
 		}
 		if st.Webhooks == nil {
 			st.Webhooks = map[string]*Webhook{}
+		}
+		if st.Upstreams == nil {
+			st.Upstreams = map[string]*UpstreamServer{}
+		}
+		if st.RESTTools == nil {
+			st.RESTTools = map[string]*RESTTool{}
 		}
 		s.st = &st
 	} else if !os.IsNotExist(err) {
