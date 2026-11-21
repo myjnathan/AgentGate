@@ -12,12 +12,14 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
 	"github.com/myjnathan/agentgate/internal/federation"
+	"github.com/myjnathan/agentgate/internal/folderkb"
 	"github.com/myjnathan/agentgate/internal/guard"
 	"github.com/myjnathan/agentgate/internal/kb"
 	"github.com/myjnathan/agentgate/internal/restadapter"
@@ -31,8 +33,16 @@ type Server struct {
 	det   *guard.Detector
 	fed   *federation.Registry
 	rest  *restadapter.Adapter
+	fk    *folderkb.Registry
 	// ToolMinTier: minimum tier required per tool (default BYOA).
 	ToolMinTier map[string]store.Tier
+}
+
+// SetFolderKB wires the folder knowledge-base registry (backlog
+// F18) used by kb_catalog / kb_structure / kb_section and by the
+// folder half of kb_search.
+func (s *Server) SetFolderKB(fk *folderkb.Registry) {
+	s.fk = fk
 }
 
 func New(st *store.Store, au *auth.Service, al *audit.Log, det *guard.Detector, fed *federation.Registry, rest *restadapter.Adapter) *Server {
@@ -57,7 +67,7 @@ type toolDef struct {
 var tools = []toolDef{
 	{
 		Name:        "kb_search",
-		Description: "Search the enterprise knowledge base by keywords. Returns cited excerpts. Call repeatedly with refined keywords, then use kb_get to read the original document.",
+		Description: "Search the enterprise knowledge base by keywords. Covers seeded documents and folder-indexed files; returns cited excerpts (file, section, pages). Call repeatedly with refined keywords, then use kb_get for a seeded document or kb_section for a folder document.",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{
 			"query": map[string]any{"type": "string", "description": "space-separated keywords"},
 		}, "required": []string{"query"}},
@@ -68,6 +78,26 @@ var tools = []toolDef{
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{
 			"doc_id": map[string]any{"type": "string"},
 		}, "required": []string{"doc_id"}},
+	},
+	{
+		Name:        "kb_catalog",
+		Description: "List the folder-indexed knowledge-base documents visible at your tier (the Wiki home): title, source folder, data level, page count and top-level sections. Start here, then read a document's structure with kb_structure.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
+		Name:        "kb_structure",
+		Description: "Read one folder document's section tree: node id, title, page range and summary per section (no full text). Pick a node, then read it with kb_section.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+			"doc_id": map[string]any{"type": "string"},
+		}, "required": []string{"doc_id"}},
+	},
+	{
+		Name:        "kb_section",
+		Description: "Read the full text of one section of a folder document by node id (see kb_structure). The result is cited as file + section + pages.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+			"doc_id":  map[string]any{"type": "string"},
+			"node_id": map[string]any{"type": "string"},
+		}, "required": []string{"doc_id", "node_id"}},
 	},
 	{
 		Name:        "whoami",
@@ -341,12 +371,76 @@ func (s *Server) callTool(w http.ResponseWriter, ctx context.Context, req rpcReq
 		text = string(b)
 	case "kb_search":
 		q, _ := params.Arguments["query"].(string)
-		var hits []kb.Hit
+		maxLevel := kb.MaxLevelForTier(tok.Tier)
+		var hits []folderkb.Hit
 		s.st.Read(func(st *store.State) {
-			hits = kb.Search(st, q, kb.MaxLevelForTier(tok.Tier), 10)
+			for _, h := range kb.Search(st, q, maxLevel, 10) {
+				hits = append(hits, folderkb.Hit{
+					DocID: h.DocID, Title: h.Title, Level: h.Level,
+					Score: h.Score, Excerpt: h.Excerpt, Source: "kb", Version: h.Version,
+				})
+			}
 		})
+		// Folder-indexed files (backlog F18) search alongside the
+		// seeded documents, under the same level gate.
+		if s.fk != nil {
+			hits = append(hits, s.fk.Search(q, maxLevel, 10)...)
+		}
+		sort.Slice(hits, func(i, j int) bool {
+			if hits[i].Score != hits[j].Score {
+				return hits[i].Score > hits[j].Score
+			}
+			return hits[i].DocID < hits[j].DocID
+		})
+		if len(hits) > 10 {
+			hits = hits[:10]
+		}
 		b, _ := json.Marshal(map[string]any{"hits": hits})
 		text = string(b)
+	case "kb_catalog":
+		entries := []folderkb.CatalogEntry{}
+		if s.fk != nil {
+			entries = s.fk.Catalog(kb.MaxLevelForTier(tok.Tier))
+		}
+		b, _ := json.Marshal(map[string]any{"documents": entries})
+		text = string(b)
+	case "kb_structure":
+		id, _ := params.Arguments["doc_id"].(string)
+		var tree *folderkb.Node
+		var found bool
+		if s.fk != nil {
+			tree, found = s.fk.Structure(id, kb.MaxLevelForTier(tok.Tier))
+		}
+		if !found {
+			text, isErr = "document not found or not accessible at your tier", true
+		} else {
+			b, _ := json.Marshal(map[string]any{
+				"doc_id": id, "title": tree.Title, "pages": tree.EndPage, "tree": tree,
+			})
+			text = string(b)
+		}
+	case "kb_section":
+		id, _ := params.Arguments["doc_id"].(string)
+		nodeID, _ := params.Arguments["node_id"].(string)
+		var sec *folderkb.Section
+		var file string
+		var found bool
+		if s.fk != nil {
+			sec, file, found = s.fk.Section(id, nodeID, kb.MaxLevelForTier(tok.Tier))
+		}
+		if !found {
+			text, isErr = "document or section not found or not accessible at your tier", true
+		} else {
+			pages := strconv.Itoa(sec.StartPage)
+			if sec.EndPage > sec.StartPage {
+				pages = strconv.Itoa(sec.StartPage) + "-" + strconv.Itoa(sec.EndPage)
+			}
+			b, _ := json.Marshal(map[string]any{
+				"doc_id": id, "file": file, "section": sec.Title,
+				"pages": pages, "text": sec.Text,
+			})
+			text = string(b)
+		}
 	case "kb_get":
 		id, _ := params.Arguments["doc_id"].(string)
 		var doc *store.KBDoc

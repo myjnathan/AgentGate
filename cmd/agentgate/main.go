@@ -39,6 +39,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
 	"github.com/myjnathan/agentgate/internal/federation"
+	"github.com/myjnathan/agentgate/internal/folderkb"
 	"github.com/myjnathan/agentgate/internal/gateway"
 	"github.com/myjnathan/agentgate/internal/guard"
 	"github.com/myjnathan/agentgate/internal/mcp"
@@ -146,12 +147,30 @@ func main() {
 			log.Printf("OIDC enabled: issuer %s (local login still available)", oidcCfg.Issuer)
 		}
 	}
+	// Folder knowledge base (backlog F18): the in-memory index over
+	// registered shared folders. Indexed at startup (after the demo
+	// seed above, so demo folders are included) and on admin rescan.
+	fk := folderkb.New(st)
 	mcpSrv := mcp.New(st, au, al, det, fed, restAd)
+	mcpSrv.SetFolderKB(fk)
 	rest := api.New(st, au, box, al)
 	rest.SetOIDC(oidcProvider)
 	rest.SetFederation(fed)
 	rest.SetRESTAdapter(restAd)
+	rest.SetFolderKB(fk)
 	rest.SetAlertDispatcher(dispatcher)
+	for _, src := range fk.Sources() {
+		if !src.Enabled {
+			continue
+		}
+		stats, err := fk.Rescan(src)
+		if err != nil {
+			log.Printf("folderkb: %s (%s): %v", src.Name, src.Path, err)
+			continue
+		}
+		log.Printf("folderkb: %s: %d docs (%d added, %d updated, %d unchanged, %d errors)",
+			src.Name, fk.DocCount(src.ID), stats.Added, stats.Updated, stats.Unchanged, stats.Errors)
+	}
 
 	mux := http.NewServeMux()
 	mux.Handle("/", webui.Handler())

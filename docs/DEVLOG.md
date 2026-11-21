@@ -2,6 +2,17 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-21 · F18 文件夹即知识库
+- 本轮按常规规程选条目：特别指令（F17 + 蓝图修订稿）已在 F17 轮执行完毕、执行后作废；P0 全部 done，P1 按清单顺序取 F18（唯一剩余 P1 条目）。远端 main 已含 F10（PR #6，HEAD 95729472），无在途分支需续传。
+- 借鉴 PageIndex 官方介绍（pageindex.ai/blog/pageindex-intro）与架构深挖（nowucca.com/research/pageindex）：索引是一棵章节树（节点含 node_id、标题、起止页码、每节点一段摘要），检索是 Agent 用三个工具走目录 → 读树（只要摘要不要正文）→ 按页取原文；Flash 模式不用 LLM 建结构（字体样式识别标题、优先用 PDF 内嵌书签）。我们照此实现，但做三处改动：① 摘要不用模型生成，改抽取式（章节首句）——摘要生成因此不产生任何出站调用、不成为泄漏通道；② PDF 用真实页码，.md/.txt/.docx 用 45 行伪页；③ 检索仍保留关键词（与现有 kb 同一流水线），树只负责渐进式取用。
+- 实现：新包 `internal/folderkb`（内存索引 `Registry` + 增量 `Rescan`：大小+修改时间未变不读文件、内容哈希相同保留旧解析、抽取失败保留上次可用索引；`Catalog`/`Structure`/`Section` 三层取用 + 按章节粒度的 `Search`）；抽取器纯标准库：.md/.txt（ATX 标题建树）、.docx（zip + XML，只取 `w:t`，Heading1/2/3 建树、显式分页符分断）、.pdf（best-effort：Flate 解压 + Tj/TJ 字面串抽取，内容流与页数 1:1 时映射真实页码）；`store.KBFolderSource` 持久化注册、索引不落盘；管理 API `GET/POST /api/kb/folders` + `DELETE /api/kb/folders/{id}` + `POST /api/kb/folders/{id}/rescan`（仅 admin/security）；MCP 新工具 `kb_catalog` / `kb_structure` / `kb_section`，`kb_search` 合并种子文档与文件夹命中；管理台新增文件夹知识库卡片（中英双语）；演示种子注册 `demo/folders/公司制度/`（internal：.md）与 `demo/folders/机密资料/`（confidential：2 页 .pdf，内容流未压缩以保持纯 UTF-8）。
+- 关键决策：摘要抽取式而非模型生成——这是治理要求不是偷工减料：摘要是原文子串、不出本机、与原文同密级门禁，不可能把机密内容带到不该去的地方；首个一级标题即文档标题、不进章节树（.md 的 H1 与 .docx 的 Heading1 同理）；根节点（n0）章节含整篇文档正文、但检索时有子节点即不参与（否则每处命中重复两次）；无标题的多页文档按页建节（「第 N 页」），引用保持页码精确；机密文件夹对自带级四处不可见（目录/检索/章节树/章节原文），与 `kb_get` 的受管级限制同源但按 `MaxLevelForTier` 放行内部章节。
+- 测试：folderkb 包 7 项 + API 端点 1 项（注册→列表→重扫→删除全链路、400/403/404/409）+ MCP 集成 3 项（目录→结构→章节三步取用、机密文件夹隔离、kb_search 合并命中）+ 冒烟新增 8 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 92 项断言 0 失败。
+- 已知限制：伪页不是渲染页码；.docx 只读正文段落；PDF 抽取不支持扫描件、加密 PDF 与非标准编码（计入扫描 errors）；Excel 暂不支持；索引在内存中，重启后启动时自动重扫。详见 docs/folder-kb.md。
+- 推送：按分支 + PR 机制走 `loop/f18` 分支，见本轮汇报。
+- 推送结果：待填。
+- 另记（推送通道限制）：GitHub 连接器的两种写通道都无法原样传输二进制文件——`push-files` 只接受 UTF-8 文本（快照校验直接拒掉含非 UTF-8 内容的整包），contents API（`create_or_update_file`）会把 `content` 当文本再做一次 Base64（实测：传 Base64 串存下来的是 Base64 文本本身，blob SHA 与 Base64 文本一致；传 latin-1 解码串会被 UTF-8 重编码，字节膨胀）。本轮因此：① 演示 PDF 改为未压缩内容流（仍是合法 2 页 PDF，纯 UTF-8，可走快照推送；Flate 解压路径由单元测试覆盖）；② 演示文件夹去掉 .docx（.docx 抽取仍由单元测试覆盖，测试内现生成夹具）；③ 两次二进制试错各在 `loop/f18` 分支留了一个提交（先是 Base64 文本版 PDF、再是 UTF-8 重编码版），最终以快照推送修正，分支历史有此污点、终态文件正确。后续轮次如需向仓库推二进制演示文件，须另寻通道（Nathan 网页端上传或本地 git 推送）。
+
 ## 2026-11-21 · F10 流式脱敏与 tool_calls 防护（探针 3）
 - 本轮按常规规程选条目：特别指令（F17 + 蓝图修订稿）已在 F17 轮执行完毕、执行后作废；P0 全部 done，P1 按清单顺序取 F10。远端 main 已含 F9（PR #5，HEAD 0032b40a），无在途分支需续传。
 - 借鉴 nr-llm ADR 88《Live streaming redaction》与 Sether《PII redaction for LLM applications》：流式处理的核心是 holdback——秘密/占位符可能被切在两个 chunk 之间，逐 chunk 独立处理必然漏；做法是对整段已收 buffer 反复处理、只放行超出安全距离（最长占位符的转义后长度）的前缀，尾部在流结束时冲掉；且必须对原始 buffer 反复处理（已打标记会破坏模式字符类）。我们方向相反（还原占位符而非现场脱敏），但同一 holdback 模式；无映射时零缓冲直通。
@@ -10,7 +21,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 测试：包内 stream 测试 5 项（1/2/3/7 字节分片下转义与原始两种占位符均还原、多字节文本无损、流尾占位符冲刷、用量提取、空映射直通、双占位符不同长度 holdback）+ 包内 redact 测试 3 项（tool_calls 脱敏与字段保留、共享占位符无冲突、无发现时原文直通）+ HTTP 端到端 5 项（流式还原、流式 tool_calls 参数还原、tool_calls 违禁词 400、自带级机密参数 403、受管级机密参数脱敏后 200 且原文还原）+ 冒烟新增 3 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 84 项断言 0 失败。
 - 探针 3 结论：通过——占位符跨分片还原用例全过；同一值在同一请求内跨 content/tool_calls 得同一占位符。
 - 推送：按分支 + PR 机制走 `loop/f10` 分支，见本轮汇报。
-- 推送结果：（待填）
+- 推送结果：整包快照推送一次成功（push-files，11 个文件一次提交 dda1cfe7，逐文件哈希核对 11/11 一致，未触发 contents API 回退；核对时发现 `get_file_contents`/`list_commits` 的分支参数名应为 `ref`/`sha` 而非 `branch`，错传会被静默忽略读回 main——已用正确参数重核）；PR #6 文件清单与本轮一致，已合并进远端 main，远端 HEAD 95729472（合并提交），读回验证 stream.go 已在 main 上。
 
 ## 2026-11-21 · F9 OIDC / LDAP 登录
 - 本轮按常规规程选条目：特别指令（F17 + 蓝图修订稿）已在 F17 轮执行完毕、执行后作废；P0 全部 done，P1 按清单顺序取 F9。Nathan 于本轮前在主对话说「继续」，Loop 照每小时一轮推进。

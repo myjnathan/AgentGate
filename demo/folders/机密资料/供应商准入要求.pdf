@@ -1,0 +1,30 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 128 >>
+stream
+BT /F1 12 Tf 72 720 Td (供应商准入要求) Tj ET
+BT 72 700 Td (供应商须提供营业执照与质量体系证书。) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 107 >>
+stream
+BT /F1 12 Tf 72 720 Td (准入流程) Tj ET
+BT 72 700 Td (初审通过后进入现场审核环节。) Tj ET
+endstream
+endobj
+trailer
+<< /Root 1 0 R >>
+%%EOF

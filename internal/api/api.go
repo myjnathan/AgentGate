@@ -15,6 +15,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
 	"github.com/myjnathan/agentgate/internal/federation"
+	"github.com/myjnathan/agentgate/internal/folderkb"
 	"github.com/myjnathan/agentgate/internal/oidc"
 	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/secretbox"
@@ -30,6 +31,7 @@ type API struct {
 	fed        *federation.Registry
 	restAd     *restadapter.Adapter
 	oidc       *oidc.Provider
+	fk         *folderkb.Registry
 }
 
 func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log) *API {
@@ -82,6 +84,10 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/prompts/{id}/review", a.requireAdmin(a.reviewPrompt))
 	mux.HandleFunc("POST /api/prompts/{id}/publish", a.requireAdmin(a.publishPrompt))
 	mux.HandleFunc("DELETE /api/prompts/{id}", a.requireAdmin(a.deletePrompt))
+	mux.HandleFunc("GET /api/kb/folders", a.requireAdmin(a.listFolderSources))
+	mux.HandleFunc("POST /api/kb/folders", a.requireAdmin(a.createFolderSource))
+	mux.HandleFunc("DELETE /api/kb/folders/{id}", a.requireAdmin(a.deleteFolderSource))
+	mux.HandleFunc("POST /api/kb/folders/{id}/rescan", a.requireAdmin(a.rescanFolderSource))
 	mux.HandleFunc("POST /api/setup/device/start", a.deviceStart)
 	mux.HandleFunc("POST /api/setup/device/poll", a.devicePoll)
 }
