@@ -124,6 +124,22 @@ type APIToken struct {
 	TPM int `json:"tpm_limit"`
 }
 
+// Webhook is an alert delivery target (backlog F5). SecretEnc holds
+// the optional HMAC signing secret encrypted with the master key
+// (AES-GCM, see package secretbox); it is persisted (unlike
+// Channel.APIKeyEnc, which predates persistence) so admin-configured
+// webhooks survive restarts. The plaintext secret and the full URL
+// query (which may carry a bot key) are never returned by the API.
+type Webhook struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	URL       string    `json:"url"`
+	Kind      string    `json:"kind"` // generic | wecom | dingtalk | feishu
+	SecretEnc string    `json:"secret_enc,omitempty"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type DeviceCode struct {
 	Code      string    `json:"code"`   // user-facing code, e.g. AG-XXXXXX
 	Secret    string    `json:"secret"` // polling secret held by the setup tool
@@ -201,6 +217,7 @@ type State struct {
 	Channels    map[string]*Channel    `json:"channels"`
 	Skills      map[string]*Skill      `json:"skills"`
 	KBDocs      map[string]*KBDoc      `json:"kb_docs"`
+	Webhooks    map[string]*Webhook    `json:"webhooks"`
 }
 
 func newState() *State {
@@ -212,6 +229,7 @@ func newState() *State {
 		Channels:    map[string]*Channel{},
 		Skills:      map[string]*Skill{},
 		KBDocs:      map[string]*KBDoc{},
+		Webhooks:    map[string]*Webhook{},
 	}
 }
 
@@ -250,6 +268,9 @@ func New(dir string) (*Store, error) {
 		}
 		if st.KBDocs == nil {
 			st.KBDocs = map[string]*KBDoc{}
+		}
+		if st.Webhooks == nil {
+			st.Webhooks = map[string]*Webhook{}
 		}
 		s.st = &st
 	} else if !os.IsNotExist(err) {
