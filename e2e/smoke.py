@@ -101,6 +101,28 @@ def main():
     s, stats = call("/api/stats", token=sess, method="GET")
     check("stats forbidden for employee", s == 403)
 
+    # F4: audit export (NDJSON + chain verification headers) and a
+    # no-op archive. Export/archive events are Kind "admin", so they
+    # do not disturb the stats totals checked above.
+    admin_tok = alogin.get("session")
+    req = urllib.request.Request(BASE + "/api/audit/export")
+    req.add_header("Authorization", "Bearer " + admin_tok)
+    with urllib.request.urlopen(req) as r:
+        raw = r.read().decode()
+        lines = [ln for ln in raw.splitlines() if ln.strip()]
+        count = int(r.headers.get("X-Audit-Event-Count", "0"))
+        check("audit export NDJSON + chain headers", r.status == 200
+              and r.headers.get("Content-Type", "").startswith("application/x-ndjson")
+              and "attachment" in r.headers.get("Content-Disposition", "")
+              and r.headers.get("X-Audit-Chain-Valid") == "true"
+              and count == len(lines) and count > 0
+              and all(json.loads(ln).get("seq") for ln in lines))
+    s, arch = call("/api/audit/archive", {"before": "2020-01-01T00:00:00Z"}, token=admin_tok, method="POST")
+    check("audit archive no-op for old cutoff", s == 200 and arch.get("archived") == 0
+          and arch.get("chain_valid") is True)
+    s, ver = call("/api/audit/verify", token=admin_tok, method="GET")
+    check("audit chain still valid after export/archive", s == 200 and ver.get("chain_valid") is True)
+
     # F3: per-token RPM. The smoke token already made 3 chat calls
     # above (allowed + 2 blocked — all counted at the gateway door),
     # so RPM=5 admits 2 more and rejects the 6th with 429.
