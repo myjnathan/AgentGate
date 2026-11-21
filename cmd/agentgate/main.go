@@ -9,6 +9,10 @@
 //	AGENTGATE_DATA        data directory (default ./data)
 //	AGENTGATE_MASTER_KEY  master secret for encrypting channel keys (required, >=16 chars)
 //	AGENTGATE_DEMO        "1" seeds the PoC demo company on first run
+//	AGENTGATE_AUDIT_RETENTION_DAYS
+//	                     audit retention policy in days (default 180);
+//	                     events older than now minus this many days are
+//	                     eligible for archiving via POST /api/audit/archive
 package main
 
 import (
@@ -16,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/myjnathan/agentgate/internal/api"
@@ -63,6 +68,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	retentionDays := 180
+	if v := os.Getenv("AGENTGATE_AUDIT_RETENTION_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			retentionDays = n
+		} else {
+			log.Printf("AGENTGATE_AUDIT_RETENTION_DAYS=%q invalid, using default 180", v)
+		}
+	}
+	al.SetRetentionDays(retentionDays)
 	au := auth.New(st)
 
 	selfBase := "http://" + addr
@@ -100,7 +114,7 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	log.Printf("AgentGate %s listening on %s (data: %s, demo: %v)", version, addr, dataDir, demo)
+	log.Printf("AgentGate %s listening on %s (data: %s, demo: %v, audit retention: %d days)", version, addr, dataDir, demo, retentionDays)
 	srv := &http.Server{Addr: addr, Handler: securityHeaders(mux)}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
