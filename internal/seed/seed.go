@@ -7,6 +7,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/myjnathan/agentgate/internal/auth"
 	"github.com/myjnathan/agentgate/internal/secretbox"
@@ -123,8 +126,38 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 				CreatedBy: admin.ID}},
 			AuthorID: admin.ID,
 		}
+		// Demo folder knowledge-base sources (backlog F18): registered
+		// only when the demo folders exist next to the working
+		// directory (the repo checkout / smoke run); otherwise
+		// skipped silently. The startup rescan in main indexes them.
+		if abs, ok := demoFolderPath("公司制度"); ok {
+			s.KBFolderSources["kbf_demo_folders"] = &store.KBFolderSource{
+				ID: "kbf_demo_folders", Name: "公司制度", Path: abs,
+				Level: store.LevelInternal, Enabled: true, CreatedAt: time.Now()}
+		}
+		if abs, ok := demoFolderPath("机密资料"); ok {
+			s.KBFolderSources["kbf_demo_confidential"] = &store.KBFolderSource{
+				ID: "kbf_demo_confidential", Name: "机密资料", Path: abs,
+				Level: store.LevelConfidential, Enabled: true, CreatedAt: time.Now()}
+		}
 	})
 	return st.Save()
+}
+
+// demoFolderPath resolves a demo folder under demo/folders/<name>
+// relative to the working directory and returns its absolute path
+// when it exists; the seed runs from many working directories (unit
+// tests included), so a missing folder is a silent skip, not an error.
+func demoFolderPath(name string) (string, bool) {
+	rel := filepath.Join("demo", "folders", name)
+	if fi, err := os.Stat(rel); err != nil || !fi.IsDir() {
+		return "", false
+	}
+	abs, err := filepath.Abs(rel)
+	if err != nil {
+		return "", false
+	}
+	return abs, true
 }
 
 // CustomWords for the demo company: project code names treated as confidential.

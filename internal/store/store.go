@@ -332,6 +332,19 @@ type KBDoc struct {
 	Version    int       `json:"version"`
 }
 
+// KBFolderSource maps a shared folder to a data level (backlog F18):
+// every supported file under Path is indexed into the knowledge base
+// at this level. The index itself lives in memory (internal/folderkb);
+// only the registration is persisted here.
+type KBFolderSource struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Path      string    `json:"path"`
+	Level     DataLevel `json:"level"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type State struct {
 	Users       map[string]*User           `json:"users"`
 	Devices     map[string]*Device         `json:"devices"`
@@ -344,21 +357,25 @@ type State struct {
 	Upstreams   map[string]*UpstreamServer `json:"upstreams"`
 	RESTTools   map[string]*RESTTool       `json:"rest_tools"`
 	Prompts     map[string]*PromptTemplate `json:"prompts"`
+	// KBFolderSources registers shared folders as knowledge-base
+	// sources (backlog F18); the file index is rebuilt in memory.
+	KBFolderSources map[string]*KBFolderSource `json:"kb_folder_sources"`
 }
 
 func newState() *State {
 	return &State{
-		Users:       map[string]*User{},
-		Devices:     map[string]*Device{},
-		Tokens:      map[string]*APIToken{},
-		DeviceCodes: map[string]*DeviceCode{},
-		Channels:    map[string]*Channel{},
-		Skills:      map[string]*Skill{},
-		KBDocs:      map[string]*KBDoc{},
-		Webhooks:    map[string]*Webhook{},
-		Upstreams:   map[string]*UpstreamServer{},
-		RESTTools:   map[string]*RESTTool{},
-		Prompts:     map[string]*PromptTemplate{},
+		Users:           map[string]*User{},
+		Devices:         map[string]*Device{},
+		Tokens:          map[string]*APIToken{},
+		DeviceCodes:     map[string]*DeviceCode{},
+		Channels:        map[string]*Channel{},
+		Skills:          map[string]*Skill{},
+		KBDocs:          map[string]*KBDoc{},
+		Webhooks:        map[string]*Webhook{},
+		Upstreams:       map[string]*UpstreamServer{},
+		RESTTools:       map[string]*RESTTool{},
+		Prompts:         map[string]*PromptTemplate{},
+		KBFolderSources: map[string]*KBFolderSource{},
 	}
 }
 
@@ -409,6 +426,9 @@ func New(dir string) (*Store, error) {
 		}
 		if st.Prompts == nil {
 			st.Prompts = map[string]*PromptTemplate{}
+		}
+		if st.KBFolderSources == nil {
+			st.KBFolderSources = map[string]*KBFolderSource{}
 		}
 		s.st = &st
 	} else if !os.IsNotExist(err) {

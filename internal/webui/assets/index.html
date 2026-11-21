@@ -131,6 +131,18 @@
       <p class="muted" data-i18n="promptsHint">模板走提交 → 审核 → 发布：新版本只追加不改旧版，发布后才对 Agent 可见；回滚就是把旧版本重新发布。Agent 经 /mcp prompts/get 读取已发布版本，参数先过 DLP，渲染结果再过 DLP + 自带级脱敏。</p>
     </div>
     <div class="card">
+      <h3 data-i18n="foldersTitle">文件夹知识库</h3>
+      <div class="row">
+        <input id="fbName" placeholder="name (e.g. 公司制度)">
+        <input id="fbPath" placeholder="/path/to/shared/folder" style="width:300px">
+        <select id="fbLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select>
+        <button onclick="addFolder()" data-i18n="addBtn">添加</button>
+        <span id="fbMsg" class="muted"></span>
+      </div>
+      <table id="folders"><thead><tr><th data-i18n="name">名称</th><th data-i18n="path">路径</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="docs">文档</th><th data-i18n="lastScan">最近扫描</th><th></th></tr></thead><tbody></tbody></table>
+      <p class="muted" data-i18n="foldersHint">指定共享文件夹即自动索引其中的 .md / .txt / .docx / .pdf，按文件夹映射密级；增量更新只索引变化文件。Agent 经 /mcp 按「目录 → 章节树 → 章节原文」渐进式取用，引用精确到文件 + 章节 + 页码；摘要为抽取式（章节首句），不经过模型，不产生泄漏通道。</p>
+    </div>
+    <div class="card">
       <h3 data-i18n="statsTitle">用量统计</h3>
       <div class="row"><button class="ghost" onclick="loadStats()" data-i18n="refresh">刷新</button><span id="statTotals" class="muted"></span></div>
       <table id="statsDept"><thead><tr><th data-i18n="byDept">按部门</th><th data-i18n="calls">调用</th><th>Tokens</th><th data-i18n="blocked">拦截</th></tr></thead><tbody></tbody></table>
@@ -169,6 +181,8 @@ const I18N = {
        restHint:"存量 REST 接口按「方法 + 路径模板 + 参数 schema」注册为工具，以 rest.工具名 出现在 /mcp 的 tools/list 中；路径 {{参数}} 会被替换转义，其余参数走 query（GET/DELETE）或 JSON body（POST/PUT/PATCH），调用前做参数 schema 校验、等级授权与 DLP，凭据加密存储、永不回显。",
        promptsTitle:"Prompt 模板库",status:"状态",versions:"版本",scope:"范围",
        promptsHint:"模板走提交 → 审核 → 发布：新版本只追加不改旧版，发布后才对 Agent 可见；回滚就是把旧版本重新发布。Agent 经 /mcp prompts/get 读取已发布版本，参数先过 DLP，渲染结果再过 DLP + 自带级脱敏。",
+       foldersTitle:"文件夹知识库",path:"路径",docs:"文档",lastScan:"最近扫描",
+       foldersHint:"指定共享文件夹即自动索引其中的 .md / .txt / .docx / .pdf，按文件夹映射密级；增量更新只索引变化文件。Agent 经 /mcp 按「目录 → 章节树 → 章节原文」渐进式取用，引用精确到文件 + 章节 + 页码；摘要为抽取式（章节首句），不经过模型，不产生泄漏通道。",
        exportBtn:"导出 NDJSON",archiveBtn:"归档 180 天前",
        exportHint:"导出为 NDJSON（可直接喂给 jq / SIEM），响应头附带哈希链校验结果；归档把超过保留期（默认 180 天）的事件移入 gzip 压缩包并留校验锚点。",
        time:"时间",actor:"操作者",action:"动作",level:"等级",decision:"处置"},
@@ -186,6 +200,8 @@ const I18N = {
        restHint:"Existing REST endpoints register as tools by method + path template + input schema, and appear in /mcp tools/list as rest.<name>. {{param}} placeholders in the path are substituted and escaped; remaining arguments go to the query string (GET/DELETE) or a JSON body (POST/PUT/PATCH). Calls are schema-validated, tier-authorized and DLP-checked; credentials are encrypted at rest and never echoed back.",
        promptsTitle:"Prompt templates",status:"Status",versions:"Versions",scope:"Scope",
        promptsHint:"Templates follow submit → review → publish: new versions only append, never rewrite; a version serves agents only after publishing, and rolling back means re-publishing an older version. Agents read the published version via /mcp prompts/get; arguments pass DLP first, and the rendered text passes DLP + BYOA redaction.",
+       foldersTitle:"Folder knowledge base",path:"Path",docs:"Docs",lastScan:"Last scan",
+       foldersHint:"Register a shared folder and its .md / .txt / .docx / .pdf files are indexed automatically, at the folder's data level; rescans only re-index changed files. Agents use /mcp in three steps — catalog → section tree → section text — and cite file + section + pages. Summaries are extractive (the section's opening sentence), never produced by a model, so they open no leak channel.",
        exportBtn:"Export NDJSON",archiveBtn:"Archive older than 180d",
        exportHint:"Export as NDJSON (feed it to jq / your SIEM); response headers carry the hash-chain check. Archiving moves events older than the retention period (default 180 days) into a gzip bundle and leaves a verification anchor.",
        time:"Time",actor:"Actor",action:"Action",level:"Level",decision:"Decision"}
@@ -221,7 +237,26 @@ function login2app(){
   document.getElementById("login").style.display="none";
   document.getElementById("app").style.display="block";
   document.getElementById("logoutBtn").style.display="inline-block";
-  loadChannels(); loadTokens(); loadAlerts(); loadUpstreams(); loadRESTTools(); loadPrompts(); loadStats(); loadAudit();
+  loadChannels(); loadTokens(); loadAlerts(); loadUpstreams(); loadRESTTools(); loadPrompts(); loadFolders(); loadStats(); loadAudit();
+}
+async function loadFolders(){
+  try{ const d = await api("/api/kb/folders");
+    document.querySelector("#folders tbody").innerHTML = (d.folders||[]).map(f=>
+      `<tr><td>${f.name}</td><td class="muted">${f.path||""}</td><td><span class="tag">${f.level}</span></td><td>${f.docs||0}</td><td class="muted">${(f.last_scan||"").slice(0,19).replace("T"," ")}${f.last_error?(" · ✗ "+f.last_error):""}</td>`+
+      `<td><button class="ghost" onclick="rescanFolder('${f.id}')">Rescan</button> <button class="ghost" onclick="deleteFolder('${f.id}')">✕</button></td></tr>`).join("");
+  }catch(e){ document.querySelector("#folders tbody").innerHTML = `<tr><td colspan="6" class="muted">${e.message}</td></tr>`; }
+}
+async function addFolder(){
+  try{ const d = await api("/api/kb/folders",{method:"POST",body:JSON.stringify({name:fbName.value.trim(),path:fbPath.value.trim(),level:fbLevel.value})});
+    fbMsg.textContent="✓ saved ("+(d.docs||0)+" docs)"; fbName.value=""; fbPath.value=""; loadFolders(); loadAudit(); }catch(e){ fbMsg.textContent=e.message; }
+}
+async function rescanFolder(id){
+  try{ const d = await api("/api/kb/folders/"+id+"/rescan",{method:"POST",body:"{}"});
+    fbMsg.textContent="✓ added "+(d.stats.added||0)+" · updated "+(d.stats.updated||0)+" · removed "+(d.stats.removed||0); loadFolders(); loadAudit(); }catch(e){ fbMsg.textContent=e.message; }
+}
+async function deleteFolder(id){
+  try{ await api("/api/kb/folders/"+id,{method:"DELETE"});
+    fbMsg.textContent="✓ deleted"; loadFolders(); loadAudit(); }catch(e){ fbMsg.textContent=e.message; }
 }
 async function loadUpstreams(){
   try{ const d = await api("/api/mcp/upstreams");

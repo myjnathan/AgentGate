@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
 	"github.com/myjnathan/agentgate/internal/federation"
+	"github.com/myjnathan/agentgate/internal/folderkb"
 	"github.com/myjnathan/agentgate/internal/guard"
 	"github.com/myjnathan/agentgate/internal/mcp"
 	"github.com/myjnathan/agentgate/internal/restadapter"
@@ -51,7 +53,39 @@ func setup(t *testing.T) *testEnv {
 	det := guard.NewDetector(seed.DemoBannedWords, seed.DemoCustomWords)
 	fed := federation.New(st, box)
 	rest := restadapter.New(st, box)
-	srv := httptest.NewServer(mcp.New(st, au, al, det, fed, rest))
+	// Folder knowledge base (F18): one internal folder and one
+	// confidential folder, indexed at setup. Keywords here (考勤,
+	// 请假, 办公用品, 机密资料) deliberately avoid the seeded KB's
+	// vocabulary so the two halves of kb_search stay separable.
+	fk := folderkb.New(st)
+	intDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(intDir, "考勤与请假制度.md"), []byte(
+		"# 考勤与请假制度\n\n本制度适用于全体员工。\n\n## 请假流程\n\n员工请假须提前提交申请，年假每年 5 天起。\n\n## 加班管理\n\n加班须提前报备，每月不得超过 36 小时。\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	confDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(confDir, "机密资料.md"), []byte(
+		"# 机密资料\n\n仅受管级可见的内部项目说明。\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st.WithLock(func(s *store.State) {
+		s.KBFolderSources["kbf_int"] = &store.KBFolderSource{ID: "kbf_int", Name: "公司制度",
+			Path: intDir, Level: store.LevelInternal, Enabled: true}
+		s.KBFolderSources["kbf_conf"] = &store.KBFolderSource{ID: "kbf_conf", Name: "机密资料",
+			Path: confDir, Level: store.LevelConfidential, Enabled: true}
+	})
+	for _, id := range []string{"kbf_int", "kbf_conf"} {
+		src, ok := fk.Source(id)
+		if !ok {
+			t.Fatalf("folder source %s not found", id)
+		}
+		if _, err := fk.Rescan(src); err != nil {
+			t.Fatal(err)
+		}
+	}
+	msrv := mcp.New(st, au, al, det, fed, rest)
+	msrv.SetFolderKB(fk)
+	srv := httptest.NewServer(msrv)
 	t.Cleanup(srv.Close)
 
 	// A fake upstream MCP server (F6): hr is BYOA-visible with
@@ -781,5 +815,148 @@ func TestPromptGetTierDeniedAndUnknown(t *testing.T) {
 	r = e.getPrompt(t, e.byoaTok, "nope", map[string]any{}, "")
 	if r.Error == nil || r.Error.Code != -32602 {
 		t.Fatalf("unknown prompt: got %+v, want RPC error -32602", r)
+	}
+}
+
+// ---- F18: folder knowledge base ----
+
+func TestFolderCatalogStructureSection(t *testing.T) {
+	e := setup(t)
+	// BYOA sees only the internal folder; the confidential folder
+	// is invisible in the catalog.
+	text := resultText(t, e.callTool(t, e.byoaTok, "kb_catalog", map[string]any{}))
+	var cat struct {
+		Documents []struct {
+			DocID    string   `json:"doc_id"`
+			Title    string   `json:"title"`
+			Source   string   `json:"source"`
+			Sections []string `json:"sections"`
+		} `json:"documents"`
+	}
+	if err := json.Unmarshal([]byte(text), &cat); err != nil {
+		t.Fatalf("kb_catalog result is not JSON: %v (%s)", err, text)
+	}
+	if len(cat.Documents) != 1 || cat.Documents[0].Title != "考勤与请假制度" {
+		t.Fatalf("BYOA catalog = %+v, want only the internal folder doc", cat.Documents)
+	}
+	if len(cat.Documents[0].Sections) != 2 || cat.Documents[0].Sections[0] != "请假流程" {
+		t.Fatalf("catalog sections = %v", cat.Documents[0].Sections)
+	}
+	docID := cat.Documents[0].DocID
+
+	// Progressive disclosure: structure first (summaries only),
+	// then one section's full text with its citation.
+	text = resultText(t, e.callTool(t, e.byoaTok, "kb_structure", map[string]any{"doc_id": docID}))
+	var tree struct {
+		Title string `json:"title"`
+		Tree  struct {
+			Children []struct {
+				ID      string `json:"node_id"`
+				Title   string `json:"title"`
+				Summary string `json:"summary"`
+			} `json:"children"`
+		} `json:"tree"`
+	}
+	if err := json.Unmarshal([]byte(text), &tree); err != nil {
+		t.Fatalf("kb_structure result is not JSON: %v (%s)", err, text)
+	}
+	if len(tree.Tree.Children) != 2 || tree.Tree.Children[0].Summary == "" {
+		t.Fatalf("structure = %+v", tree)
+	}
+	nodeID := tree.Tree.Children[0].ID
+	text = resultText(t, e.callTool(t, e.byoaTok, "kb_section",
+		map[string]any{"doc_id": docID, "node_id": nodeID}))
+	var sec struct {
+		File    string `json:"file"`
+		Section string `json:"section"`
+		Pages   string `json:"pages"`
+		Text    string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(text), &sec); err != nil {
+		t.Fatalf("kb_section result is not JSON: %v (%s)", err, text)
+	}
+	if sec.Section != "请假流程" || !strings.Contains(sec.Text, "年假每年 5 天起") {
+		t.Fatalf("section = %+v", sec)
+	}
+	if sec.File != "考勤与请假制度.md" || sec.Pages == "" {
+		t.Fatalf("section citation = file %q pages %q", sec.File, sec.Pages)
+	}
+	// Unknown document / node: same "not accessible" shape, no leak.
+	r := e.callTool(t, e.byoaTok, "kb_structure", map[string]any{"doc_id": "folder:nope:x.md"})
+	if r.Result == nil || !r.Result.IsError {
+		t.Fatalf("unknown doc structure: got %+v, want isError", r)
+	}
+	r = e.callTool(t, e.byoaTok, "kb_section", map[string]any{"doc_id": docID, "node_id": "n99"})
+	if r.Result == nil || !r.Result.IsError {
+		t.Fatalf("unknown node section: got %+v, want isError", r)
+	}
+}
+
+func TestFolderConfidentialHiddenFromBYOA(t *testing.T) {
+	e := setup(t)
+	// The managed catalog lists both folders; BYOA search never
+	// surfaces the confidential one, managed search does.
+	text := resultText(t, e.callTool(t, e.mgdTok, "kb_catalog", map[string]any{}))
+	if !strings.Contains(text, "机密资料") || !strings.Contains(text, "考勤与请假制度") {
+		t.Fatalf("managed catalog = %s", text)
+	}
+	var cat struct {
+		Documents []struct {
+			DocID string `json:"doc_id"`
+			Title string `json:"title"`
+		} `json:"documents"`
+	}
+	if err := json.Unmarshal([]byte(text), &cat); err != nil {
+		t.Fatal(err)
+	}
+	var confID string
+	for _, d := range cat.Documents {
+		if d.Title == "机密资料" {
+			confID = d.DocID
+		}
+	}
+	if confID == "" {
+		t.Fatal("confidential doc missing from managed catalog")
+	}
+	r := e.callTool(t, e.byoaTok, "kb_structure", map[string]any{"doc_id": confID})
+	if r.Result == nil || !r.Result.IsError {
+		t.Fatalf("BYOA structure of confidential folder doc: got %+v, want isError", r)
+	}
+	r = e.callTool(t, e.byoaTok, "kb_section", map[string]any{"doc_id": confID, "node_id": "n0"})
+	if r.Result == nil || !r.Result.IsError {
+		t.Fatalf("BYOA section of confidential folder doc: got %+v, want isError", r)
+	}
+	// Managed tier reads it.
+	text = resultText(t, e.callTool(t, e.mgdTok, "kb_section",
+		map[string]any{"doc_id": confID, "node_id": "n0"}))
+	if !strings.Contains(text, "仅受管级可见") {
+		t.Fatalf("managed section = %s", text)
+	}
+}
+
+func TestKBSearchMergesFolderHits(t *testing.T) {
+	e := setup(t)
+	// A folder keyword hits the folder doc with section + pages.
+	text := resultText(t, e.callTool(t, e.byoaTok, "kb_search", map[string]any{"query": "请假 年假"}))
+	if !strings.Contains(text, "考勤与请假制度") || !strings.Contains(text, `"source":"folder"`) {
+		t.Fatalf("kb_search folder hit missing: %s", text)
+	}
+	if !strings.Contains(text, "请假流程") {
+		t.Fatalf("kb_search folder hit has no section: %s", text)
+	}
+	// The confidential folder's keyword finds nothing for BYOA…
+	text = resultText(t, e.callTool(t, e.byoaTok, "kb_search", map[string]any{"query": "机密资料"}))
+	if strings.Contains(text, "机密资料") {
+		t.Fatalf("BYOA kb_search leaked confidential folder doc: %s", text)
+	}
+	// …but the managed tier finds it.
+	text = resultText(t, e.callTool(t, e.mgdTok, "kb_search", map[string]any{"query": "机密资料"}))
+	if !strings.Contains(text, "机密资料") {
+		t.Fatalf("managed kb_search missed confidential folder doc: %s", text)
+	}
+	// Seeded documents still search as before.
+	text = resultText(t, e.callTool(t, e.byoaTok, "kb_search", map[string]any{"query": "报销"}))
+	if !strings.Contains(text, "kb_reimburse") || !strings.Contains(text, `"source":"kb"`) {
+		t.Fatalf("kb_search seeded hit missing: %s", text)
 	}
 }
