@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,6 +57,10 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/device/approve", a.requireSession(a.deviceApprove))
 	mux.HandleFunc("GET /api/channels", a.requireAdmin(a.listChannels))
 	mux.HandleFunc("POST /api/channels", a.requireAdmin(a.createChannel))
+	mux.HandleFunc("POST /api/channels/{id}/keys", a.requireAdmin(a.addChannelKey))
+	mux.HandleFunc("DELETE /api/channels/{id}/keys/{index}", a.requireAdmin(a.deleteChannelKey))
+	mux.HandleFunc("POST /api/channels/{id}/keys/{index}/enable", a.requireAdmin(a.enableChannelKey))
+	mux.HandleFunc("POST /api/channels/{id}/keys/{index}/disable", a.requireAdmin(a.disableChannelKey))
 	mux.HandleFunc("GET /api/skills", a.requireSession(a.listSkills))
 	mux.HandleFunc("POST /api/skills", a.requireSession(a.createSkill))
 	mux.HandleFunc("POST /api/skills/{id}/review", a.requireAdmin(a.reviewSkill))
@@ -250,19 +255,44 @@ func (a *API) deviceApprove(w http.ResponseWriter, r *http.Request, u *store.Use
 // channelView is the admin-facing channel shape: the stored fields
 // plus runtime health (healthy | cooling_down | disabled). The
 // encrypted key is never exposed.
+// channelKeyView is one key of a channel as the console sees it: its
+// stable index, masked value and disabled state. The plaintext key is
+// never returned.
+type channelKeyView struct {
+	Index          int        `json:"index"`
+	Masked         string     `json:"masked"`
+	Disabled       bool       `json:"disabled"`
+	DisabledReason string     `json:"disabled_reason,omitempty"`
+	DisabledAt     *time.Time `json:"disabled_at,omitempty"`
+}
+
 type channelView struct {
-	ID                  string          `json:"id"`
-	Name                string          `json:"name"`
-	BaseURL             string          `json:"base_url"`
-	KeyMasked           string          `json:"key_masked"`
-	Models              []string        `json:"models"`
-	MaxDataLevel        store.DataLevel `json:"max_data_level"`
-	TrustType           store.TrustType `json:"trust_type"`
-	Weight              int             `json:"weight"`
-	Disabled            bool            `json:"disabled"`
-	Health              string          `json:"health"`
-	ConsecutiveFailures int             `json:"consecutive_failures"`
-	CooldownUntil       *time.Time      `json:"cooldown_until,omitempty"`
+	ID                  string           `json:"id"`
+	Name                string           `json:"name"`
+	BaseURL             string           `json:"base_url"`
+	KeyMasked           string           `json:"key_masked"`
+	Keys                []channelKeyView `json:"keys,omitempty"`
+	Models              []string         `json:"models"`
+	MaxDataLevel        store.DataLevel  `json:"max_data_level"`
+	TrustType           store.TrustType  `json:"trust_type"`
+	Weight              int              `json:"weight"`
+	Disabled            bool             `json:"disabled"`
+	Health              string           `json:"health"`
+	ConsecutiveFailures int              `json:"consecutive_failures"`
+	CooldownUntil       *time.Time       `json:"cooldown_until,omitempty"`
+}
+
+func channelKeysView(ch *store.Channel) []channelKeyView {
+	out := make([]channelKeyView, 0, len(ch.Keys))
+	for i, k := range ch.Keys {
+		v := channelKeyView{Index: i, Masked: k.Masked, Disabled: k.Disabled, DisabledReason: k.DisabledReason}
+		if !k.DisabledAt.IsZero() {
+			t := k.DisabledAt
+			v.DisabledAt = &t
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 func (a *API) listChannels(w http.ResponseWriter, r *http.Request, u *store.User) {
@@ -271,7 +301,8 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request, u *store.User
 	a.st.Read(func(st *store.State) {
 		for _, ch := range st.Channels {
 			v := channelView{ID: ch.ID, Name: ch.Name, BaseURL: ch.BaseURL,
-				KeyMasked: ch.KeyMasked, Models: ch.Models, MaxDataLevel: ch.MaxDataLevel,
+				KeyMasked: ch.PrimaryMasked(), Keys: channelKeysView(ch),
+				Models: ch.Models, MaxDataLevel: ch.MaxDataLevel,
 				TrustType: ch.TrustTypeOrDefault(),
 				Weight:    ch.Weight, Disabled: ch.Disabled, Health: ch.Health(now),
 				ConsecutiveFailures: ch.ConsecutiveFailures}
@@ -290,6 +321,7 @@ func (a *API) createChannel(w http.ResponseWriter, r *http.Request, u *store.Use
 		Name         string   `json:"name"`
 		BaseURL      string   `json:"base_url"`
 		APIKey       string   `json:"api_key"`
+		APIKeys      []string `json:"api_keys"`
 		Models       []string `json:"models"`
 		MaxDataLevel string   `json:"max_data_level"`
 		TrustType    string   `json:"trust_type"`
@@ -318,18 +350,169 @@ func (a *API) createChannel(w http.ResponseWriter, r *http.Request, u *store.Use
 		}
 		tt = v
 	}
+	// F12: extra keys share the channel (round-robin, per-key disable).
+	// The primary key is in.APIKey; when it is empty and extras were
+	// given, the first extra becomes the primary so index 0 is never a
+	// blank key while usable keys exist.
+	plains := append([]string{in.APIKey}, in.APIKeys...)
+	if plains[0] == "" && len(plains) > 1 {
+		plains = plains[1:]
+	}
+	if len(plains) > store.MaxChannelKeys {
+		writeErr(w, http.StatusBadRequest, "too many keys (max 10 per channel)")
+		return
+	}
+	seen := map[string]bool{}
+	for _, p := range plains {
+		// A single empty primary key stays allowed (legacy: a channel
+		// created without a key); an empty entry among several keys is
+		// a mistake, not a key.
+		if p == "" && len(plains) > 1 {
+			writeErr(w, http.StatusBadRequest, "empty api key")
+			return
+		}
+		if seen[p] {
+			writeErr(w, http.StatusBadRequest, "duplicate api key")
+			return
+		}
+		seen[p] = true
+	}
+	keys := make([]store.ChannelKey, 0, len(plains))
+	for _, p := range plains {
+		enc, err := a.box.Encrypt(p)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "encrypt failed")
+			return
+		}
+		keys = append(keys, store.ChannelKey{Enc: enc, Masked: secretbox.Mask(p)})
+	}
+	ch := &store.Channel{ID: store.NewID("ch"), Name: in.Name, BaseURL: in.BaseURL,
+		Keys: keys, Models: in.Models, MaxDataLevel: lvl, TrustType: tt, Weight: 1}
+	a.st.WithLock(func(st *store.State) { st.Channels[ch.ID] = ch })
+	_ = a.st.Save()
+	a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, Kind: "admin", Action: "channel_created",
+		Detail: map[string]string{"channel": ch.Name, "max_data_level": lvl.String(), "trust_type": string(tt)}})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": ch.ID, "key_masked": ch.PrimaryMasked(), "key_count": len(keys)})
+}
+
+// channelKeyParams resolves a channel and a key index from the URL.
+// Keys are addressed by stable position (0 = primary), like new-api's
+// per-index status list; deleting a key shifts the ones after it.
+func (a *API) channelKeyParams(r *http.Request) (*store.Channel, int, bool) {
+	idx, err := strconv.Atoi(r.PathValue("index"))
+	if err != nil || idx < 0 {
+		return nil, 0, false
+	}
+	var ch *store.Channel
+	a.st.Read(func(st *store.State) { ch = st.Channels[r.PathValue("id")] })
+	if ch == nil || idx >= len(ch.Keys) {
+		return nil, 0, false
+	}
+	return ch, idx, true
+}
+
+func (a *API) addChannelKey(w http.ResponseWriter, r *http.Request, u *store.User) {
+	var in struct {
+		APIKey string `json:"api_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.APIKey == "" {
+		writeErr(w, http.StatusBadRequest, "api_key required")
+		return
+	}
+	var ch *store.Channel
+	a.st.Read(func(st *store.State) { ch = st.Channels[r.PathValue("id")] })
+	if ch == nil {
+		writeErr(w, http.StatusNotFound, "channel not found")
+		return
+	}
+	if len(ch.Keys) >= store.MaxChannelKeys {
+		writeErr(w, http.StatusBadRequest, "too many keys (max 10 per channel)")
+		return
+	}
+	// Duplicate check decrypts the stored keys in memory (never logged
+	// or returned) — masked forms alone cannot prove sameness.
+	for _, k := range ch.Keys {
+		if plain, err := a.box.Decrypt(k.Enc); err == nil && plain == in.APIKey {
+			writeErr(w, http.StatusBadRequest, "duplicate api key")
+			return
+		}
+	}
 	enc, err := a.box.Encrypt(in.APIKey)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "encrypt failed")
 		return
 	}
-	ch := &store.Channel{ID: store.NewID("ch"), Name: in.Name, BaseURL: in.BaseURL,
-		APIKeyEnc: enc, KeyMasked: secretbox.Mask(in.APIKey), Models: in.Models, MaxDataLevel: lvl, TrustType: tt, Weight: 1}
-	a.st.WithLock(func(st *store.State) { st.Channels[ch.ID] = ch })
+	idx := len(ch.Keys)
+	a.st.WithLock(func(st *store.State) {
+		if c, ok := st.Channels[ch.ID]; ok {
+			c.Keys = append(c.Keys, store.ChannelKey{Enc: enc, Masked: secretbox.Mask(in.APIKey)})
+		}
+	})
 	_ = a.st.Save()
-	a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, Kind: "admin", Action: "channel_created",
-		Detail: map[string]string{"channel": ch.Name, "max_data_level": lvl.String(), "trust_type": string(tt)}})
-	writeJSON(w, http.StatusCreated, map[string]any{"id": ch.ID, "key_masked": ch.KeyMasked})
+	a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, Kind: "admin", Action: "channel_key_added",
+		Detail: map[string]string{"channel": ch.Name, "key_index": strconv.Itoa(idx), "key_masked": secretbox.Mask(in.APIKey)}})
+	writeJSON(w, http.StatusCreated, map[string]any{"index": idx, "key_masked": secretbox.Mask(in.APIKey)})
+}
+
+func (a *API) deleteChannelKey(w http.ResponseWriter, r *http.Request, u *store.User) {
+	ch, idx, ok := a.channelKeyParams(r)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "channel or key not found")
+		return
+	}
+	if len(ch.Keys) <= 1 {
+		writeErr(w, http.StatusBadRequest, "cannot delete the last key of a channel")
+		return
+	}
+	masked := ch.Keys[idx].Masked
+	a.st.WithLock(func(st *store.State) {
+		if c, ok := st.Channels[ch.ID]; ok {
+			c.Keys = append(c.Keys[:idx], c.Keys[idx+1:]...)
+		}
+	})
+	_ = a.st.Save()
+	a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, Kind: "admin", Action: "channel_key_deleted",
+		Detail: map[string]string{"channel": ch.Name, "key_index": strconv.Itoa(idx), "key_masked": masked}})
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": idx})
+}
+
+func (a *API) setChannelKeyDisabled(w http.ResponseWriter, r *http.Request, u *store.User, disabled bool, action, reason string) {
+	ch, idx, ok := a.channelKeyParams(r)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "channel or key not found")
+		return
+	}
+	a.st.WithLock(func(st *store.State) {
+		if c, ok := st.Channels[ch.ID]; ok {
+			c.Keys[idx].Disabled = disabled
+			if disabled {
+				c.Keys[idx].DisabledReason = reason
+				c.Keys[idx].DisabledAt = time.Now()
+			} else {
+				c.Keys[idx].DisabledReason = ""
+				c.Keys[idx].DisabledAt = time.Time{}
+			}
+		}
+	})
+	_ = a.st.Save()
+	a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, Kind: "admin", Action: action,
+		Detail: map[string]string{"channel": ch.Name, "key_index": strconv.Itoa(idx), "key_masked": ch.Keys[idx].Masked, "reason": reason}})
+	writeJSON(w, http.StatusOK, map[string]any{"index": idx, "disabled": disabled})
+}
+
+func (a *API) enableChannelKey(w http.ResponseWriter, r *http.Request, u *store.User) {
+	a.setChannelKeyDisabled(w, r, u, false, "channel_key_enabled", "")
+}
+
+func (a *API) disableChannelKey(w http.ResponseWriter, r *http.Request, u *store.User) {
+	var in struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	if in.Reason == "" {
+		in.Reason = "disabled_by_admin"
+	}
+	a.setChannelKeyDisabled(w, r, u, true, "channel_key_disabled", in.Reason)
 }
 
 func (a *API) listSkills(w http.ResponseWriter, r *http.Request, u *store.User) {
