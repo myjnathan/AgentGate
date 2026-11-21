@@ -76,6 +76,39 @@
       <p class="muted" data-i18n="alertsHint">拦截、密级越权、渠道熔断、账号锁定会触发告警；告警只含事件类别与处置，不带请求原文。投递失败最多重试 3 次。</p>
     </div>
     <div class="card">
+      <h3 data-i18n="fedTitle">MCP 联邦上游</h3>
+      <div class="row">
+        <input id="upName" placeholder="namespace (e.g. hr)">
+        <input id="upUrl" placeholder="https://…/mcp" style="width:280px">
+        <input id="upToken" type="password" placeholder="upstream token (optional)">
+        <select id="upLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select>
+        <select id="upTier"><option value="byoa">byoa</option><option value="managed">managed</option></select>
+        <button onclick="addUpstream()" data-i18n="addBtn">添加</button>
+        <span id="upMsg" class="muted"></span>
+      </div>
+      <table id="upstreams"><thead><tr><th data-i18n="name">名称</th><th>URL</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="tier">等级</th><th>Token</th><th></th></tr></thead><tbody></tbody></table>
+      <p class="muted" data-i18n="fedHint">上游工具以「命名空间.工具名」出现在 /mcp 的 tools/list 中；调用前按上游的最高密级与最低等级做授权与 DLP，凭据加密存储、永不回显。</p>
+    </div>
+    <div class="card">
+      <h3 data-i18n="restTitle">REST → MCP 工具</h3>
+      <div class="row">
+        <input id="rtName" placeholder="name (e.g. leave_balance)">
+        <input id="rtBase" placeholder="https://…/api" style="width:220px">
+        <select id="rtMethod"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select>
+        <input id="rtPath" placeholder="/path/{{param}}" style="width:180px">
+        <input id="rtToken" type="password" placeholder="credential (optional)">
+        <select id="rtLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select>
+        <select id="rtTier"><option value="byoa">byoa</option><option value="managed">managed</option></select>
+        <button onclick="addRESTTool()" data-i18n="addBtn">添加</button>
+        <span id="rtMsg" class="muted"></span>
+      </div>
+      <div class="row">
+        <input id="rtSchema" style="width:640px" value='{"type":"object","properties":{"employee_id":{"type":"string"}},"required":["employee_id"]}'>
+      </div>
+      <table id="resttools"><thead><tr><th data-i18n="name">名称</th><th>Method</th><th>Path</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="tier">等级</th><th>Token</th><th></th></tr></thead><tbody></tbody></table>
+      <p class="muted" data-i18n="restHint">存量 REST 接口按「方法 + 路径模板 + 参数 schema」注册为工具，以 rest.工具名 出现在 /mcp 的 tools/list 中；路径 {{参数}} 会被替换转义，其余参数走 query（GET/DELETE）或 JSON body（POST/PUT/PATCH），调用前做参数 schema 校验、等级授权与 DLP，凭据加密存储、永不回显。</p>
+    </div>
+    <div class="card">
       <h3 data-i18n="statsTitle">用量统计</h3>
       <div class="row"><button class="ghost" onclick="loadStats()" data-i18n="refresh">刷新</button><span id="statTotals" class="muted"></span></div>
       <table id="statsDept"><thead><tr><th data-i18n="byDept">按部门</th><th data-i18n="calls">调用</th><th>Tokens</th><th data-i18n="blocked">拦截</th></tr></thead><tbody></tbody></table>
@@ -108,6 +141,10 @@ const I18N = {
        tokensHint:"0 表示使用等级默认（受管级 60 RPM / 100000 TPM，自带级 20 RPM / 20000 TPM）。",
        alertsTitle:"告警 Webhook",addBtn:"添加",kind:"类型",lastStatus:"最近投递",
        alertsHint:"拦截、密级越权、渠道熔断、账号锁定会触发告警；告警只含事件类别与处置，不带请求原文。投递失败最多重试 3 次。",
+       fedTitle:"MCP 联邦上游",
+       fedHint:"上游工具以「命名空间.工具名」出现在 /mcp 的 tools/list 中；调用前按上游的最高密级与最低等级做授权与 DLP，凭据加密存储、永不回显。",
+       restTitle:"REST → MCP 工具",
+       restHint:"存量 REST 接口按「方法 + 路径模板 + 参数 schema」注册为工具，以 rest.工具名 出现在 /mcp 的 tools/list 中；路径 {{参数}} 会被替换转义，其余参数走 query（GET/DELETE）或 JSON body（POST/PUT/PATCH），调用前做参数 schema 校验、等级授权与 DLP，凭据加密存储、永不回显。",
        exportBtn:"导出 NDJSON",archiveBtn:"归档 180 天前",
        exportHint:"导出为 NDJSON（可直接喂给 jq / SIEM），响应头附带哈希链校验结果；归档把超过保留期（默认 180 天）的事件移入 gzip 压缩包并留校验锚点。",
        time:"时间",actor:"操作者",action:"动作",level:"等级",decision:"处置"},
@@ -119,6 +156,10 @@ const I18N = {
        tokensHint:"0 means the tier default (managed 60 RPM / 100000 TPM, BYOA 20 RPM / 20000 TPM).",
        alertsTitle:"Alert webhooks",addBtn:"Add",kind:"Type",lastStatus:"Last delivery",
        alertsHint:"Blocks, data-level violations, channel cooldowns and account lockouts trigger alerts. Alerts carry only event categories and decisions, never request content. Failed deliveries retry up to 3 times.",
+       fedTitle:"Federated MCP upstreams",
+       fedHint:"Upstream tools appear in /mcp tools/list as \"namespace.tool\"; calls are authorized by the upstream's max data level and minimum tier, with DLP applied. Credentials are encrypted at rest and never echoed back.",
+       restTitle:"REST → MCP tools",
+       restHint:"Existing REST endpoints register as tools by method + path template + input schema, and appear in /mcp tools/list as rest.<name>. {{param}} placeholders in the path are substituted and escaped; remaining arguments go to the query string (GET/DELETE) or a JSON body (POST/PUT/PATCH). Calls are schema-validated, tier-authorized and DLP-checked; credentials are encrypted at rest and never echoed back.",
        exportBtn:"Export NDJSON",archiveBtn:"Archive older than 180d",
        exportHint:"Export as NDJSON (feed it to jq / your SIEM); response headers carry the hash-chain check. Archiving moves events older than the retention period (default 180 days) into a gzip bundle and leaves a verification anchor.",
        time:"Time",actor:"Actor",action:"Action",level:"Level",decision:"Decision"}
@@ -149,7 +190,48 @@ function login2app(){
   document.getElementById("login").style.display="none";
   document.getElementById("app").style.display="block";
   document.getElementById("logoutBtn").style.display="inline-block";
-  loadChannels(); loadTokens(); loadAlerts(); loadStats(); loadAudit();
+  loadChannels(); loadTokens(); loadAlerts(); loadUpstreams(); loadRESTTools(); loadStats(); loadAudit();
+}
+async function loadUpstreams(){
+  try{ const d = await api("/api/mcp/upstreams");
+    document.querySelector("#upstreams tbody").innerHTML = (d.upstreams||[]).map(u=>
+      `<tr><td>${u.name}</td><td class="muted">${u.url||""}</td><td><span class="tag">${u.max_data_level}</span></td><td><span class="tag">${u.min_tier}</span></td><td>${u.has_token?"✓":"—"}</td>`+
+      `<td><button class="ghost" onclick="testUpstream('${u.id}')">Test</button> <button class="ghost" onclick="deleteUpstream('${u.id}')">✕</button></td></tr>`).join("");
+  }catch(e){ document.querySelector("#upstreams tbody").innerHTML = `<tr><td colspan="6" class="muted">${e.message}</td></tr>`; }
+}
+async function addUpstream(){
+  try{ await api("/api/mcp/upstreams",{method:"POST",body:JSON.stringify({name:upName.value.trim(),url:upUrl.value.trim(),token:upToken.value,max_data_level:upLevel.value,min_tier:upTier.value})});
+    upMsg.textContent="✓ saved"; upName.value=""; upUrl.value=""; upToken.value=""; loadUpstreams(); loadAudit(); }catch(e){ upMsg.textContent=e.message; }
+}
+async function testUpstream(id){
+  try{ const d = await api("/api/mcp/upstreams/"+id+"/test",{method:"POST",body:"{}"});
+    upMsg.textContent = d.ok ? "✓ " + (d.tools||[]).join(", ") : "✗ "+(d.error||"failed"); loadAudit(); }catch(e){ upMsg.textContent=e.message; }
+}
+async function deleteUpstream(id){
+  try{ await api("/api/mcp/upstreams/"+id,{method:"DELETE"});
+    upMsg.textContent="✓ deleted"; loadUpstreams(); loadAudit(); }catch(e){ upMsg.textContent=e.message; }
+}
+async function loadRESTTools(){
+  try{ const d = await api("/api/mcp/rest-tools");
+    document.querySelector("#resttools tbody").innerHTML = (d.rest_tools||[]).map(t=>
+      `<tr><td>rest.${t.name}</td><td>${t.method||""}</td><td class="muted">${t.path||""}</td><td><span class="tag">${t.max_data_level}</span></td><td><span class="tag">${t.min_tier}</span></td><td>${t.has_token?"✓":"—"}</td>`+
+      `<td><button class="ghost" onclick="testRESTTool('${t.id}')">Test</button> <button class="ghost" onclick="deleteRESTTool('${t.id}')">✕</button></td></tr>`).join("");
+  }catch(e){ document.querySelector("#resttools tbody").innerHTML = `<tr><td colspan="7" class="muted">${e.message}</td></tr>`; }
+}
+async function addRESTTool(){
+  try{ const schema = JSON.parse(rtSchema.value||"{}");
+    await api("/api/mcp/rest-tools",{method:"POST",body:JSON.stringify({name:rtName.value.trim(),base_url:rtBase.value.trim(),method:rtMethod.value,path:rtPath.value.trim(),token:rtToken.value,input_schema:schema,max_data_level:rtLevel.value,min_tier:rtTier.value})});
+    rtMsg.textContent="✓ saved"; rtName.value=""; rtBase.value=""; rtPath.value=""; rtToken.value=""; loadRESTTools(); loadAudit(); }catch(e){ rtMsg.textContent=e.message; }
+}
+async function testRESTTool(id){
+  try{ const raw = prompt("arguments JSON", "{}");
+    if(raw===null) return;
+    const d = await api("/api/mcp/rest-tools/"+id+"/test",{method:"POST",body:JSON.stringify({arguments:JSON.parse(raw)})});
+    rtMsg.textContent = d.ok ? "✓ " + (d.preview||"") : "✗ " + (d.error||"failed"); loadAudit(); }catch(e){ rtMsg.textContent=e.message; }
+}
+async function deleteRESTTool(id){
+  try{ await api("/api/mcp/rest-tools/"+id,{method:"DELETE"});
+    rtMsg.textContent="✓ deleted"; loadRESTTools(); loadAudit(); }catch(e){ rtMsg.textContent=e.message; }
 }
 async function loadAlerts(){
   try{ const d = await api("/api/alerts/webhooks");

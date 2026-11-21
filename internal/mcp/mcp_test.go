@@ -11,8 +11,10 @@ import (
 
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
+	"github.com/myjnathan/agentgate/internal/federation"
 	"github.com/myjnathan/agentgate/internal/guard"
 	"github.com/myjnathan/agentgate/internal/mcp"
+	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/seed"
 	"github.com/myjnathan/agentgate/internal/store"
@@ -46,8 +48,93 @@ func setup(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 	det := guard.NewDetector(seed.DemoBannedWords, seed.DemoCustomWords)
-	srv := httptest.NewServer(mcp.New(st, au, al, det))
+	fed := federation.New(st, box)
+	rest := restadapter.New(st, box)
+	srv := httptest.NewServer(mcp.New(st, au, al, det, fed, rest))
 	t.Cleanup(srv.Close)
+
+	// A fake upstream MCP server (F6): hr is BYOA-visible with
+	// MaxDataLevel internal; ops is managed-only with MaxDataLevel
+	// confidential. project_status answers with the demo custom word
+	// XH-200 (confidential) so result redaction is observable.
+	upSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		w.Header().Set("Content-Type", "application/json")
+		if req.Method == "tools/list" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{"tools": []map[string]any{
+				{"name": "leave_balance", "description": "remaining leave days",
+					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}}},
+				{"name": "project_status", "description": "project status",
+					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}}},
+				{"name": "restart_service", "description": "restart a service",
+					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}}},
+			}}})
+			return
+		}
+		text := "ok"
+		switch req.Params.Name {
+		case "leave_balance":
+			text = `{"balance": 5, "employee": "lixiaofeng"}`
+		case "project_status":
+			text = "XH-200 进度正常"
+		case "restart_service":
+			text = "restarted"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{
+			"content": []map[string]any{{"type": "text", "text": text}}, "isError": false}})
+	}))
+	t.Cleanup(upSrv.Close)
+	st.WithLock(func(s *store.State) {
+		s.Upstreams["up_hr"] = &store.UpstreamServer{ID: "up_hr", Name: "hr", URL: upSrv.URL,
+			MaxDataLevel: store.LevelInternal, MinTier: store.TierBYOA, Enabled: true}
+		s.Upstreams["up_ops"] = &store.UpstreamServer{ID: "up_ops", Name: "ops", URL: upSrv.URL,
+			MaxDataLevel: store.LevelConfidential, MinTier: store.TierManaged, Enabled: true}
+	})
+
+	// A fake REST API (F7): GET leave balance (query param), POST
+	// leave request (JSON body), GET notice (answers with the demo
+	// custom word XH-200 so result redaction is observable).
+	restSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/hr/leave-balance":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"employee_id": r.URL.Query().Get("employee_id"), "balance_days": 12})
+		case r.Method == http.MethodPost && r.URL.Path == "/hr/leave-request":
+			var in struct {
+				EmployeeID string `json:"employee_id"`
+				Days       int    `json:"days"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "submitted", "employee_id": in.EmployeeID, "days": in.Days})
+		case r.Method == http.MethodGet && r.URL.Path == "/hr/notice":
+			_, _ = w.Write([]byte("XH-200 进度正常"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(restSrv.Close)
+	st.WithLock(func(s *store.State) {
+		s.RESTTools["rt_fake_balance"] = &store.RESTTool{ID: "rt_fake_balance", Name: "fake_balance",
+			Description: "fake leave balance", BaseURL: restSrv.URL, Method: "GET", Path: "/hr/leave-balance",
+			InputSchema:  json.RawMessage(`{"type":"object","properties":{"employee_id":{"type":"string"}},"required":["employee_id"]}`),
+			MaxDataLevel: store.LevelInternal, MinTier: store.TierBYOA, Enabled: true}
+		s.RESTTools["rt_fake_request"] = &store.RESTTool{ID: "rt_fake_request", Name: "fake_request",
+			Description: "fake leave request", BaseURL: restSrv.URL, Method: "POST", Path: "/hr/leave-request",
+			InputSchema:  json.RawMessage(`{"type":"object","properties":{"employee_id":{"type":"string"},"days":{"type":"integer"}},"required":["employee_id","days"]}`),
+			MaxDataLevel: store.LevelInternal, MinTier: store.TierManaged, Enabled: true}
+		s.RESTTools["rt_fake_notice"] = &store.RESTTool{ID: "rt_fake_notice", Name: "fake_notice",
+			Description: "fake notice", BaseURL: restSrv.URL, Method: "GET", Path: "/hr/notice",
+			InputSchema:  json.RawMessage(`{"type":"object","properties":{}}`),
+			MaxDataLevel: store.LevelInternal, MinTier: store.TierBYOA, Enabled: true}
+	})
 
 	mkToken := func(username string, tier store.Tier) string {
 		t.Helper()
@@ -192,5 +279,236 @@ func TestKBGetTierAuthorization(t *testing.T) {
 	}
 	if !strings.Contains(text, "XH-200") {
 		t.Fatalf("managed kb_get should return full text (incl. project code), got %s", text)
+	}
+}
+
+// ---- F6: federated upstream tools ----
+
+// listToolNames issues a tools/list JSON-RPC request and returns the
+// advertised tool names.
+func (e *testEnv) listToolNames(t *testing.T, token string) []string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/list",
+	})
+	req, _ := http.NewRequest("POST", e.srv.URL, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Result *struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"result"`
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode tools/list: %v", err)
+	}
+	if out.Error != nil {
+		t.Fatalf("tools/list error %d: %s", out.Error.Code, out.Error.Message)
+	}
+	var names []string
+	for _, tl := range out.Result.Tools {
+		names = append(names, tl.Name)
+	}
+	return names
+}
+
+func hasName(names []string, want string) bool {
+	for _, n := range names {
+		if n == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestFederatedToolsListedNamespaced(t *testing.T) {
+	e := setup(t)
+	byoa := e.listToolNames(t, e.byoaTok)
+	for _, want := range []string{"kb_search", "hr.leave_balance", "hr.project_status"} {
+		if !hasName(byoa, want) {
+			t.Fatalf("BYOA tools/list missing %q: %v", want, byoa)
+		}
+	}
+	if hasName(byoa, "ops.leave_balance") {
+		t.Fatalf("BYOA tools/list must hide managed-only upstream tools: %v", byoa)
+	}
+	mgd := e.listToolNames(t, e.mgdTok)
+	if !hasName(mgd, "ops.restart_service") {
+		t.Fatalf("managed tools/list missing ops.restart_service: %v", mgd)
+	}
+}
+
+func TestFederatedToolCallForwards(t *testing.T) {
+	e := setup(t)
+	text := resultText(t, e.callTool(t, e.byoaTok, "hr.leave_balance", map[string]any{}))
+	if !strings.Contains(text, `"balance": 5`) {
+		t.Fatalf("hr.leave_balance should return the upstream answer, got %s", text)
+	}
+}
+
+func TestFederatedToolCallTierDenied(t *testing.T) {
+	e := setup(t)
+	r := e.callTool(t, e.byoaTok, "ops.restart_service", map[string]any{})
+	if r.Error == nil || r.Error.Code != -32003 {
+		t.Fatalf("BYOA call to managed-only upstream: got %+v, want RPC error -32003", r)
+	}
+}
+
+func TestFederatedToolCallArgsLevelBlocked(t *testing.T) {
+	e := setup(t)
+	// XH-200 is a demo custom word (confidential), above hr's
+	// MaxDataLevel internal: the arguments must never reach upstream.
+	r := e.callTool(t, e.byoaTok, "hr.leave_balance", map[string]any{"note": "XH-200"})
+	if r.Error == nil || r.Error.Code != -32004 {
+		t.Fatalf("confidential args to internal-only upstream: got %+v, want RPC error -32004", r)
+	}
+	// A banned word in the arguments is blocked the same way.
+	r = e.callTool(t, e.byoaTok, "hr.leave_balance", map[string]any{"note": "test_sensitive"})
+	if r.Error == nil || r.Error.Code != -32004 {
+		t.Fatalf("banned-word args: got %+v, want RPC error -32004", r)
+	}
+}
+
+func TestFederatedToolResultRedactedForBYOA(t *testing.T) {
+	e := setup(t)
+	// The upstream answers with the confidential custom word XH-200.
+	text := resultText(t, e.callTool(t, e.byoaTok, "hr.project_status", map[string]any{}))
+	if strings.Contains(text, "XH-200") {
+		t.Fatalf("BYOA must not receive the confidential word in a tool result, got %s", text)
+	}
+	if !strings.Contains(text, "<CUSTOM_1>") {
+		t.Fatalf("BYOA result should carry the redaction placeholder, got %s", text)
+	}
+	// A managed token receives the raw upstream answer.
+	text = resultText(t, e.callTool(t, e.mgdTok, "hr.project_status", map[string]any{}))
+	if !strings.Contains(text, "XH-200") {
+		t.Fatalf("managed result should keep the raw upstream answer, got %s", text)
+	}
+}
+
+func TestFederatedToolUnknownNamespace(t *testing.T) {
+	e := setup(t)
+	r := e.callTool(t, e.byoaTok, "nope.tool", map[string]any{})
+	if r.Error == nil || r.Error.Code != -32602 {
+		t.Fatalf("unknown upstream namespace: got %+v, want RPC error -32602", r)
+	}
+}
+
+// ---- F7: REST-adapted tools ----
+
+func TestRESTToolsListedNamespaced(t *testing.T) {
+	e := setup(t)
+	byoa := e.listToolNames(t, e.byoaTok)
+	// The demo seed registers rest.leave_balance; the test doubles
+	// are rest.fake_*.
+	for _, want := range []string{"rest.leave_balance", "rest.fake_balance", "rest.fake_notice"} {
+		if !hasName(byoa, want) {
+			t.Fatalf("BYOA tools/list missing %q: %v", want, byoa)
+		}
+	}
+	if hasName(byoa, "rest.fake_request") {
+		t.Fatalf("BYOA tools/list must hide managed-only REST tools: %v", byoa)
+	}
+	mgd := e.listToolNames(t, e.mgdTok)
+	if !hasName(mgd, "rest.fake_request") {
+		t.Fatalf("managed tools/list missing rest.fake_request: %v", mgd)
+	}
+}
+
+func TestRESTToolCallGET(t *testing.T) {
+	e := setup(t)
+	text := resultText(t, e.callTool(t, e.byoaTok, "rest.fake_balance", map[string]any{"employee_id": "lixiaofeng"}))
+	if !strings.Contains(text, `"balance_days":12`) {
+		t.Fatalf("rest.fake_balance should return the upstream answer, got %s", text)
+	}
+	if !strings.Contains(text, "lixiaofeng") {
+		t.Fatalf("query param must reach the upstream, got %s", text)
+	}
+}
+
+func TestRESTToolCallPOSTBody(t *testing.T) {
+	e := setup(t)
+	text := resultText(t, e.callTool(t, e.mgdTok, "rest.fake_request",
+		map[string]any{"employee_id": "chenjing", "days": float64(2)}))
+	if !strings.Contains(text, `"status":"submitted"`) || !strings.Contains(text, `"days":2`) {
+		t.Fatalf("rest.fake_request should echo the JSON body, got %s", text)
+	}
+}
+
+func TestRESTToolCallTierDenied(t *testing.T) {
+	e := setup(t)
+	r := e.callTool(t, e.byoaTok, "rest.fake_request", map[string]any{"employee_id": "li", "days": float64(1)})
+	if r.Error == nil || r.Error.Code != -32003 {
+		t.Fatalf("BYOA call to managed-only REST tool: got %+v, want RPC error -32003", r)
+	}
+}
+
+func TestRESTToolCallArgsValidation(t *testing.T) {
+	e := setup(t)
+	// Missing required argument.
+	r := e.callTool(t, e.byoaTok, "rest.fake_balance", map[string]any{})
+	if r.Error == nil || r.Error.Code != -32602 {
+		t.Fatalf("missing argument: got %+v, want RPC error -32602", r)
+	}
+	// Wrong type.
+	r = e.callTool(t, e.byoaTok, "rest.fake_balance", map[string]any{"employee_id": float64(3)})
+	if r.Error == nil || r.Error.Code != -32602 {
+		t.Fatalf("wrong argument type: got %+v, want RPC error -32602", r)
+	}
+	// Unknown argument.
+	r = e.callTool(t, e.byoaTok, "rest.fake_balance", map[string]any{"employee_id": "li", "extra": 1})
+	if r.Error == nil || r.Error.Code != -32602 {
+		t.Fatalf("unknown argument: got %+v, want RPC error -32602", r)
+	}
+}
+
+func TestRESTToolCallArgsLevelBlocked(t *testing.T) {
+	e := setup(t)
+	// XH-200 is a demo custom word (confidential), above the tool's
+	// MaxDataLevel internal: the arguments must never reach upstream.
+	r := e.callTool(t, e.byoaTok, "rest.fake_balance", map[string]any{"employee_id": "XH-200"})
+	if r.Error == nil || r.Error.Code != -32004 {
+		t.Fatalf("confidential args to internal-only REST tool: got %+v, want RPC error -32004", r)
+	}
+	// A banned word in the arguments is blocked the same way.
+	r = e.callTool(t, e.byoaTok, "rest.fake_balance", map[string]any{"employee_id": "test_sensitive"})
+	if r.Error == nil || r.Error.Code != -32004 {
+		t.Fatalf("banned-word args: got %+v, want RPC error -32004", r)
+	}
+}
+
+func TestRESTToolResultRedactedForBYOA(t *testing.T) {
+	e := setup(t)
+	// The upstream answers with the confidential custom word XH-200.
+	text := resultText(t, e.callTool(t, e.byoaTok, "rest.fake_notice", map[string]any{}))
+	if strings.Contains(text, "XH-200") {
+		t.Fatalf("BYOA must not receive the confidential word in a tool result, got %s", text)
+	}
+	if !strings.Contains(text, "<CUSTOM_1>") {
+		t.Fatalf("BYOA result should carry the redaction placeholder, got %s", text)
+	}
+	// A managed token receives the raw upstream answer.
+	text = resultText(t, e.callTool(t, e.mgdTok, "rest.fake_notice", map[string]any{}))
+	if !strings.Contains(text, "XH-200") {
+		t.Fatalf("managed result should keep the raw upstream answer, got %s", text)
+	}
+}
+
+func TestRESTToolUnknown(t *testing.T) {
+	e := setup(t)
+	r := e.callTool(t, e.byoaTok, "rest.nope", map[string]any{})
+	if r.Error == nil || r.Error.Code != -32602 {
+		t.Fatalf("unknown REST tool: got %+v, want RPC error -32602", r)
 	}
 }

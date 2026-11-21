@@ -47,6 +47,28 @@ func Handler() http.Handler {
 			{"id": "mock-pro", "object": "model"},
 		}})
 	})
+	// Demo REST endpoint (backlog F7): a fictional HR API for 星河精密
+	// that the seeded REST tool "rest.leave_balance" adapts into an
+	// MCP tool. No credential is required; data is fictional.
+	mux.HandleFunc("/mock/demo/hr/leave-balance", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		emp := r.URL.Query().Get("employee_id")
+		if emp == "" {
+			http.Error(w, "employee_id required", http.StatusBadRequest)
+			return
+		}
+		balance := 5
+		switch emp {
+		case "lixiaofeng":
+			balance = 12
+		case "chenjing":
+			balance = 8
+		}
+		writeJSON(w, map[string]any{"employee_id": emp, "balance_days": balance, "unit": "days"})
+	})
 	mux.HandleFunc("/mock/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		var req chatRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

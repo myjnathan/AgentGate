@@ -68,6 +68,16 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 			Level: store.LevelPublic, Version: 1,
 			Content: "员工手册：标准工作时间为 9:00–18:00，午休 12:00–13:00。年假按工龄计算：满 1 年 5 天，满 10 年 10 天。公司提供午餐补贴与年度体检。",
 		}
+		// Demo REST tool (backlog F7): the fictional HR leave-balance
+		// endpoint above, adapted into MCP tool "rest.leave_balance".
+		// No credential; the demo endpoint needs none.
+		s.RESTTools["rt_leave_balance"] = &store.RESTTool{
+			ID: "rt_leave_balance", Name: "leave_balance",
+			Description: "查询员工剩余年假天数（星河精密演示 HR 接口）",
+			BaseURL:     selfBaseURL + "/mock/demo/hr", Method: "GET", Path: "/leave-balance",
+			InputSchema:  []byte(`{"type":"object","properties":{"employee_id":{"type":"string"}},"required":["employee_id"]}`),
+			MaxDataLevel: store.LevelInternal, MinTier: store.TierBYOA, Enabled: true,
+		}
 		sum := sha256.Sum256([]byte("skill-content-v1"))
 		s.Skills["sk_reimburse_helper"] = &store.Skill{
 			ID: "sk_reimburse_helper", Name: "reimbursement-helper", Version: "1.0.0",

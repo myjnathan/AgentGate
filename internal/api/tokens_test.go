@@ -12,6 +12,8 @@ import (
 	"github.com/myjnathan/agentgate/internal/api"
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
+	"github.com/myjnathan/agentgate/internal/federation"
+	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/seed"
 	"github.com/myjnathan/agentgate/internal/store"
@@ -34,6 +36,8 @@ func setupTokensAPI(t *testing.T) (*httptest.Server, *store.Store, string, strin
 		t.Fatal(err)
 	}
 	rest := api.New(st, au, box, al)
+	rest.SetFederation(federation.New(st, box))
+	rest.SetRESTAdapter(restadapter.New(st, box))
 	mux := http.NewServeMux()
 	rest.Register(mux)
 	srv := httptest.NewServer(mux)

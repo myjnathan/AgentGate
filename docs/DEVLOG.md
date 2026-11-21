@@ -2,6 +2,57 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-21 · F7 REST → MCP 适配
+- 借鉴 ContextForge 官方 README 与文档（ibm.github.io/mcp-context-forge）及 mcp-rest-forge 配置模型：
+  REST 工具逐端点 JSON 注册（name/url/request_type/input_schema），凭据 header 注入；
+  v1.0.5 起可从 OpenAPI 生成单个端点的 schema，但整份 spec 导入已明确 not planned；
+  mcp-rest-forge 同源：method/path 模板（{{param}} 转义替换）/query_params/body/headers。
+  我们只取逐端点注册语义，不做 OpenAPI 整份导入；差异化收紧：每个工具只配最高密级与
+  最低等级两把闸（与 F6 同款），参数 schema 注册时即校验，上游 5xx 只报状态码不回传 body。
+- 实现：新包 `internal/restadapter`（路径模板转义替换、其余参数 GET/DELETE 走 query、
+  POST/PUT/PATCH 走 JSON body、JSON Schema 子集校验、上游错误只报状态码、1 MiB 响应上限）；
+  `store.RESTTool`（方法/基址/路径模板/静态头/加密托管凭据/输入 schema/最高密级/最低等级）；
+  `/mcp` tools/list 合并 `rest.<name>`（高于调用者等级的隐藏）、tools/call 走与联邦工具
+  相同的门禁与结果 DLP + 自带级脱敏，参数校验失败报 -32602；`GET/POST /api/mcp/rest-tools` +
+  `DELETE /api/mcp/rest-tools/{id}` + `POST /api/mcp/rest-tools/{id}/test`（仅 admin/security，
+  测试端点返回 ok + 200 字内 preview，不写入审计）；管理台新增 REST 工具卡片（中英双语）；
+  演示：mock 增加 `/mock/demo/hr/leave-balance`（星河精密虚拟 HR 接口），seed 注册
+  `rest.leave_balance`。
+- 关键决策：schema 校验默认严格——未知参数直接拒绝（schema 即契约，避免未声明参数被
+  静默转发到上游）；凭据只在调用瞬间解密注入 Authorization 头；测试端点的 preview 只给
+  管理员调用方、不进审计（审计只记工具名与成败）。
+- 测试：restadapter 包 6 项 + MCP 集成 8 项 + API 端点 2 项（CRUD 与实时测试）+ 冒烟新增 16 项断言；
+  `gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 53 项断言 0 失败。
+- 推送：按分支 + PR 机制走 `loop/f7` 分支，见本轮汇报。
+- 交接：Nathan 于 2026-11-21 12:26 拍板，**下一轮先做 F17（通道信任分级，跳过清单顺序在前的
+  F7——本轮在拍板前 6 分钟已开工故不打断）**，且蓝图修订稿（8 处替换，存
+  `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/blueprint-revision-draft-2026-11-21.md`）
+  一并落地到仓库 `docs/blueprint.md`、`docs/enterprise-protection-design.md`、`README.md`；
+  该决定已写为 Loop 的「下一轮特别指令」，执行后作废。F17 顺延为紧接着的一轮。
+
+## 2026-11-21 · F6 MCP 联邦代理
+- 借鉴 IBM ContextForge 官方文档（ibm.github.io/mcp-context-forge/architecture）与 PyPI 说明：
+  多后端联邦到单一合规端点、注册中心合并能力目录、虚拟服务器组合工具子集、定期健康检查与故障转移、
+  工具输入校验与重试/限流、PII 过滤插件。我们只取一层代理语义：命名空间前缀、60 秒工具列表缓存、
+  上游只配最高密级与最低等级两把闸；不出对等网关发现/mDNS 与 Redis 同步；DLP 由可选插件改为强制门禁。
+- 实现：新包 `internal/federation`（JSON-RPC 2.0 over HTTP 转发、工具列表缓存 + 刷新失败回落旧缓存、
+  上游错误不透传原文）；`store.UpstreamServer`（命名空间/URL/加密凭据/最高密级/最低等级）；
+  `/mcp` tools/list 合并本地与联邦工具（高于调用者等级的上游对该调用者隐藏，不可达上游静默缺席）、
+  tools/call 对命名空间工具先做等级授权、再对参数做 DLP（违禁词或密级高于上游上限直接拦截），
+  结果复用本地工具的 DLP 扫描与自带级脱敏；`GET/POST /api/mcp/upstreams` +
+  `DELETE /api/mcp/upstreams/{id}` + `POST /api/mcp/upstreams/{id}/test`（仅 admin/security，
+  命名空间校验、重名 409、凭据永不回显）；管理台新增联邦上游卡片（中英双语）。
+- 关键决策：tools/list 按调用者等级过滤（最小暴露存在性）；参数密级门禁在转发前做——
+  机密参数永不发往仅 internal 的上游（分级约束高于可用性）；上游故障时列表静默缺席、调用报 -32002，
+  不让单个上游拖垮整个 /mcp；凭据只在转发瞬间解密、永不进审计与 API 响应。
+- 测试：federation 包 4 项 + MCP 集成 6 项 + API 端点 2 项（CRUD 与实时测试）+ 冒烟新增 12 项断言；
+  `gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 37 项断言 0 失败。
+- 推送：按 Nathan 指示的新机制（分支 + PR，main 只收完整成品）走 `loop/f6` 分支，见本轮汇报；
+  另按任务书把该机制同步进了 `docs/development-loop.md` 第 6 步。
+- 另记：Nathan 本轮新决策已记入 backlog 待办——F17 渠道信任类型与分级策略梯度（分级放行改绑通道信任类型，
+  私有模型降为可选项；默认保守模式 + 先观察→再提醒→后拦截）、F18 文件夹即知识库（零预置假设，
+  指定共享文件夹即自动索引）。
+
 ## 2026-11-21 · F5 Webhook 告警
 - 本轮先续推 F4：重跑 `/tmp/push_f4b.py`，剩余 8 个文件经校验已与远端一致（主对话并行推完），
   26/26 文件全部同步，远端 HEAD d761e80、内容与本地 b8907a8 相同，CI 第 51 次运行全绿——
