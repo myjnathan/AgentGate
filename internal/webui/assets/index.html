@@ -109,6 +109,26 @@
       <p class="muted" data-i18n="restHint">存量 REST 接口按「方法 + 路径模板 + 参数 schema」注册为工具，以 rest.工具名 出现在 /mcp 的 tools/list 中；路径 {{参数}} 会被替换转义，其余参数走 query（GET/DELETE）或 JSON body（POST/PUT/PATCH），调用前做参数 schema 校验、等级授权与 DLP，凭据加密存储、永不回显。</p>
     </div>
     <div class="card">
+      <h3 data-i18n="promptsTitle">Prompt 模板库</h3>
+      <div class="row">
+        <input id="ptName" placeholder="name (e.g. weekly_report)">
+        <input id="ptDesc" placeholder="description" style="width:200px">
+        <input id="ptScope" placeholder="scope (* or 研发部,注册部)" style="width:200px">
+        <select id="ptLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select>
+        <select id="ptTier"><option value="byoa">byoa</option><option value="managed">managed</option></select>
+        <button onclick="addPrompt()" data-i18n="addBtn">添加</button>
+        <span id="ptMsg" class="muted"></span>
+      </div>
+      <div class="row">
+        <input id="ptContent" style="width:640px" placeholder="模板正文，用 {{name}} 形式写占位符" value="你是星河精密的助手。请为{{department}}的{{name}}整理第{{week}}周的工作周报。">
+      </div>
+      <div class="row">
+        <input id="ptArgs" style="width:640px" value='[{"name":"name","description":"员工姓名","required":true},{"name":"department","description":"所属部门","required":true},{"name":"week","description":"周次","required":true}]'>
+      </div>
+      <table id="prompts"><thead><tr><th data-i18n="name">名称</th><th data-i18n="status">状态</th><th data-i18n="versions">版本</th><th data-i18n="scope">范围</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="tier">等级</th><th></th></tr></thead><tbody></tbody></table>
+      <p class="muted" data-i18n="promptsHint">模板走提交 → 审核 → 发布：新版本只追加不改旧版，发布后才对 Agent 可见；回滚就是把旧版本重新发布。Agent 经 /mcp prompts/get 读取已发布版本，参数先过 DLP，渲染结果再过 DLP + 自带级脱敏。</p>
+    </div>
+    <div class="card">
       <h3 data-i18n="statsTitle">用量统计</h3>
       <div class="row"><button class="ghost" onclick="loadStats()" data-i18n="refresh">刷新</button><span id="statTotals" class="muted"></span></div>
       <table id="statsDept"><thead><tr><th data-i18n="byDept">按部门</th><th data-i18n="calls">调用</th><th>Tokens</th><th data-i18n="blocked">拦截</th></tr></thead><tbody></tbody></table>
@@ -145,6 +165,8 @@ const I18N = {
        fedHint:"上游工具以「命名空间.工具名」出现在 /mcp 的 tools/list 中；调用前按上游的最高密级与最低等级做授权与 DLP，凭据加密存储、永不回显。",
        restTitle:"REST → MCP 工具",
        restHint:"存量 REST 接口按「方法 + 路径模板 + 参数 schema」注册为工具，以 rest.工具名 出现在 /mcp 的 tools/list 中；路径 {{参数}} 会被替换转义，其余参数走 query（GET/DELETE）或 JSON body（POST/PUT/PATCH），调用前做参数 schema 校验、等级授权与 DLP，凭据加密存储、永不回显。",
+       promptsTitle:"Prompt 模板库",status:"状态",versions:"版本",scope:"范围",
+       promptsHint:"模板走提交 → 审核 → 发布：新版本只追加不改旧版，发布后才对 Agent 可见；回滚就是把旧版本重新发布。Agent 经 /mcp prompts/get 读取已发布版本，参数先过 DLP，渲染结果再过 DLP + 自带级脱敏。",
        exportBtn:"导出 NDJSON",archiveBtn:"归档 180 天前",
        exportHint:"导出为 NDJSON（可直接喂给 jq / SIEM），响应头附带哈希链校验结果；归档把超过保留期（默认 180 天）的事件移入 gzip 压缩包并留校验锚点。",
        time:"时间",actor:"操作者",action:"动作",level:"等级",decision:"处置"},
@@ -160,6 +182,8 @@ const I18N = {
        fedHint:"Upstream tools appear in /mcp tools/list as \"namespace.tool\"; calls are authorized by the upstream's max data level and minimum tier, with DLP applied. Credentials are encrypted at rest and never echoed back.",
        restTitle:"REST → MCP tools",
        restHint:"Existing REST endpoints register as tools by method + path template + input schema, and appear in /mcp tools/list as rest.<name>. {{param}} placeholders in the path are substituted and escaped; remaining arguments go to the query string (GET/DELETE) or a JSON body (POST/PUT/PATCH). Calls are schema-validated, tier-authorized and DLP-checked; credentials are encrypted at rest and never echoed back.",
+       promptsTitle:"Prompt templates",status:"Status",versions:"Versions",scope:"Scope",
+       promptsHint:"Templates follow submit → review → publish: new versions only append, never rewrite; a version serves agents only after publishing, and rolling back means re-publishing an older version. Agents read the published version via /mcp prompts/get; arguments pass DLP first, and the rendered text passes DLP + BYOA redaction.",
        exportBtn:"Export NDJSON",archiveBtn:"Archive older than 180d",
        exportHint:"Export as NDJSON (feed it to jq / your SIEM); response headers carry the hash-chain check. Archiving moves events older than the retention period (default 180 days) into a gzip bundle and leaves a verification anchor.",
        time:"Time",actor:"Actor",action:"Action",level:"Level",decision:"Decision"}
@@ -190,7 +214,7 @@ function login2app(){
   document.getElementById("login").style.display="none";
   document.getElementById("app").style.display="block";
   document.getElementById("logoutBtn").style.display="inline-block";
-  loadChannels(); loadTokens(); loadAlerts(); loadUpstreams(); loadRESTTools(); loadStats(); loadAudit();
+  loadChannels(); loadTokens(); loadAlerts(); loadUpstreams(); loadRESTTools(); loadPrompts(); loadStats(); loadAudit();
 }
 async function loadUpstreams(){
   try{ const d = await api("/api/mcp/upstreams");
@@ -232,6 +256,28 @@ async function testRESTTool(id){
 async function deleteRESTTool(id){
   try{ await api("/api/mcp/rest-tools/"+id,{method:"DELETE"});
     rtMsg.textContent="✓ deleted"; loadRESTTools(); loadAudit(); }catch(e){ rtMsg.textContent=e.message; }
+}
+async function loadPrompts(){
+  try{ const d = await api("/api/prompts");
+    document.querySelector("#prompts tbody").innerHTML = (d.prompts||[]).map(p=>
+      `<tr><td>${p.name}</td><td><span class="tag">${p.status}</span></td><td>v${p.current_version} / 已发布 v${p.published_version||"—"}</td><td class="muted">${p.scope||""}</td><td><span class="tag">${p.max_data_level}</span></td><td><span class="tag">${p.min_tier}</span></td>`+
+      `<td><button class="ghost" onclick="publishPrompt('${p.id}', ${p.current_version})">发布/回滚</button> <button class="ghost" onclick="deletePrompt('${p.id}')">✕</button></td></tr>`).join("");
+  }catch(e){ document.querySelector("#prompts tbody").innerHTML = `<tr><td colspan="7" class="muted">${e.message}</td></tr>`; }
+}
+async function addPrompt(){
+  try{ const args = JSON.parse(ptArgs.value||"[]");
+    await api("/api/prompts",{method:"POST",body:JSON.stringify({name:ptName.value.trim(),description:ptDesc.value.trim(),scope:ptScope.value.trim(),content:ptContent.value,arguments:args,max_data_level:ptLevel.value,min_tier:ptTier.value})});
+    ptMsg.textContent="✓ saved (in_review)"; ptName.value=""; ptDesc.value=""; ptScope.value=""; loadPrompts(); loadAudit(); }catch(e){ ptMsg.textContent=e.message; }
+}
+async function publishPrompt(id, current){
+  try{ const raw = prompt("publish version", String(current));
+    if(raw===null) return;
+    const d = await api("/api/prompts/"+id+"/publish",{method:"POST",body:JSON.stringify({version:parseInt(raw,10)})});
+    ptMsg.textContent="✓ published v"+d.published_version; loadPrompts(); loadAudit(); }catch(e){ ptMsg.textContent=e.message; }
+}
+async function deletePrompt(id){
+  try{ await api("/api/prompts/"+id,{method:"DELETE"});
+    ptMsg.textContent="✓ deleted"; loadPrompts(); loadAudit(); }catch(e){ ptMsg.textContent=e.message; }
 }
 async function loadAlerts(){
   try{ const d = await api("/api/alerts/webhooks");

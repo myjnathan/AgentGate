@@ -69,6 +69,13 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/mcp/rest-tools", a.requireAdmin(a.createRESTTool))
 	mux.HandleFunc("DELETE /api/mcp/rest-tools/{id}", a.requireAdmin(a.deleteRESTTool))
 	mux.HandleFunc("POST /api/mcp/rest-tools/{id}/test", a.requireAdmin(a.testRESTTool))
+	mux.HandleFunc("GET /api/prompts", a.requireSession(a.listPrompts))
+	mux.HandleFunc("POST /api/prompts", a.requireSession(a.createPrompt))
+	mux.HandleFunc("GET /api/prompts/{id}", a.requireSession(a.getPrompt))
+	mux.HandleFunc("POST /api/prompts/{id}/versions", a.requireSession(a.addPromptVersion))
+	mux.HandleFunc("POST /api/prompts/{id}/review", a.requireAdmin(a.reviewPrompt))
+	mux.HandleFunc("POST /api/prompts/{id}/publish", a.requireAdmin(a.publishPrompt))
+	mux.HandleFunc("DELETE /api/prompts/{id}", a.requireAdmin(a.deletePrompt))
 	mux.HandleFunc("POST /api/setup/device/start", a.deviceStart)
 	mux.HandleFunc("POST /api/setup/device/poll", a.devicePoll)
 }

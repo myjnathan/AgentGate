@@ -22,6 +22,7 @@ import (
 
 type testEnv struct {
 	srv     *httptest.Server
+	st      *store.Store
 	byoaTok string
 	mgdTok  string
 }
@@ -160,7 +161,7 @@ func setup(t *testing.T) *testEnv {
 		}
 		return plain
 	}
-	return &testEnv{srv: srv,
+	return &testEnv{srv: srv, st: st,
 		byoaTok: mkToken("lixiaofeng", store.TierBYOA),
 		mgdTok:  mkToken("chenjing", store.TierManaged)}
 }
@@ -510,5 +511,275 @@ func TestRESTToolUnknown(t *testing.T) {
 	r := e.callTool(t, e.byoaTok, "rest.nope", map[string]any{})
 	if r.Error == nil || r.Error.Code != -32602 {
 		t.Fatalf("unknown REST tool: got %+v, want RPC error -32602", r)
+	}
+}
+
+// ---- F8: prompt templates ----
+
+// listPromptNames issues a prompts/list JSON-RPC request and returns
+// the advertised prompt names.
+func (e *testEnv) listPromptNames(t *testing.T, token string) []string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "prompts/list",
+	})
+	req, _ := http.NewRequest("POST", e.srv.URL, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Result *struct {
+			Prompts []struct {
+				Name string `json:"name"`
+			} `json:"prompts"`
+		} `json:"result"`
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode prompts/list: %v", err)
+	}
+	if out.Error != nil {
+		t.Fatalf("prompts/list error %d: %s", out.Error.Code, out.Error.Message)
+	}
+	var names []string
+	for _, p := range out.Result.Prompts {
+		names = append(names, p.Name)
+	}
+	return names
+}
+
+type promptResponse struct {
+	Result *struct {
+		Description string `json:"description"`
+		Messages    []struct {
+			Role    string `json:"role"`
+			Content struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"messages"`
+	} `json:"result"`
+	Error *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// getPrompt issues a prompts/get JSON-RPC request.
+func (e *testEnv) getPrompt(t *testing.T, token, name string, args map[string]any, version string) promptResponse {
+	t.Helper()
+	params := map[string]any{"name": name, "arguments": args}
+	if version != "" {
+		params["version"] = version
+	}
+	body, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "prompts/get", "params": params,
+	})
+	req, _ := http.NewRequest("POST", e.srv.URL, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out promptResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode prompts/get: %v", err)
+	}
+	return out
+}
+
+func promptText(t *testing.T, r promptResponse) string {
+	t.Helper()
+	if r.Error != nil {
+		t.Fatalf("unexpected prompts/get error %d: %s", r.Error.Code, r.Error.Message)
+	}
+	if r.Result == nil || len(r.Result.Messages) == 0 {
+		t.Fatal("prompts/get response has no messages")
+	}
+	return r.Result.Messages[0].Content.Text
+}
+
+func TestPromptsListedPublishedOnly(t *testing.T) {
+	e := setup(t)
+	byoa := e.listPromptNames(t, e.byoaTok)
+	if !hasName(byoa, "weekly_report") {
+		t.Fatalf("BYOA prompts/list missing seeded weekly_report: %v", byoa)
+	}
+	// A draft and a managed-only template must stay hidden from BYOA.
+	e.st.WithLock(func(s *store.State) {
+		s.Prompts["pt_draft"] = &store.PromptTemplate{ID: "pt_draft", Name: "draft_one",
+			Scope: "*", MaxDataLevel: store.LevelInternal, MinTier: store.TierBYOA,
+			Status: "in_review", CurrentVersion: 1,
+			Versions: []store.PromptVersion{{Version: 1, Content: "草稿 {{name}}",
+				Arguments: []store.PromptArgument{{Name: "name", Required: true}}}}}
+		s.Prompts["pt_mgd"] = &store.PromptTemplate{ID: "pt_mgd", Name: "managed_only",
+			Scope: "*", MaxDataLevel: store.LevelInternal, MinTier: store.TierManaged,
+			Status: "published", CurrentVersion: 1, PublishedVersion: 1,
+			Versions: []store.PromptVersion{{Version: 1, Content: "受管 {{name}}",
+				Arguments: []store.PromptArgument{{Name: "name", Required: true}}}}}
+	})
+	byoa = e.listPromptNames(t, e.byoaTok)
+	if hasName(byoa, "draft_one") {
+		t.Fatalf("BYOA prompts/list must hide drafts: %v", byoa)
+	}
+	if hasName(byoa, "managed_only") {
+		t.Fatalf("BYOA prompts/list must hide managed-only templates: %v", byoa)
+	}
+	mgd := e.listPromptNames(t, e.mgdTok)
+	if !hasName(mgd, "managed_only") {
+		t.Fatalf("managed prompts/list missing managed_only: %v", mgd)
+	}
+	if hasName(mgd, "draft_one") {
+		t.Fatalf("managed prompts/list must hide drafts: %v", mgd)
+	}
+}
+
+func TestPromptGetRendersPublished(t *testing.T) {
+	e := setup(t)
+	text := promptText(t, e.getPrompt(t, e.byoaTok, "weekly_report",
+		map[string]any{"name": "李晓峰", "department": "研发部", "week": "2026-W47"}, ""))
+	if !strings.Contains(text, "研发部的李晓峰") || !strings.Contains(text, "2026-W47") {
+		t.Fatalf("weekly_report render missing substitutions: %q", text)
+	}
+	if strings.Contains(text, "{{") {
+		t.Fatalf("rendered prompt leaks placeholder syntax: %q", text)
+	}
+}
+
+func TestPromptGetVersionPinning(t *testing.T) {
+	e := setup(t)
+	e.st.WithLock(func(s *store.State) {
+		s.Prompts["pt_pin"] = &store.PromptTemplate{ID: "pt_pin", Name: "pin_test",
+			Scope: "*", MaxDataLevel: store.LevelInternal, MinTier: store.TierBYOA,
+			Status: "published", CurrentVersion: 2, PublishedVersion: 1,
+			Versions: []store.PromptVersion{
+				{Version: 1, Content: "版本一 {{name}}",
+					Arguments: []store.PromptArgument{{Name: "name", Required: true}}},
+				{Version: 2, Content: "版本二 {{name}}",
+					Arguments: []store.PromptArgument{{Name: "name", Required: true}}},
+			}}
+	})
+	args := map[string]any{"name": "李晓峰"}
+	// v2 exists but is not published: pinning it must fail, and
+	// @latest means the published version, not the newest one.
+	r := e.getPrompt(t, e.byoaTok, "pin_test", args, "2")
+	if r.Error == nil || r.Error.Code != -32602 {
+		t.Fatalf("pin unpublished v2: got %+v, want RPC error -32602", r)
+	}
+	if text := promptText(t, e.getPrompt(t, e.byoaTok, "pin_test", args, "@latest")); !strings.Contains(text, "版本一") {
+		t.Fatalf("@latest must render the published v1, got %q", text)
+	}
+	if text := promptText(t, e.getPrompt(t, e.byoaTok, "pin_test", args, "1")); !strings.Contains(text, "版本一") {
+		t.Fatalf("pin v1 must render v1, got %q", text)
+	}
+	// Rollback/publish v2: now @latest and pin "2" render v2, and
+	// pin "1" fails (v1 is no longer published).
+	e.st.WithLock(func(s *store.State) { s.Prompts["pt_pin"].PublishedVersion = 2 })
+	if text := promptText(t, e.getPrompt(t, e.byoaTok, "pin_test", args, "@latest")); !strings.Contains(text, "版本二") {
+		t.Fatalf("after publish v2, @latest must render v2, got %q", text)
+	}
+	r = e.getPrompt(t, e.byoaTok, "pin_test", args, "1")
+	if r.Error == nil || r.Error.Code != -32602 {
+		t.Fatalf("pin superseded v1: got %+v, want RPC error -32602", r)
+	}
+	r = e.getPrompt(t, e.byoaTok, "pin_test", args, "@draft")
+	if r.Error == nil || r.Error.Code != -32602 {
+		t.Fatalf("@draft selector: got %+v, want RPC error -32602", r)
+	}
+}
+
+func TestPromptGetArgsValidation(t *testing.T) {
+	e := setup(t)
+	r := e.getPrompt(t, e.byoaTok, "weekly_report", map[string]any{"name": "李晓峰"}, "")
+	if r.Error == nil || r.Error.Code != -32602 {
+		t.Fatalf("missing required argument: got %+v, want RPC error -32602", r)
+	}
+	r = e.getPrompt(t, e.byoaTok, "weekly_report",
+		map[string]any{"name": "李晓峰", "department": "研发部", "week": "2026-W47", "extra": "x"}, "")
+	if r.Error == nil || r.Error.Code != -32602 {
+		t.Fatalf("unknown argument: got %+v, want RPC error -32602", r)
+	}
+	r = e.getPrompt(t, e.byoaTok, "weekly_report",
+		map[string]any{"name": "李晓峰", "department": "研发部", "week": 47}, "")
+	if r.Error == nil || r.Error.Code != -32602 {
+		t.Fatalf("non-string argument: got %+v, want RPC error -32602", r)
+	}
+}
+
+func TestPromptGetArgsLevelBlocked(t *testing.T) {
+	e := setup(t)
+	// XH-200 is confidential, above weekly_report's MaxDataLevel
+	// internal: the argument must never be rendered.
+	r := e.getPrompt(t, e.byoaTok, "weekly_report",
+		map[string]any{"name": "XH-200", "department": "研发部", "week": "2026-W47"}, "")
+	if r.Error == nil || r.Error.Code != -32004 {
+		t.Fatalf("confidential argument: got %+v, want RPC error -32004", r)
+	}
+	r = e.getPrompt(t, e.byoaTok, "weekly_report",
+		map[string]any{"name": "test_sensitive", "department": "研发部", "week": "2026-W47"}, "")
+	if r.Error == nil || r.Error.Code != -32004 {
+		t.Fatalf("banned-word argument: got %+v, want RPC error -32004", r)
+	}
+}
+
+func TestPromptGetResultRedactedForBYOA(t *testing.T) {
+	e := setup(t)
+	e.st.WithLock(func(s *store.State) {
+		s.Prompts["pt_notice"] = &store.PromptTemplate{ID: "pt_notice", Name: "notice",
+			Scope: "*", MaxDataLevel: store.LevelConfidential, MinTier: store.TierBYOA,
+			Status: "published", CurrentVersion: 1, PublishedVersion: 1,
+			Versions: []store.PromptVersion{{Version: 1,
+				Content:   "项目进展：XH-200 正常。请向{{name}}汇报。",
+				Arguments: []store.PromptArgument{{Name: "name", Required: true}}}}}
+	})
+	// The template text itself carries the confidential custom word.
+	text := promptText(t, e.getPrompt(t, e.byoaTok, "notice", map[string]any{"name": "李晓峰"}, ""))
+	if strings.Contains(text, "XH-200") {
+		t.Fatalf("BYOA must not receive the confidential word in a rendered prompt, got %q", text)
+	}
+	if !strings.Contains(text, "<CUSTOM_1>") {
+		t.Fatalf("BYOA render should carry the redaction placeholder, got %q", text)
+	}
+	text = promptText(t, e.getPrompt(t, e.mgdTok, "notice", map[string]any{"name": "陈静"}, ""))
+	if !strings.Contains(text, "XH-200") {
+		t.Fatalf("managed render should keep the raw template text, got %q", text)
+	}
+}
+
+func TestPromptGetTierDeniedAndUnknown(t *testing.T) {
+	e := setup(t)
+	e.st.WithLock(func(s *store.State) {
+		s.Prompts["pt_mgd"] = &store.PromptTemplate{ID: "pt_mgd", Name: "managed_only",
+			Scope: "*", MaxDataLevel: store.LevelInternal, MinTier: store.TierManaged,
+			Status: "published", CurrentVersion: 1, PublishedVersion: 1,
+			Versions: []store.PromptVersion{{Version: 1, Content: "受管 {{name}}",
+				Arguments: []store.PromptArgument{{Name: "name", Required: true}}}}}
+		s.Prompts["pt_draft"] = &store.PromptTemplate{ID: "pt_draft", Name: "draft_one",
+			Scope: "*", MaxDataLevel: store.LevelInternal, MinTier: store.TierBYOA,
+			Status: "in_review", CurrentVersion: 1,
+			Versions: []store.PromptVersion{{Version: 1, Content: "草稿 {{name}}",
+				Arguments: []store.PromptArgument{{Name: "name", Required: true}}}}}
+	})
+	r := e.getPrompt(t, e.byoaTok, "managed_only", map[string]any{"name": "李晓峰"}, "")
+	if r.Error == nil || r.Error.Code != -32003 {
+		t.Fatalf("BYOA get of managed-only prompt: got %+v, want RPC error -32003", r)
+	}
+	// A draft's existence must not leak through prompts/get.
+	r = e.getPrompt(t, e.byoaTok, "draft_one", map[string]any{"name": "李晓峰"}, "")
+	if r.Error == nil || r.Error.Code != -32602 {
+		t.Fatalf("draft prompt get: got %+v, want RPC error -32602", r)
+	}
+	r = e.getPrompt(t, e.byoaTok, "nope", map[string]any{}, "")
+	if r.Error == nil || r.Error.Code != -32602 {
+		t.Fatalf("unknown prompt: got %+v, want RPC error -32602", r)
 	}
 }

@@ -338,6 +338,7 @@ type State struct {
 	Webhooks    map[string]*Webhook        `json:"webhooks"`
 	Upstreams   map[string]*UpstreamServer `json:"upstreams"`
 	RESTTools   map[string]*RESTTool       `json:"rest_tools"`
+	Prompts     map[string]*PromptTemplate `json:"prompts"`
 }
 
 func newState() *State {
@@ -352,6 +353,7 @@ func newState() *State {
 		Webhooks:    map[string]*Webhook{},
 		Upstreams:   map[string]*UpstreamServer{},
 		RESTTools:   map[string]*RESTTool{},
+		Prompts:     map[string]*PromptTemplate{},
 	}
 }
 
@@ -399,6 +401,9 @@ func New(dir string) (*Store, error) {
 		}
 		if st.RESTTools == nil {
 			st.RESTTools = map[string]*RESTTool{}
+		}
+		if st.Prompts == nil {
+			st.Prompts = map[string]*PromptTemplate{}
 		}
 		s.st = &st
 	} else if !os.IsNotExist(err) {
