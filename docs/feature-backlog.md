@@ -187,10 +187,17 @@
 - 实现：`store.PromptTemplate`（名称 snake_case 唯一、部门范围、最高密级、最低等级、状态 draft/in_review/published/rejected、当前版本/已发布版本）+ `PromptVersion`（不可变版本：内容 `{{name}}` 占位符 + 声明参数）+ `RenderPrompt`（严格替换：未知/必填缺失/非字符串参数报错，只报字段名不报值）+ `ValidateTemplateVersion`（占位符须已声明、内容 ≤32 KiB、参数 ≤20 个）；`/mcp` 新增 `prompts/list`（仅已发布 + 范围内 + 等级足够）与 `prompts/get`（默认/显式版本选择、数字版本须为已发布版、参数与渲染结果双重 DLP + 自带级脱敏、审计 `prompt_get`）；管理 API `GET/POST /api/prompts`、`GET /api/prompts/{id}`、`POST /api/prompts/{id}/versions`（只追加不改旧版、已发布版继续服务）、`POST /api/prompts/{id}/review`（批准即发布当前版，首次发布时定已发布版）、`POST /api/prompts/{id}/publish`（发布/回滚到指定版本）、`DELETE /api/prompts/{id}`；管理台新增 Prompt 模板卡片（中英双语，建/发布-回滚/删）；演示种子 `weekly_report`（星河精密周报助手，已发布 v1）。
 - 测试：store 5 项（渲染替换与可选参数、参数校验三类拒绝、版本校验八类拒绝、已发布版解析、部门范围）+ API 端点 1 项（提交→加版→审核发布→回滚→删除全链路、重名 409、非法名 400、员工 403）+ MCP 集成 7 项（列表仅已发布/范围/等级过滤、渲染、版本钉选与回滚、参数校验、参数密级拦截、渲染结果自带级脱敏/受管级原文、等级拒绝与草稿不泄漏）+ 冒烟新增 16 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 76 项断言 0 失败。
 
-### F9 OIDC / LDAP 登录 `todo`
+### F9 OIDC / LDAP 登录 `done`（2026-11-21）
 - 来源：dsh-ee、LiteLLM Enterprise（SSO/SCIM 为其付费墙功能，我们开源实现即差异化）。
 - 适配：本地账号保留为兜底；OIDC 用户自动映射部门与角色。
 - 验收：对接一个公开 OIDC 测试 IdP 完成登录闭环；LDAP 以文档 + 配置预留（无环境时标注未实测）。
+- 借鉴点（OpenID Connect Core 1.0 / Discovery 1.0，openid.net/specs，2026-11-21 查阅；Duende IdentityServer 演示站 demo.duendesoftware.com，2026-11-21 实测）：
+  OIDC 授权码流程：discovery 文档取端点 → authorize（response_type=code + PKCE S256 + state/nonce）→ 回调换码（client_secret 走服务端 Basic 认证）→ 按 JWKS 校验 ID token（iss/aud/exp/nonce）→ userinfo 补 profile claim。
+  Duende 演示站的实测教训有两条直接进了实现：① 它的 profile claim（name/email）不在 ID token 里、只在 userinfo 里，所以换码后必须调 userinfo 合并，不能假设所有 IdP 都把姓名放进 ID token；② 演示 client（interactive.confidential，secret `secret`，用户 alice/alice）登记的 redirect URI 是示例地址，验证时用登记地址走完换码、再用本仓库代码验 token——服务自身的回调闭环由 Go 测试（假 IdP）覆盖。
+  我们照此实现，但做三处治理收紧：① IdP 只认身份、不认权限——role claim 即便给了也不采信，JIT 新用户永远是 employee，提权必须本地管理员操作；② 账号不串户——OIDC 用户名撞上本地账号时自动加后缀，OIDC 账号无本地密码哈希、本地登录永远失败；③ 只认 RS256（`alg: none` 与 HS256 直接拒绝），JWKS 按 kid 取键、未知 kid 刷新一次再拒；且纯标准库实现，不拉 oauth2/oidc 依赖。
+- 实现：新包 `internal/oidc`（discovery + 授权码 + PKCE + RS256 验签 + userinfo 合并，state/nonce 单次有效 10 分钟过期）；`store.User` 增加 `oidc_subject` 与 `auth_source`；`auth.LoginOIDC`（按 sub 找号、没有则 JIT 开户、每次登录刷新姓名/部门、角色本地管、禁用拒登）+ `auth.CreateSession`；`GET /auth/oidc/login`（302 跳 IdP）与 `GET /auth/oidc/callback`（换码验签后发会话、回调页写 localStorage 回管理台，失败只给通用文案）+ `GET /api/auth/providers`（登录页用）+ `GET /api/auth/oidc/status`（admin/security，配置视图不含 secret）；管理台登录页在 OIDC 启用时显示「使用企业 SSO 登录」按钮（中英双语）；环境变量 `AGENTGATE_OIDC_*`（见 docs/oidc-sso.md），缺一个即不开启、只记日志，本地登录始终可用。
+  LDAP：本轮只做配置与设计——新包 `internal/ldap`（`Config` + `ConfigFromEnv` + `Validate`，`Implemented()` 为 false）与 docs/ldap.md（绑定→搜索→用户绑定流程、安全约定、实现轮次验收清单）；无 LDAP 测试目录，未实现客户端、未实测。
+- 测试：oidc 包 5 项（Config 默认与 http issuer 拒绝、假 IdP 全流程换码 + userinfo 合并、state 单次有效、ID token 八类拒绝：nonce/aud/iss/过期/无 sub/篡改/alg none/未知 kid、发现文档 issuer 不一致拒绝）+ auth 包 4 项（JIT 开户为 employee 且无本地密码、重复登录同一账号并刷新资料、撞本地用户名自动加后缀、禁用与空 sub 拒绝、用户名清洗与回退）+ API 端点 4 项（假 IdP 下 HTTP 全程：login → IdP → callback → 会话页 → /api/me；坏 state 400；未配置时 503；status 需登录）+ ldap 包 2 项（配置默认与五类拒绝、ldap:// + StartTLS 合法）；另用真实 Duende 演示 IdP 跑通登录闭环并以本仓库 `VerifyIDToken` 对线上 JWKS 验签通过（临时测试，验证后删除、未进仓库）；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 81 项断言 0 失败（新增 5 项 F9 断言）。
 
 ### F10 流式脱敏与 tool_calls 防护（探针 3） `todo`
 - 来源：蓝图探针 3；AstrLink 的流式占位符处理思路。

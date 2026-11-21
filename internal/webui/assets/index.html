@@ -39,6 +39,8 @@
     <p><input id="lp" type="password" placeholder="password" style="width:92%"></p>
     <button onclick="login()" data-i18n="loginBtn">登录</button>
     <p id="lerr" style="color:#ff7a7a"></p>
+    <p id="ssoRow" style="display:none"><button class="ghost" onclick="location.href='/auth/oidc/login'" data-i18n="ssoBtn">使用企业 SSO 登录</button>
+    <span class="muted" id="ssoIssuer"></span></p>
   </div>
 
   <div id="app" style="display:none">
@@ -153,7 +155,7 @@
 </main>
 <script>
 const I18N = {
-  zh: {loginTitle:"登录",loginHint:"演示账号：admin / agentgate-admin，员工：lixiaofeng / demo12345",loginBtn:"登录",logout:"退出",
+  zh: {loginTitle:"登录",loginHint:"演示账号：admin / agentgate-admin，员工：lixiaofeng / demo12345",loginBtn:"登录",logout:"退出",ssoBtn:"使用企业 SSO 登录",
        deviceTitle:"批准设备码（Agent 接入）",approveBtn:"批准",deviceHint:"员工在终端运行 ag-setup 后会得到设备码，在此批准即完成接入。",
        channelsTitle:"模型渠道",name:"名称",models:"模型",maxLevel:"最高数据等级",trustType:"信任类型",health:"健康",auditTitle:"审计日志（哈希链）",refresh:"刷新",
        statsTitle:"用量统计",byDept:"按部门",byModel:"按模型",byChannel:"按渠道",calls:"调用",blocked:"拦截",
@@ -170,7 +172,7 @@ const I18N = {
        exportBtn:"导出 NDJSON",archiveBtn:"归档 180 天前",
        exportHint:"导出为 NDJSON（可直接喂给 jq / SIEM），响应头附带哈希链校验结果；归档把超过保留期（默认 180 天）的事件移入 gzip 压缩包并留校验锚点。",
        time:"时间",actor:"操作者",action:"动作",level:"等级",decision:"处置"},
-  en: {loginTitle:"Sign in",loginHint:"Demo: admin / agentgate-admin, employee: lixiaofeng / demo12345",loginBtn:"Sign in",logout:"Sign out",
+  en: {loginTitle:"Sign in",loginHint:"Demo: admin / agentgate-admin, employee: lixiaofeng / demo12345",loginBtn:"Sign in",logout:"Sign out",ssoBtn:"Sign in with enterprise SSO",
        deviceTitle:"Approve device code (agent onboarding)",approveBtn:"Approve",deviceHint:"An employee runs ag-setup and gets a device code; approve it here to finish onboarding.",
        channelsTitle:"Model channels",name:"Name",models:"Models",maxLevel:"Max data level",trustType:"Trust type",health:"Health",auditTitle:"Audit log (hash-chained)",refresh:"Refresh",
        statsTitle:"Usage stats",byDept:"By department",byModel:"By model",byChannel:"By channel",calls:"Calls",blocked:"Blocked",
@@ -209,6 +211,11 @@ async function login(){
     login2app();
   }catch(e){ lerr.textContent = e.message; }
 }
+// Show the enterprise SSO button only when an OIDC provider is configured.
+fetch("/api/auth/providers").then(r=>r.json()).then(d=>{
+  if(d.oidc_enabled){ document.getElementById("ssoRow").style.display="block";
+    if(d.oidc_issuer) document.getElementById("ssoIssuer").textContent = d.oidc_issuer; }
+}).catch(()=>{});
 function logout(){ session=""; localStorage.removeItem("ag_session"); location.reload(); }
 function login2app(){
   document.getElementById("login").style.display="none";

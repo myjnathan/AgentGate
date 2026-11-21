@@ -13,6 +13,17 @@
 //	                     audit retention policy in days (default 180);
 //	                     events older than now minus this many days are
 //	                     eligible for archiving via POST /api/audit/archive
+//	AGENTGATE_OIDC_ISSUER / AGENTGATE_OIDC_CLIENT_ID /
+//	AGENTGATE_OIDC_CLIENT_SECRET
+//	                     enable OpenID Connect login (backlog F9); all
+//	                     three must be set. Optional: AGENTGATE_OIDC_REDIRECT_URL,
+//	                     AGENTGATE_OIDC_SCOPES, AGENTGATE_OIDC_DEPARTMENT_CLAIM.
+//	                     Local login always stays available as a fallback.
+//	AGENTGATE_LDAP_URL / AGENTGATE_LDAP_BIND_DN /
+//	AGENTGATE_LDAP_BIND_PASSWORD / AGENTGATE_LDAP_BASE_DN
+//	                     LDAP directory configuration (backlog F9);
+//	                     config only in this round, no LDAP client yet
+//	                     (see docs/ldap.md).
 package main
 
 import (
@@ -32,6 +43,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/guard"
 	"github.com/myjnathan/agentgate/internal/mcp"
 	"github.com/myjnathan/agentgate/internal/mockllm"
+	"github.com/myjnathan/agentgate/internal/oidc"
 	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/seed"
@@ -120,8 +132,23 @@ func main() {
 
 	fed := federation.New(st, box)
 	restAd := restadapter.New(st, box)
+	// OIDC login (backlog F9): enabled only when issuer + client ID +
+	// client secret are all set; a discovery failure disables OIDC
+	// with a log line instead of refusing to start (local login is
+	// the fallback).
+	var oidcProvider *oidc.Provider
+	if oidcCfg, enabled := oidc.ConfigFromEnv(os.Getenv); enabled {
+		p, err := oidc.NewProvider(oidcCfg)
+		if err != nil {
+			log.Printf("OIDC disabled: %v", err)
+		} else {
+			oidcProvider = p
+			log.Printf("OIDC enabled: issuer %s (local login still available)", oidcCfg.Issuer)
+		}
+	}
 	mcpSrv := mcp.New(st, au, al, det, fed, restAd)
 	rest := api.New(st, au, box, al)
+	rest.SetOIDC(oidcProvider)
 	rest.SetFederation(fed)
 	rest.SetRESTAdapter(restAd)
 	rest.SetAlertDispatcher(dispatcher)

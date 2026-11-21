@@ -2,6 +2,15 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-21 · F9 OIDC / LDAP 登录
+- 本轮按常规规程选条目：特别指令（F17 + 蓝图修订稿）已在 F17 轮执行完毕、执行后作废；P0 全部 done，P1 按清单顺序取 F9。Nathan 于本轮前在主对话说「继续」，Loop 照每小时一轮推进。
+- 借鉴 OpenID Connect Core 1.0 / Discovery 1.0（openid.net/specs）与 Duende IdentityServer 演示站（demo.duendesoftware.com）：授权码 + PKCE S256 + state/nonce、服务端换码、JWKS 验 RS256、userinfo 补 profile。Duende 实测的两条教训直接进了实现：① profile claim 不在 ID token 里、只在 userinfo 里，换码后必须调 userinfo 合并；② 演示 client 登记的 redirect URI 是示例地址，验证时用登记地址走完换码、再用本仓库代码验 token。
+- 实现：新包 `internal/oidc`（纯标准库：discovery、授权码 + PKCE、RS256 验签、userinfo 合并；state/nonce 单次有效 10 分钟过期）；`store.User` 增加 `oidc_subject` 与 `auth_source`；`auth.LoginOIDC`（JIT 开户、每次登录刷新姓名/部门）+ `auth.CreateSession`；`GET /auth/oidc/login`、`GET /auth/oidc/callback`、`GET /api/auth/providers`、`GET /api/auth/oidc/status`（admin）；管理台登录页在 OIDC 启用时显示 SSO 按钮（中英双语）；环境变量 `AGENTGATE_OIDC_*`，缺一个即不开启，本地登录始终兜底。LDAP 本轮只做配置与设计：新包 `internal/ldap`（`Config` + `Validate`，`Implemented()` 为 false）与 docs/ldap.md（流程、安全约定、实现轮次验收清单），无测试目录、未实现客户端、未实测。
+- 关键决策：IdP 只认身份、不认权限——role claim 即便给了也不采信，JIT 新用户永远是 employee，提权必须本地管理员操作；账号不串户（OIDC 用户名撞本地账号自动加后缀，OIDC 账号无本地密码哈希）；只认 RS256（`alg: none` 与 HS256 直接拒绝）；回调失败只给通用文案，code/state 不进审计；不引入 oauth2/oidc 依赖，登录路径纯标准库。
+- 测试：oidc 包 5 项 + auth 包 4 项（JIT 开户/撞名加后缀/禁用拒绝/用户名清洗）+ API 端点 4 项（假 IdP 下 HTTP 全程 login→IdP→callback→会话页→/api/me）+ ldap 包 2 项；另用真实 Duende 演示 IdP（alice/alice）跑通登录闭环并以本仓库 `VerifyIDToken` 对线上 JWKS 验签通过（临时测试，验证后删除、未进仓库）；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 81 项断言 0 失败（新增 5 项 F9 断言）。
+- 推送：按分支 + PR 机制走 `loop/f9` 分支，见本轮汇报。
+- 推送结果：（待填）
+
 ## 2026-11-21 · F8 Prompt 模板库
 - 本轮按常规规程选条目：上一轮特别指令（F17 + 蓝图修订稿）已在 F17 轮执行完毕、执行后作废，本轮起忽略；另核实主对话的许可证变更已于本轮前经 PR #3 合并进远端 main（3556114，5 个文件逐个哈希核对与本地 00c39b5 一致），无在途分支需续传。P0 全部 done，P1 按清单顺序取 F8。
 - 借鉴 ContextForge Prompt 注册中心（Jinja2 模板 + JSON-Schema 参数校验 + 版本管理与回滚）与 Portkey Prompt 版本语义（更新只产生新版本、不推向生产；发布才标定默认生产版本；版本不可变；默认走已发布版、可按版本号或 `@latest` 引用；历史版本可恢复/发布）。我们照此实现，但做三处治理收紧：① 版本选择只服务已发布版本——`@latest` 即已发布版，未发布版本 Agent 永远拿不到；② 参数校验默认严格——未知参数、必填缺失、非字符串值一律拒绝（与 F7 的 schema 即契约一致）；③ 渲染走与工具调用相同的门禁：参数先过 DLP、渲染结果再过 DLP + 自带级脱敏，模板按部门范围与最低等级下发。
@@ -9,6 +18,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 关键决策：新版本永不自动发布——加版后已发布版继续服务，直到管理员显式发布（Portkey 的更新≠发布语义）；审核批准仅在首次发布时定已发布版，已发布模板的后续版本一律走 publish 端点，避免审核动作悄悄改生产；拒绝已发布模板会撤下服务（prompts/get 要求 status 为 published），与技能的 rejected 语义一致。
 - 测试：store 5 项 + API 端点 1 项（提交→加版→审核发布→回滚→删除全链路）+ MCP 集成 7 项 + 冒烟新增 16 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 76 项断言 0 失败。
 - 推送：按分支 + PR 机制走 `loop/f8` 分支，见本轮汇报。
+- 推送结果：整包快照推送一次成功（push-files，14 个文件一次提交 560d8777，逐文件哈希核对 14/14 一致，未触发 contents API 回退）；PR #4 文件清单与本轮一致，已合并进远端 main，远端 HEAD 47b2b190（合并提交），读回验证 prompts.go 与 mcp.go 已在 main 上。
 
 ## 2026-11-21 · 许可证变更：PolyForm Noncommercial → GNU AGPL-3.0
 - Nathan 2026-11-21 15:43 决定：项目目标是普及而非盈利，许可证由 PolyForm Noncommercial 1.0.0（禁止商用）改为 GNU AGPL-3.0——任何人可免费使用（含商业使用）；修改后分发或以网络服务形式提供时，须以 AGPL-3.0 公开对应源代码，防止闭源转卖。此决定取代同日早先「禁止商用」的指示。
