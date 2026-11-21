@@ -2,6 +2,11 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-21 · 许可证变更：PolyForm Noncommercial → GNU AGPL-3.0
+- Nathan 2026-11-21 15:43 决定：项目目标是普及而非盈利，许可证由 PolyForm Noncommercial 1.0.0（禁止商用）改为 GNU AGPL-3.0——任何人可免费使用（含商业使用）；修改后分发或以网络服务形式提供时，须以 AGPL-3.0 公开对应源代码，防止闭源转卖。此决定取代同日早先「禁止商用」的指示。
+- 变更内容：LICENSE 替换为 AGPL-3.0 标准全文（取自 SPDX license-list-data 的 AGPL-3.0-only 文本，34,020 字符，结构校验通过）；README 许可证一节、docs/blueprint.md 许可证决策记录与仓库可见性条目、docs/development-loop.md 红线表述同步改为 AGPL 口径。
+- 本条为主对话人工变更（非 Loop 轮次），走 loop/license-agpl 分支 + PR 合入 main；同时首次实测整包快照推送（push-files）机制。
+
 ## 2026-11-21 · F17 渠道信任类型与分级策略梯度
 - 特别指令已执行（Nathan 2026-11-21 12:26 决定，本轮执行后作废）：先核实 F6+F7 已并入远端 main——
   PR #1 已合并（远端 main HEAD 342c56b，2026-11-21 15:13 前后经 list_commits / list_pull_requests 核实），
@@ -34,6 +39,9 @@ Loop 与人工开发的统一记录，最新在最上面。
   与 `TestConfidentialNeverFallsBackToLowerLevel`（脱敏云故障时不降级到普通云、也不升级到专有云/本地模型）；
   `gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 60 项断言 0 失败。
 - 推送：按分支 + PR 机制走 `loop/f17` 分支，见本轮汇报。
+- 推送结果：整包快照推送一次成功（push-files，18 个文件一次提交 fc421227，逐文件哈希核对 18/18 一致，
+  未触发 contents API 回退——此前 F4 轮次 403 的快照路径本次在非空仓库上首次走通）；PR #2 文件清单与本轮一致，
+  已合并进远端 main，远端 HEAD 08676f3f（合并提交），读回验证 trust.go 与蓝图 §6.1 已在 main 上。
 - 另记：Nathan 2026-11-21 15:14 定下防护范围边界——AgentGate 只防「电脑内」的数字数据流，员工拍照、默记、口述等
   人的行为不在防护范围内（是边界、不是弱点，明说归客户保密制度）；产品弱点要明说不遮掩，靠管理手段兜底的弱点须把
   管理措施讲清楚；「绕过场景与对策」先不放进防护设计文档，先在讨论中对齐弱点与策略再说。本轮按此指示未写入文档。
