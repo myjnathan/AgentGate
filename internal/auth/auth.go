@@ -116,6 +116,17 @@ func (s *Service) Login(username, password string) (*store.User, string, error) 
 	return user, tok, nil
 }
 
+// OIDCClaims is the verified identity an OIDC provider hands to the
+// login flow (a small local copy of oidc.Claims, so this package does
+// not depend on the OIDC client).
+type OIDCClaims struct {
+	Subject           string
+	PreferredUsername string
+	Email             string
+	DisplayName       string
+	Department        string
+}
+
 // SessionUser resolves a web session token.
 func (s *Service) SessionUser(tok string) (userID, username, role string, ok bool) {
 	s.mu.Lock()
@@ -125,6 +136,112 @@ func (s *Service) SessionUser(tok string) (userID, username, role string, ok boo
 		return "", "", "", false
 	}
 	return sess.userID, sess.username, sess.role, true
+}
+
+// CreateSession issues a 12-hour web session for an already
+// authenticated user (used by the OIDC callback after the IdP has
+// verified the identity).
+func (s *Service) CreateSession(user *store.User) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tok := store.NewSecret("ags_")
+	s.sessions[tok] = session{userID: user.ID, username: user.Username, role: user.Role, expires: time.Now().Add(12 * time.Hour)}
+	return tok
+}
+
+// LoginOIDC finds or just-in-time provisions the user for a verified
+// OIDC identity. The IdP is an identity source only, never a
+// privilege source: a new user always starts as role "employee" and
+// an admin promotes them locally. A disabled account cannot log in,
+// and an OIDC identity can never take over a local account: if the
+// derived username belongs to a different (local) user, a suffix is
+// added instead of reusing it.
+func (s *Service) LoginOIDC(claims OIDCClaims) (*store.User, error) {
+	if claims.Subject == "" {
+		return nil, fmt.Errorf("oidc identity has no subject")
+	}
+	var user *store.User
+	s.st.WithLock(func(st *store.State) {
+		for _, u := range st.Users {
+			if u.OIDCSubject != "" && u.OIDCSubject == claims.Subject && u.AuthSource == "oidc" {
+				cp := *u
+				user = &cp
+			}
+		}
+		if user != nil {
+			return
+		}
+		username := oidcUsername(claims)
+		// Never collide with an existing local account.
+		if _, taken := usernameTaken(st, username); taken {
+			h := sha256.Sum256([]byte(claims.Subject))
+			username = username + "-" + hex.EncodeToString(h[:])[:8]
+		}
+		display := claims.DisplayName
+		if display == "" {
+			display = username
+		}
+		user = &store.User{
+			ID: store.NewID("usr"), Username: username, DisplayName: display,
+			Department: claims.Department, Role: "employee",
+			OIDCSubject: claims.Subject, AuthSource: "oidc",
+		}
+		st.Users[user.ID] = user
+	})
+	if user == nil {
+		return nil, fmt.Errorf("oidc provisioning failed")
+	}
+	if user.Disabled {
+		return nil, fmt.Errorf("account disabled")
+	}
+	// Refresh the display name / department from the IdP on each login
+	// (the IdP owns the profile; the role stays locally managed).
+	refreshName := claims.DisplayName != "" && user.DisplayName != claims.DisplayName
+	refreshDept := user.Department != claims.Department
+	if refreshName || refreshDept {
+		s.st.WithLock(func(st *store.State) {
+			if u, ok := st.Users[user.ID]; ok {
+				if claims.DisplayName != "" {
+					u.DisplayName = claims.DisplayName
+				}
+				u.Department = claims.Department
+				cp := *u
+				user = &cp
+			}
+		})
+	}
+	_ = s.st.Save()
+	return user, nil
+}
+
+func usernameTaken(st *store.State, username string) (*store.User, bool) {
+	for _, u := range st.Users {
+		if u.Username == username {
+			return u, true
+		}
+	}
+	return nil, false
+}
+
+// oidcUsername derives a local username from the verified claims:
+// preferred_username first, then the email local part, then a
+// subject-derived fallback. Only safe characters are kept.
+func oidcUsername(c OIDCClaims) string {
+	cand := c.PreferredUsername
+	if cand == "" && c.Email != "" {
+		cand = strings.SplitN(c.Email, "@", 2)[0]
+	}
+	var b strings.Builder
+	for _, r := range strings.ToLower(cand) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-' {
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() == 0 {
+		h := sha256.Sum256([]byte(c.Subject))
+		return "oidc-" + hex.EncodeToString(h[:])[:8]
+	}
+	return b.String()
 }
 
 // StartDeviceCode begins a device-code login for an agent.

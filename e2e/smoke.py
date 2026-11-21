@@ -489,6 +489,19 @@ def main():
     s, _ = call("/api/prompts/" + pt_id, token=admin_tok, method="DELETE")
     check("prompt template deleted", s == 200)
 
+    # F9: OIDC login (demo smoke runs without an IdP configured, so the
+    # disabled paths are asserted here; the enabled loop is covered by
+    # Go tests against a fake IdP and a live run against the Duende demo).
+    s, prov = call("/api/auth/providers", method="GET")
+    check("auth providers reports local login", s == 200 and prov.get("local_enabled") is True)
+    check("auth providers reports oidc disabled in demo", s == 200 and prov.get("oidc_enabled") is False)
+    s, _ = call("/auth/oidc/login", method="GET")
+    check("oidc login without IdP is unavailable", s == 503)
+    s, _ = call("/auth/oidc/callback?code=x&state=y", method="GET")
+    check("oidc callback without IdP is unavailable", s == 503)
+    s, _ = call("/api/auth/oidc/status", token=sess, method="GET")
+    check("oidc status requires admin", s == 403)
+
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
 

@@ -142,3 +142,95 @@ func TestLoginLockoutAfterTwentyFailures(t *testing.T) {
 		t.Fatalf("unknown account should get invalid credentials (not lockout), got %v", err)
 	}
 }
+
+func TestLoginOIDCProvisionsEmployee(t *testing.T) {
+	svc, st, _ := newServiceWithUser(t, "admin", "demo12345")
+
+	claims := auth.OIDCClaims{Subject: "oidc-sub-1", PreferredUsername: "Alice",
+		Email: "alice@example.test", DisplayName: "Alice Demo", Department: "研发部"}
+	user, err := svc.LoginOIDC(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.Username != "alice" || user.Role != "employee" || user.AuthSource != "oidc" ||
+		user.OIDCSubject != "oidc-sub-1" || user.Department != "研发部" {
+		t.Fatalf("provisioned user mismatch: %+v", user)
+	}
+	if user.PasswordHash != "" {
+		t.Fatal("OIDC user must have no local password hash")
+	}
+	// Second login finds the same user and refreshes the profile.
+	claims.DisplayName = "Alice Renamed"
+	user2, err := svc.LoginOIDC(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user2.ID != user.ID || user2.DisplayName != "Alice Renamed" {
+		t.Fatalf("repeat OIDC login must return the same user with refreshed profile: %+v", user2)
+	}
+	// A session issued for the OIDC user resolves.
+	tok := svc.CreateSession(user2)
+	uid, uname, role, ok := svc.SessionUser(tok)
+	if !ok || uid != user.ID || uname != "alice" || role != "employee" {
+		t.Fatalf("session mismatch: %q %q %q ok=%v", uid, uname, role, ok)
+	}
+	// The OIDC user cannot log in with a local password (no hash).
+	if _, _, err := svc.Login("alice", "anything"); err == nil {
+		t.Fatal("OIDC user must not have a local password login")
+	}
+	_ = st
+}
+
+func TestLoginOIDCCannotTakeOverLocalAccount(t *testing.T) {
+	svc, _, _ := newServiceWithUser(t, "alice", "demo12345")
+
+	// An OIDC identity whose preferred username collides with a local
+	// account must get a suffixed username, not the local account.
+	user, err := svc.LoginOIDC(auth.OIDCClaims{Subject: "oidc-sub-9", PreferredUsername: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.Username == "alice" {
+		t.Fatal("OIDC provisioning must not reuse a local username")
+	}
+	if user.ID == "" || user.OIDCSubject != "oidc-sub-9" {
+		t.Fatalf("provisioned user mismatch: %+v", user)
+	}
+}
+
+func TestLoginOIDCRejectsDisabledAndEmptySubject(t *testing.T) {
+	svc, st, _ := newServiceWithUser(t, "admin", "demo12345")
+
+	if _, err := svc.LoginOIDC(auth.OIDCClaims{}); err == nil {
+		t.Fatal("empty subject must be rejected")
+	}
+	u, err := svc.LoginOIDC(auth.OIDCClaims{Subject: "oidc-sub-2", PreferredUsername: "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.WithLock(func(s *store.State) { s.Users[u.ID].Disabled = true })
+	if _, err := svc.LoginOIDC(auth.OIDCClaims{Subject: "oidc-sub-2", PreferredUsername: "bob"}); err == nil {
+		t.Fatal("disabled OIDC account must be rejected")
+	}
+}
+
+func TestOIDCUsernameSanitization(t *testing.T) {
+	svc, _, _ := newServiceWithUser(t, "admin", "demo12345")
+
+	// Email local part is the fallback; unsafe characters are stripped.
+	user, err := svc.LoginOIDC(auth.OIDCClaims{Subject: "oidc-sub-3", Email: "Bob.Smith+tag@example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.Username != "bob.smithtag" {
+		t.Fatalf("username = %q, want bob.smithtag", user.Username)
+	}
+	// No usable name at all: subject-derived fallback.
+	user, err = svc.LoginOIDC(auth.OIDCClaims{Subject: "oidc-sub-4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(user.Username, "oidc-") {
+		t.Fatalf("username = %q, want oidc- prefix", user.Username)
+	}
+}

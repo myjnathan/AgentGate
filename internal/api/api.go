@@ -15,6 +15,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
 	"github.com/myjnathan/agentgate/internal/federation"
+	"github.com/myjnathan/agentgate/internal/oidc"
 	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/store"
@@ -28,6 +29,7 @@ type API struct {
 	dispatcher *alert.Dispatcher
 	fed        *federation.Registry
 	restAd     *restadapter.Adapter
+	oidc       *oidc.Provider
 }
 
 func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log) *API {
@@ -42,6 +44,10 @@ func (a *API) SetAlertDispatcher(d *alert.Dispatcher) {
 
 func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/login", a.login)
+	mux.HandleFunc("GET /api/auth/providers", a.oidcProviders)
+	mux.HandleFunc("GET /api/auth/oidc/status", a.requireAdmin(a.oidcStatus))
+	mux.HandleFunc("GET /auth/oidc/login", a.oidcLogin)
+	mux.HandleFunc("GET /auth/oidc/callback", a.oidcCallback)
 	mux.HandleFunc("GET /api/me", a.requireSession(a.me))
 	mux.HandleFunc("POST /api/device/approve", a.requireSession(a.deviceApprove))
 	mux.HandleFunc("GET /api/channels", a.requireAdmin(a.listChannels))

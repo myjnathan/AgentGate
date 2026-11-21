@@ -152,6 +152,11 @@ type User struct {
 	Department   string `json:"department"`
 	Role         string `json:"role"` // admin | security | operator | employee
 	Disabled     bool   `json:"disabled"`
+	// OIDCSubject is the IdP "sub" for users provisioned via OIDC
+	// (backlog F9); empty for local accounts. AuthSource is
+	// "local" or "oidc" and records how the account was created.
+	OIDCSubject string `json:"oidc_subject,omitempty"`
+	AuthSource  string `json:"auth_source,omitempty"`
 }
 
 type Device struct {
