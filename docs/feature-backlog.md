@@ -90,10 +90,32 @@
   导出头与行数一致、归档文件落盘、归档后链仍有效）+ 冒烟新增 3 项断言（导出 NDJSON 与头、
   归档 no-op、导出/归档后链仍有效）；`gofmt`/`go vet`/`go test ./...` 全绿，`make smoke` 20 项断言 0 失败。
 
-### F5 Webhook 告警 `todo`
+### F5 Webhook 告警 `done`（2026-11-21）
 - 来源：企业安全运营刚需（各家 SIEM/告警集成）；WorkBuddy 企业版的安全事件通知。
 - 适配：拦截、密级越权、熔断、登录锁定等事件可推送到企业微信/钉钉/飞书机器人与通用 Webhook；告警内容脱敏（不带原文）。
 - 验收：触发一次拦截后测试 Webhook 收到结构化告警；签名校验可选；失败重试 3 次后放弃并记录。
+- 借鉴点（企业微信官方文档 developer.work.weixin.qq.com/document/path/91770；钉钉自定义机器人安全设置说明，2026-11-21 查阅）：
+  企业微信群机器人支持 text/markdown 等 8 种消息类型，markdown 内容上限 4096 字节、仅支持标题/加粗/链接/行内代码/引用/三色字体子集，
+  每机器人限 20 条/分钟；钉钉自定义机器人同样支持 markdown（title + text），同为 20 条/分钟、超限停 10 分钟（410100）。
+  三家（企业微信/钉钉/飞书）加签是同一公式：待签串 `timestamp(毫秒) + "\n" + secret`，HMAC-SHA256（key 为 secret），
+  Base64 后 URL 编码，拼进 Webhook URL 的 `timestamp` 与 `sign` 查询参数（secret 在算法里出现两次）。
+  我们照此实现：generic 用 JSON 结构化告警 + `X-AgentGate-Signature: sha256=<hex HMAC>` 请求头；
+  wecom/dingtalk/feishu 用 markdown/text 消息体 + 上述 query 参数加签；告警只取审计事件已有字段
+  （处置类别如 banned_word、操作者、密级、渠道），审计 Detail 本就不含匹配原文，故告警天然脱敏；
+  限流不做告警（量大、属软性控制），避免告警疲劳；投递失败最多重试 3 次后放弃并记审计事件。
+- 实现：新包 `internal/alert`（`FromEvent` 分类 + 各平台载荷构建 + 签名 + 异步投递器，队列满丢弃计数，
+  失败 1+3 次重试、错误只记 `http_500`/`network_error`/`timeout`/`config_error` 类别，绝不把可能含 bot key 的 URL 写进审计）；
+  `audit.Log.SetNotifyHook`（锁外回调，`alert` 类事件不触发，避免自循环）；`store.Webhook`（签名密钥 AES-GCM 加密后持久化，
+  与 `Channel.APIKeyEnc` 的 `json:"-"` 不同——Webhook 是运行时由管理员配置的，丢密钥等于丢配置）；
+  `GET/POST /api/alerts/webhooks` + `DELETE /api/alerts/webhooks/{id}` + `POST /api/alerts/webhooks/{id}/test`
+  （仅 admin/security，URL 列表展示时 query 值打码、密钥永不回显）；登录锁定在 `auth` 层以哨兵错误
+  `ErrAccountLocked` 区分，API 记 `account_locked` 审计事件（可告警）而普通失败仍为 `login_failed`（不告警）；
+  管理台新增告警 Webhook 卡片（列表/添加/测试/删除，中英双语）；冒烟新增 5 项断言。
+- 测试：alert 包 13 项（事件分类、generic 载荷无敏感原文、三平台消息体形状、钉钉/企微/飞书签名 Python 独立向量、
+  HMAC 请求头向量、签名 URL 保留原 query、markdown 4096 字节截断、首发成功、2 次失败后成功、4 次尝试后放弃、
+  网络失败类别、异步投递跳过禁用项、钉钉签名投递）+ API 端点测试（鉴权 401/403、校验 400、密钥加密存储与不回显、
+  URL 打码、测试端点成功/失败 502 + 4 次尝试、锁定审计为 account_locked）+ 网关集成测试（违禁词拦截→Webhook 收到结构化告警）；
+  `gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 25 项断言 0 失败。
 
 ## P1 — 能力侧扩展（MCP 联邦与企业接入）
 
