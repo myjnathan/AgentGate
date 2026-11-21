@@ -68,10 +68,27 @@
   未知令牌 404/员工 403、不暴露哈希）；`gofmt`/`go vet`/`go test ./...` 全绿，
   `make smoke` 17 项断言 0 失败。
 
-### F4 审计导出与合规归档 `todo`
+### F4 审计导出与合规归档 `done`（2026-11-21）
 - 来源：幻城网安 new-api 分叉的日志合规归档（热存 + NDJSON 压缩归档 + 保留期）；LiteLLM Enterprise 审计保留策略。
 - 适配：导出带哈希链校验信息，归档文件可离线验真。
 - 验收：管理台/API 可按时间段导出 NDJSON；导出包附 chain 校验结果；文档说明保留期配置。
+- 借鉴点（LiteLLM 官方文档 docs.litellm.ai/docs/proxy/audit_logs；Cloudflare Logpull 文档 developers.cloudflare.com/logs/logpull，2026-11-21 查阅）：
+  LiteLLM 审计日志带合规方设定的保留策略，可异步批量导出到外部存储（S3，按日期分目录的 JSON 文件），
+  审计日志可用独立的合规存储桶；Cloudflare Logpull 以 NDJSON 为标准导出格式（每行一个有效 JSON 对象），
+  按时间范围拉取、保留期到期后改用推送归档。我们照此实现，但导出不走外部存储：本机 NDJSON +
+  响应头校验（`X-Audit-Chain-Valid` / `X-Audit-Event-Count` / `X-Audit-First-Seq` / `X-Audit-Last-Seq` /
+  `X-Audit-Head-Hash`），离线可验真；归档为 gzip NDJSON + JSON 清单，保留期以环境变量配置、手动/定时触发。
+- 实现：`internal/audit` 新增 Export（半开时间窗口 + kind/actor 过滤，整链验真进摘要）与 Archive
+  （链破损时 409 拒绝；归档事件写 `audit-archive-<seq>-<seq>.jsonl.gz` + `.manifest.json` 清单；
+  热日志以 `audit_archive_checkpoint` 检查点事件开头、检查点记录被归档段末哈希，热链仍可验真、
+  归档+热日志跳过检查点行可离线验整链；`AGENTGATE_AUDIT_RETENTION_DAYS` 默认 180 天）；
+  `GET /api/audit/export`（仅 admin/security，NDJSON 附件下载，导出本身记审计事件）+
+  `POST /api/audit/archive`（仅 admin/security）；管理台审计卡片新增导出（日期范围）与归档按钮（中英双语）；
+  详见 docs/audit-retention.md。
+- 测试：audit 包 8 项新测试（导出全量/过滤/空窗/破链仍上报、归档移出+清单+检查点+离线整链验真、
+  空归档 no-op、破链拒绝归档、两次归档后链仍有效）+ API 端点测试（鉴权 401/403、非法时间 400、
+  导出头与行数一致、归档文件落盘、归档后链仍有效）+ 冒烟新增 3 项断言（导出 NDJSON 与头、
+  归档 no-op、导出/归档后链仍有效）；`gofmt`/`go vet`/`go test ./...` 全绿，`make smoke` 20 项断言 0 失败。
 
 ### F5 Webhook 告警 `todo`
 - 来源：企业安全运营刚需（各家 SIEM/告警集成）；WorkBuddy 企业版的安全事件通知。
