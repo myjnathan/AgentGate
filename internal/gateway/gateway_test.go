@@ -136,13 +136,18 @@ func TestBYOAConfidentialBlocked(t *testing.T) {
 	}
 }
 
-func TestManagedConfidentialRoutedToPrivate(t *testing.T) {
+func TestManagedConfidentialRoutedToDesensitizedCloud(t *testing.T) {
 	e := setup(t)
-	// mock-pro is served by both channels; confidential content must be
-	// routed to the private channel (max level secret), and succeed.
+	// mock-pro is served by several channels; confidential content must
+	// by default route to the signed-cloud channel (lowest MaxDataLevel)
+	// and be desensitized by the gateway first (F17) — and succeed, with
+	// the original value restored in the response.
 	code, body := e.chat(t, e.mgdTok, "mock-pro", "请分析 XH-200 项目的进展")
 	if code != 200 {
-		t.Fatalf("expected 200 for managed confidential via private channel, got %d %s", code, body)
+		t.Fatalf("expected 200 for managed confidential via desensitized cloud, got %d %s", code, body)
+	}
+	if !strings.Contains(body, "XH-200") {
+		t.Fatalf("expected restored XH-200 in response, got %s", body)
 	}
 }
 

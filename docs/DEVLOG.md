@@ -2,6 +2,42 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-21 · F17 渠道信任类型与分级策略梯度
+- 特别指令已执行（Nathan 2026-11-21 12:26 决定，本轮执行后作废）：先核实 F6+F7 已并入远端 main——
+  PR #1 已合并（远端 main HEAD 342c56b，2026-11-21 15:13 前后经 list_commits / list_pull_requests 核实），
+  无在途分支需续传；本轮条目锁定 F17，并一并落地蓝图修订稿 8 处替换。下一轮起忽略该特别指令，按常规规程选条目。
+- 借鉴 Cloudflare AI Gateway 官方文档与 2026 年七家网关对比：Cloudflare 只做托管式代理、没有自托管或
+  VPC 内部署选项（受数据驻留约束的团队最先撞上的墙）；数据驻留只在网关层可配，最终推理位置由模型厂商决定。
+  我们反过来做：不把部署形态锁死在某一家厂商——信任类型就是部署形态本身（签约云 / 专有云-VPC / 本地小模型），
+  每个渠道自带信任类型，路由按密级选信任梯度；机密默认脱敏后上云是纯托管网关给不了的保证（它们只转发、不替你脱敏）。
+- 实现：`store.TrustType`（signed_cloud / dedicated_cloud / local_model，空值归一为签约云以兼容旧快照）+
+  `Channel.TrustType` + `TrustTypeOrDefault()`；新文件 `internal/gateway/trust.go`（梯度判定与
+  `no_compliant_channel` 提示文案）；网关 `pickCandidates` 与 `channelsCoolingDown` 按信任过滤，机密→签约云时
+  即使等级脱敏配置关闭也强制脱敏（审计 Detail 记 `desensitized=signed_cloud`，decision 仍为既有约定的
+  `reroute`），无合规通道时 403 `no_compliant_channel` 并写 `violation` 审计事件；
+  `GET/POST /api/channels` 返回与接受 `trust_type`（非法值 400、缺省签约云）；管理台渠道表新增信任类型列（中英双语）；
+  seed 增加脱敏云渠道（机密默认）与本地模型渠道（绝密），私有渠道标为专有云/VPC。
+- 关键决策：脱敏是信任类型的结构属性、不是等级配置的附属——等级脱敏关掉也不影响机密上云必脱敏；
+  绝密只认本地小模型，专有云/VPC 也不行（密级够不等于信任够），错误码与通用 `no_channel_for_data_level` 区分开，
+  让运维一眼看到缺的是哪种通道；旧快照渠道无信任类型字段时按签约云处理（此前默认即公有云行为，不改变既有部署语义）。
+  故障转移链仍沿用 F1 规则（只在首选同一 MaxDataLevel 内转移），脱敏云故障时不自动升级到专有云/本地模型——
+  跨信任梯度的合规故障转移留待后续轮次评估。
+- 蓝图修订稿 8 处替换已落地（修订稿存 goal hidden_files/blueprint-revision-draft-2026-11-21.md）：防护设计 §2 分级路由表
+  （机密默认脱敏后上云、绝密本地小模型或明确拦截）与 §5 MVP 管线；蓝图架构图、§6 交叉规则、§9.1 MVP 清单、
+  §4.5 知识库条目补 F18 说明、新增 §6.1「目标客户与落地方式」（零预置假设/默认保守模式/先观察→再提醒→后拦截/
+  双轨可插拔）；README 架构图。另同步 README 网关特性行与演示段落（受管级机密默认脱敏后上云、绝密走本地模型），
+  并把 Loop 规程 `docs/development-loop.md` 第 6 步更新为整包快照推送优先（push-files 一次推全部文件，
+  403 才回退 contents API）与每小时一轮的节奏。
+- 测试：store 3 项 + 网关信任测试 5 项（梯度路由与上游实收报文验证、等级脱敏关闭时仍强制脱敏、机密走专有云原文、
+  无本地模型时绝密 403 `no_compliant_channel` 及审计原因、仅专有云时绝密仍为 `no_compliant_channel`）+
+  API 渠道测试 1 项 + 冒烟新增 7 项断言；更新旧测试 `TestManagedConfidentialRoutedToPrivate`（机密默认改走脱敏云）
+  与 `TestConfidentialNeverFallsBackToLowerLevel`（脱敏云故障时不降级到普通云、也不升级到专有云/本地模型）；
+  `gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 60 项断言 0 失败。
+- 推送：按分支 + PR 机制走 `loop/f17` 分支，见本轮汇报。
+- 另记：Nathan 2026-11-21 15:14 定下防护范围边界——AgentGate 只防「电脑内」的数字数据流，员工拍照、默记、口述等
+  人的行为不在防护范围内（是边界、不是弱点，明说归客户保密制度）；产品弱点要明说不遮掩，靠管理手段兜底的弱点须把
+  管理措施讲清楚；「绕过场景与对策」先不放进防护设计文档，先在讨论中对齐弱点与策略再说。本轮按此指示未写入文档。
+
 ## 2026-11-21 · F7 REST → MCP 适配
 - 借鉴 ContextForge 官方 README 与文档（ibm.github.io/mcp-context-forge）及 mcp-rest-forge 配置模型：
   REST 工具逐端点 JSON 注册（name/url/request_type/input_schema），凭据 header 注入；

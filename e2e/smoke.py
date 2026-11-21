@@ -22,13 +22,16 @@ def check(name, cond, detail=""):
         failures.append(name)
 
 
-def call(path, data=None, token=None, method=None):
+def call(path, data=None, token=None, method=None, headers=None):
     req = urllib.request.Request(BASE + path, method=method or ("POST" if data is not None else "GET"))
     if data is not None:
         req.data = json.dumps(data).encode()
         req.add_header("Content-Type", "application/json")
     if token:
         req.add_header("Authorization", "Bearer " + token)
+    if headers:
+        for k, v in headers.items():
+            req.add_header(k, v)
     def parse(raw):
         try:
             return json.loads(raw or b"{}")
@@ -386,6 +389,46 @@ def main():
     text = res.get("result", {}).get("content", [{}])[0].get("text", "")
     check("managed token receives raw REST result", "XH-200" in text)
     rest_httpd.shutdown()
+
+    # F17: channel trust types and the tiered routing gradient.
+    s, chans = call("/api/channels", token=admin_tok, method="GET")
+    trust_by_name = {c.get("name"): c.get("trust_type") for c in chans.get("channels", [])}
+    check("seeded channels carry trust types",
+          trust_by_name.get("cloud-contract (mock)") == "signed_cloud"
+          and trust_by_name.get("cloud-contract-desensitized (mock)") == "signed_cloud"
+          and trust_by_name.get("private-onprem (mock)") == "dedicated_cloud"
+          and trust_by_name.get("local-model (mock)") == "local_model")
+    # Confidential data takes the default route: desensitized signed
+    # cloud, with the original value restored in the response.
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-pro", "messages": [{"role": "user", "content": "请分析 XH-200 项目的进展"}]}, token=tok2)
+    text = json.dumps(chat, ensure_ascii=False)
+    check("managed confidential defaults to desensitized cloud", s == 200 and "XH-200" in text)
+    # Top-secret data (header-declared) only reaches the local model.
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-pro", "messages": [{"role": "user", "content": "普通内容"}]}, token=tok2,
+                   headers={"X-AgentGate-Data-Level": "secret"})
+    check("managed secret routes to local model", s == 200 and "choices" in chat)
+    # A model served only by a dedicated-cloud channel has no compliant
+    # channel for secret data: explicit block, not a generic error.
+    s, vpc_ch = call("/api/channels",
+                     {"name": "vpc-only (smoke)", "base_url": BASE + "/mock/v1", "api_key": "smoke-key",
+                      "models": ["mock-vpc-only"], "max_data_level": "secret",
+                      "trust_type": "dedicated_cloud"}, token=admin_tok)
+    check("dedicated-cloud channel created with trust type", s == 201 and vpc_ch.get("id", "").startswith("ch_"))
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-vpc-only", "messages": [{"role": "user", "content": "普通内容"}]}, token=tok2,
+                   headers={"X-AgentGate-Data-Level": "secret"})
+    check("secret blocked with no compliant channel",
+          s == 403 and chat.get("error", {}).get("code") == "no_compliant_channel")
+    s, _ = call("/api/channels",
+                {"name": "bad-trust", "base_url": BASE + "/mock/v1",
+                 "models": ["mock-eco"], "trust_type": "onprem"}, token=admin_tok)
+    check("invalid trust type rejected", s == 400)
+    s, _ = call("/api/channels",
+                {"name": "emp-channel", "base_url": BASE + "/mock/v1",
+                 "models": ["mock-eco"]}, token=sess)
+    check("channel create forbidden for employee", s == 403)
 
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
