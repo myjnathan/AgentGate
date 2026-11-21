@@ -25,7 +25,8 @@ AgentGate 是一个**不绑定任何单一桌面 Agent** 的企业级平台（�
 | 能力中枢 | 技能（SKILL.md）提交 → 审核 → 签名校验和 → 按部门范围下发 |
 | 审计 | 哈希链防篡改审计日志，可验证完整性；原文与敏感值不落日志；`GET /api/audit/export` 按时间段导出 NDJSON（响应头附链校验结果），`POST /api/audit/archive` 把超保留期的事件归档为 gzip + 清单（默认保留 180 天，见 [docs/audit-retention.md](docs/audit-retention.md)） |
 | 用量统计 | `GET /api/stats` 按用户/部门/渠道/模型/Agent 类型/数据密级/处置聚合调用数与 tokens（被拦截调用计入 blocked）；直接聚合审计日志，数字与审计天然对账；支持 `since`/`until` 时间范围 |
-| 管理台 `/` | 内嵌 Web UI（中英双语），渠道/健康状态/用量统计/审计/设备批准/令牌限流配置 |
+| 告警 Webhook | 拦截、密级越权、渠道熔断、账号锁定触发结构化告警，可推送到企业微信/钉钉/飞书机器人与通用 Webhook；签名可选（通用：`X-AgentGate-Signature` HMAC 头；企微/钉钉/飞书：`timestamp` + `sign` 查询参数）；投递失败最多重试 3 次后放弃并记审计；管理台可配、可测 |
+| 管理台 `/` | 内嵌 Web UI（中英双语），渠道/健康状态/用量统计/审计/设备批准/令牌限流/告警 Webhook 配置 |
 
 ## 快速开始（PoC 演示模式）
 
