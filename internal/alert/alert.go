@@ -234,7 +234,7 @@ func SignedURL(rawURL, secret string, now time.Time) (string, error) {
 // "sha256=<hex HMAC-SHA256(secret, body)>".
 // Test vector (Python, 2026-11-21): secret "webhook-secret",
 // body {"source":"agentgate"} ->
-// "sha256:4bdcea28bcc27212c9edd7876db751cdbfbc627cf6cab01b974c0dd466fd7be1".
+// "sha256=4bdcea28bcc27212c9edd7876db751cdbfbc627cf6cab01b974c0dd466fd7be1".
 func HeaderSignature(secret string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(body)
