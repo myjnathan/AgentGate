@@ -151,6 +151,15 @@
       <p id="statsDecision" class="muted"></p>
     </div>
     <div class="card">
+      <h3 data-i18n="cacheTitle">响应缓存</h3>
+      <div class="row"><button class="ghost" onclick="loadCache()" data-i18n="refresh">刷新</button>
+        <span id="cacheStats" class="muted"></span>
+        <button class="ghost" onclick="toggleCache()" id="cacheToggleBtn">停用</button>
+        <button class="ghost" onclick="clearCache()" data-i18n="clearBtn">清空</button>
+        <span id="cacheMsg" class="muted"></span></div>
+      <p class="muted" data-i18n="cacheHint">仅缓存公开/内部、无敏感内容的非流式回答（精确匹配整份请求）；命中不计上游用量，审计记为 cache_hit；缓存只在内存中，重启即清空。</p>
+    </div>
+    <div class="card">
       <h3 data-i18n="auditTitle">审计日志（哈希链）</h3>
       <div class="row"><button class="ghost" onclick="loadAudit()" data-i18n="refresh">刷新</button><span id="chain" class="muted"></span></div>
       <div class="row">
@@ -183,6 +192,8 @@ const I18N = {
        promptsHint:"模板走提交 → 审核 → 发布：新版本只追加不改旧版，发布后才对 Agent 可见；回滚就是把旧版本重新发布。Agent 经 /mcp prompts/get 读取已发布版本，参数先过 DLP，渲染结果再过 DLP + 自带级脱敏。",
        foldersTitle:"文件夹知识库",path:"路径",docs:"文档",lastScan:"最近扫描",
        foldersHint:"指定共享文件夹即自动索引其中的 .md / .txt / .docx / .pdf，按文件夹映射密级；增量更新只索引变化文件。Agent 经 /mcp 按「目录 → 章节树 → 章节原文」渐进式取用，引用精确到文件 + 章节 + 页码；摘要为抽取式（章节首句），不经过模型，不产生泄漏通道。",
+       cacheTitle:"响应缓存",clearBtn:"清空",
+       cacheHint:"仅缓存公开/内部、无敏感内容的非流式回答（精确匹配整份请求）；命中不计上游用量，审计记为 cache_hit；缓存只在内存中，重启即清空。",
        exportBtn:"导出 NDJSON",archiveBtn:"归档 180 天前",
        exportHint:"导出为 NDJSON（可直接喂给 jq / SIEM），响应头附带哈希链校验结果；归档把超过保留期（默认 180 天）的事件移入 gzip 压缩包并留校验锚点。",
        time:"时间",actor:"操作者",action:"动作",level:"等级",decision:"处置"},
@@ -202,6 +213,8 @@ const I18N = {
        promptsHint:"Templates follow submit → review → publish: new versions only append, never rewrite; a version serves agents only after publishing, and rolling back means re-publishing an older version. Agents read the published version via /mcp prompts/get; arguments pass DLP first, and the rendered text passes DLP + BYOA redaction.",
        foldersTitle:"Folder knowledge base",path:"Path",docs:"Docs",lastScan:"Last scan",
        foldersHint:"Register a shared folder and its .md / .txt / .docx / .pdf files are indexed automatically, at the folder's data level; rescans only re-index changed files. Agents use /mcp in three steps — catalog → section tree → section text — and cite file + section + pages. Summaries are extractive (the section's opening sentence), never produced by a model, so they open no leak channel.",
+       cacheTitle:"Response cache",clearBtn:"Clear",
+       cacheHint:"Only clean public/internal non-streaming answers are cached (exact match on the full request); hits do not count toward upstream usage and are audited as cache_hit; the cache lives in memory and resets on restart.",
        exportBtn:"Export NDJSON",archiveBtn:"Archive older than 180d",
        exportHint:"Export as NDJSON (feed it to jq / your SIEM); response headers carry the hash-chain check. Archiving moves events older than the retention period (default 180 days) into a gzip bundle and leaves a verification anchor.",
        time:"Time",actor:"Actor",action:"Action",level:"Level",decision:"Decision"}
@@ -237,7 +250,23 @@ function login2app(){
   document.getElementById("login").style.display="none";
   document.getElementById("app").style.display="block";
   document.getElementById("logoutBtn").style.display="inline-block";
-  loadChannels(); loadTokens(); loadAlerts(); loadUpstreams(); loadRESTTools(); loadPrompts(); loadFolders(); loadStats(); loadAudit();
+  loadChannels(); loadTokens(); loadAlerts(); loadUpstreams(); loadRESTTools(); loadPrompts(); loadFolders(); loadStats(); loadCache(); loadAudit();
+}
+let cacheEnabled = true;
+async function loadCache(){
+  try{ const d = await api("/api/cache");
+    cacheEnabled = d.enabled;
+    cacheStats.textContent = `enabled ${d.enabled} · hits ${d.hits} · misses ${d.misses} · entries ${d.entries} · ttl ${d.ttl_seconds}s`;
+    cacheToggleBtn.textContent = d.enabled ? (lang==="zh"?"停用":"Disable") : (lang==="zh"?"启用":"Enable");
+  }catch(e){ cacheStats.textContent = e.message; }
+}
+async function toggleCache(){
+  try{ const d = await api("/api/cache",{method:"POST",body:JSON.stringify({enabled:!cacheEnabled})});
+    cacheMsg.textContent="✓ "+(d.enabled?"enabled":"disabled"); loadCache(); loadAudit(); }catch(e){ cacheMsg.textContent=e.message; }
+}
+async function clearCache(){
+  try{ const d = await api("/api/cache/clear",{method:"POST",body:"{}"});
+    cacheMsg.textContent="✓ cleared "+d.cleared; loadCache(); loadAudit(); }catch(e){ cacheMsg.textContent=e.message; }
 }
 async function loadFolders(){
   try{ const d = await api("/api/kb/folders");

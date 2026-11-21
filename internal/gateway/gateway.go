@@ -22,6 +22,7 @@ import (
 
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
+	"github.com/myjnathan/agentgate/internal/cache"
 	"github.com/myjnathan/agentgate/internal/guard"
 	"github.com/myjnathan/agentgate/internal/ratelimit"
 	"github.com/myjnathan/agentgate/internal/secretbox"
@@ -49,6 +50,10 @@ type Policy struct {
 	// agents are supervised, self-provided ones are held tighter).
 	DefaultRPM map[store.Tier]int
 	DefaultTPM map[store.Tier]int
+	// CacheTTL is how long an exact-match response stays cached (0 =
+	// default 1h, see cache.DefaultTTL). The cache itself is
+	// in-memory and resets on restart, like channel health (F1).
+	CacheTTL time.Duration
 }
 
 type Gateway struct {
@@ -59,12 +64,19 @@ type Gateway struct {
 	policy  Policy
 	client  *http.Client
 	limiter *ratelimit.Limiter
+	cache   *cache.Cache
 }
 
 func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log, pol Policy) *Gateway {
 	return &Gateway{st: st, auth: au, box: box, audit: al, policy: pol,
-		client: &http.Client{Timeout: 10 * time.Minute}, limiter: ratelimit.New()}
+		client: &http.Client{Timeout: 10 * time.Minute}, limiter: ratelimit.New(),
+		cache: cache.New(pol.CacheTTL, 0)}
 }
+
+// Cache exposes the exact-match response cache (F11) so the server
+// can wire it to the management API for status, toggling and
+// clearing.
+func (g *Gateway) Cache() *cache.Cache { return g.cache }
 
 // rateLimits resolves the effective RPM/TPM for a token: its own
 // configured limit wins, otherwise the tier default.
@@ -513,6 +525,32 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		decision = "dry_run:" + decision
 	}
 
+	// ---- Exact-match response cache (F11) ----
+	// Only clean, low-level, non-streaming calls are cacheable: the
+	// request must carry no DLP findings at all (a finding means the
+	// request text is sensitive even when this tier would not redact
+	// it), the data level must be public/internal, and DryRun observes
+	// without serving stored answers. Streaming is never cached —
+	// the response is sent while it is being generated.
+	// A hit returns the stored body verbatim and consumes no upstream
+	// tokens: it is audited as Kind "cache_hit", not "model_call",
+	// so usage stats (F2) keep measuring upstream usage only.
+	cacheEligible := !req.Stream && !g.policy.DryRun && level <= store.LevelInternal &&
+		len(allFindings) == 0 && g.cache.Enabled()
+	if cacheEligible {
+		key := cache.Key(candidates[0].ID, level.String(), body)
+		if status, cachedBody, ok := g.cache.Get(key); ok {
+			g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
+				Kind: "cache_hit", Action: "chat_completions", Model: req.Model, Channel: candidates[0].Name,
+				DataLevel: level.String(), Decision: decision, Detail: map[string]string{"cache": "hit"}})
+			w.Header().Set("X-AgentGate-Cache", "HIT")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write(cachedBody)
+			return
+		}
+	}
+
 	// ---- Forward, with same-level failover ----
 	// Failover may only move between channels whose MaxDataLevel is not
 	// higher than the first pick's: data-level constraints beat
@@ -588,6 +626,20 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		usedTokens = parseUsage(respBody)
 		if mapping != nil {
 			respBody = []byte(guard.Restore(string(respBody), mapping))
+		}
+		if cacheEligible {
+			// The response must be clean too: a model can emit PII
+			// for a clean prompt, and sensitive content is never
+			// cached. The key uses the channel that actually served
+			// the response, so a fallback channel's entry is found
+			// again when that channel becomes the first pick.
+			// The header is only set for cache-eligible requests:
+			// ineligible ones (sensitive, streaming, DryRun) never
+			// consulted the cache, so they carry no HIT/MISS at all.
+			if resp.StatusCode == http.StatusOK && len(det.Scan(string(respBody))) == 0 {
+				g.cache.Put(cache.Key(channel.ID, level.String(), body), resp.StatusCode, respBody)
+			}
+			w.Header().Set("X-AgentGate-Cache", "MISS")
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)

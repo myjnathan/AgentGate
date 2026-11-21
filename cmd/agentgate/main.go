@@ -24,6 +24,14 @@
 //	                     LDAP directory configuration (backlog F9);
 //	                     config only in this round, no LDAP client yet
 //	                     (see docs/ldap.md).
+//	AGENTGATE_CACHE_ENABLED / AGENTGATE_CACHE_TTL_SECONDS
+//	                     exact-match response cache (backlog F11):
+//	                     enabled by default; set ENABLED=0/false to
+//	                     disable at boot, TTL_SECONDS sets the cache
+//	                     lifetime in seconds (default 3600, minimum
+//	                     60). Admins can toggle/clear it at runtime
+//	                     from the console; the cache is in-memory and
+//	                     resets on restart.
 package main
 
 import (
@@ -33,6 +41,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/myjnathan/agentgate/internal/alert"
 	"github.com/myjnathan/agentgate/internal/api"
@@ -108,11 +117,26 @@ func main() {
 	banned := splitEnv("AGENTGATE_BANNED_WORDS", seed.DemoBannedWords)
 	custom := splitEnv("AGENTGATE_CUSTOM_WORDS", seed.DemoCustomWords)
 	det := guard.NewDetector(banned, custom)
+	// Response cache (backlog F11): exact-match cache for clean
+	// public/internal chat completions; Cloudflare's TTL floor is
+	// 60 seconds, so anything smaller falls back to the default.
+	cacheTTL := 3600 * time.Second
+	if v := os.Getenv("AGENTGATE_CACHE_TTL_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 60 {
+			cacheTTL = time.Duration(n) * time.Second
+		} else {
+			log.Printf("AGENTGATE_CACHE_TTL_SECONDS=%q invalid, using default 3600", v)
+		}
+	}
 	gw := gateway.New(st, au, box, al, gateway.Policy{
 		BannedWords:   banned,
 		CustomWords:   custom,
 		RedactForTier: map[store.Tier]bool{store.TierManaged: true},
+		CacheTTL:      cacheTTL,
 	})
+	if v := os.Getenv("AGENTGATE_CACHE_ENABLED"); v == "0" || strings.EqualFold(v, "false") {
+		gw.Cache().SetEnabled(false)
+	}
 	// Webhook alerts (backlog F5): every audit event flows through the
 	// notify hook; only alertable kinds (blocks, cooldowns, lockouts)
 	// are delivered. Delivery reports are Kind "alert" and therefore
@@ -158,6 +182,7 @@ func main() {
 	rest.SetFederation(fed)
 	rest.SetRESTAdapter(restAd)
 	rest.SetFolderKB(fk)
+	rest.SetCache(gw.Cache())
 	rest.SetAlertDispatcher(dispatcher)
 	for _, src := range fk.Sources() {
 		if !src.Enabled {
