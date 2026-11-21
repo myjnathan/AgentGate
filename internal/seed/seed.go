@@ -106,6 +106,23 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 			Content: "# 报销助手\n\n帮助员工按公司差旅报销制度整理报销材料，先调用 kb_search 查询最新制度再作答，并给出引用来源。",
 			Scope:   "*", Status: "published", AuthorID: admin.ID, Checksum: hex.EncodeToString(sum[:]),
 		}
+		// Demo prompt template (backlog F8): published v1, served to
+		// every department at BYOA tier, internal data at most.
+		s.Prompts["pt_weekly_report"] = &store.PromptTemplate{
+			ID: "pt_weekly_report", Name: "weekly_report",
+			Description: "星河精密周报助手：按部门与姓名整理本周工作周报",
+			Scope:       "*", MaxDataLevel: store.LevelInternal, MinTier: store.TierBYOA,
+			Status: "published", CurrentVersion: 1, PublishedVersion: 1,
+			Versions: []store.PromptVersion{{Version: 1,
+				Content: "你是星河精密的周报助手。请为{{department}}的{{name}}整理第{{week}}周的工作周报：列出已完成事项、进行中事项与下周计划，语言简洁，用中文回答。",
+				Arguments: []store.PromptArgument{
+					{Name: "name", Description: "员工姓名", Required: true},
+					{Name: "department", Description: "所属部门", Required: true},
+					{Name: "week", Description: "周次，如 2026-W47", Required: true},
+				},
+				CreatedBy: admin.ID}},
+			AuthorID: admin.ID,
+		}
 	})
 	return st.Save()
 }

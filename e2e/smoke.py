@@ -430,6 +430,65 @@ def main():
                  "models": ["mock-eco"]}, token=sess)
     check("channel create forbidden for employee", s == 403)
 
+    # F8: prompt templates — versioned, reviewed, published; agents
+    # only ever receive the published version via prompts/get.
+    s, plist = call("/api/prompts", token=admin_tok, method="GET")
+    seed = [p for p in plist.get("prompts", []) if p.get("name") == "weekly_report"]
+    check("seeded weekly_report template listed",
+          s == 200 and len(seed) == 1 and seed[0].get("status") == "published"
+          and seed[0].get("published_version") == 1)
+    listed = mcp_rpc(tok, "prompts/list")
+    names = [p["name"] for p in listed.get("result", {}).get("prompts", [])]
+    check("seeded template listed for BYOA via prompts/list", "weekly_report" in names)
+    res = mcp_rpc(tok, "prompts/get", {"name": "weekly_report",
+                                       "arguments": {"name": "李晓峰", "department": "研发部", "week": "2026-W47"}})
+    text = res.get("result", {}).get("messages", [{}])[0].get("content", {}).get("text", "")
+    check("prompts/get renders published template",
+          "研发部的李晓峰" in text and "2026-W47" in text and "{{" not in text)
+    res = mcp_rpc(tok, "prompts/get", {"name": "weekly_report", "arguments": {"name": "李晓峰"}})
+    check("prompts/get rejects missing required argument", res.get("error", {}).get("code") == -32602)
+    # Employee submits a template; admin reviews it; a second version
+    # does not publish itself; explicit publish and rollback move the
+    # served version.
+    s, pt = call("/api/prompts",
+                 {"name": "smoke_greet", "description": "冒烟问候模板", "scope": "*",
+                  "content": "你好，{{name}}。",
+                  "arguments": [{"name": "name", "description": "姓名", "required": True}],
+                  "max_data_level": "internal", "min_tier": "byoa"},
+                 token=sess)
+    check("employee submits prompt template", s == 201 and pt.get("status") == "in_review")
+    pt_id = pt.get("id", "")
+    s, _ = call("/api/prompts", {"name": "smoke_greet", "content": "x"}, token=admin_tok)
+    check("duplicate prompt template name rejected", s == 409)
+    s, _ = call("/api/prompts", {"name": "BadName", "content": "x {{name}}",
+                                 "arguments": [{"name": "name", "required": True}]}, token=admin_tok)
+    check("invalid prompt template name rejected", s == 400)
+    s, ver = call("/api/prompts/" + pt_id + "/versions",
+                  {"content": "你好呀，{{name}}。",
+                   "arguments": [{"name": "name", "description": "姓名", "required": True}]},
+                  token=sess, method="POST")
+    check("new prompt version created", s == 201 and ver.get("version") == 2)
+    res = mcp_rpc(tok, "prompts/get", {"name": "smoke_greet", "arguments": {"name": "李晓峰"}})
+    check("unpublished template hidden from agents", res.get("error", {}).get("code") == -32602)
+    s, rev = call("/api/prompts/" + pt_id + "/review", {"approve": True}, token=admin_tok, method="POST")
+    check("review approve publishes current version",
+          s == 200 and rev.get("status") == "published" and rev.get("published_version") == 2)
+    res = mcp_rpc(tok, "prompts/get", {"name": "smoke_greet", "arguments": {"name": "李晓峰"}, "version": "2"})
+    text = res.get("result", {}).get("messages", [{}])[0].get("content", {}).get("text", "")
+    check("published v2 served after review", "你好呀，李晓峰" in text)
+    res = mcp_rpc(tok, "prompts/get", {"name": "smoke_greet", "arguments": {"name": "李晓峰"}, "version": "1"})
+    check("unpublished version not served by pin", res.get("error", {}).get("code") == -32602)
+    s, pub = call("/api/prompts/" + pt_id + "/publish", {"version": 1}, token=admin_tok, method="POST")
+    check("rollback publishes v1", s == 200 and pub.get("published_version") == 1)
+    res = mcp_rpc(tok, "prompts/get", {"name": "smoke_greet", "arguments": {"name": "李晓峰"}})
+    text = res.get("result", {}).get("messages", [{}])[0].get("content", {}).get("text", "")
+    check("rollback serves v1 again", "你好，李晓峰" in text and "你好呀" not in text)
+    res = mcp_rpc(tok, "prompts/get", {"name": "smoke_greet",
+                                       "arguments": {"name": "XH-200"}})
+    check("confidential argument blocked from internal template", res.get("error", {}).get("code") == -32004)
+    s, _ = call("/api/prompts/" + pt_id, token=admin_tok, method="DELETE")
+    check("prompt template deleted", s == 200)
+
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
 

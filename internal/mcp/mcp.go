@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/myjnathan/agentgate/internal/audit"
@@ -95,7 +96,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "initialize":
 		writeRPCResult(w, req.ID, map[string]any{
 			"protocolVersion": "2025-03-26",
-			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"capabilities":    map[string]any{"tools": map[string]any{}, "prompts": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "agentgate", "version": "0.1.0"},
 		})
 	case "notifications/initialized":
@@ -106,6 +107,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeRPCResult(w, req.ID, map[string]any{"tools": s.listTools(r.Context(), tok)})
 	case "tools/call":
 		s.callTool(w, r.Context(), req, tok, user)
+	case "prompts/list":
+		writeRPCResult(w, req.ID, map[string]any{"prompts": s.listPrompts(tok, user)})
+	case "prompts/get":
+		s.getPrompt(w, req, tok, user)
 	default:
 		writeRPCError(w, req.ID, -32601, "method not found")
 	}
@@ -377,6 +382,150 @@ func (s *Server) callTool(w http.ResponseWriter, ctx context.Context, req rpcReq
 	writeRPCResult(w, req.ID, map[string]any{
 		"content": []map[string]any{{"type": "text", "text": text}},
 		"isError": isErr,
+	})
+}
+
+// ---- F8: prompt templates ----
+
+type promptDef struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Arguments   []store.PromptArgument `json:"arguments"`
+}
+
+// listPrompts advertises the published templates the caller may use:
+// status published, tier sufficient, and the caller's department in
+// scope. Unpublished templates are never listed — an agent cannot
+// discover a draft the way it cannot discover a hidden tool.
+func (s *Server) listPrompts(tok *store.APIToken, user *store.User) []promptDef {
+	var out []promptDef
+	s.st.Read(func(st *store.State) {
+		for _, t := range st.Prompts {
+			if t.Status != "published" || t.Published() == nil {
+				continue
+			}
+			if tierRank(tok.Tier) < tierRank(t.MinTier) {
+				continue
+			}
+			if !t.InScope(user.Department) {
+				continue
+			}
+			out = append(out, promptDef{Name: t.Name, Description: t.Description,
+				Arguments: t.Published().Arguments})
+		}
+	})
+	return out
+}
+
+// getPrompt renders a published prompt template with the caller's
+// arguments. The version selector follows Portkey's references with
+// one governance tightening: agents only ever receive the published
+// version. "" / "@latest" / "@published" mean the published version;
+// a numeric version must be the published one, otherwise the call
+// fails — an unpublished version is never served, whatever the
+// selector. The same gates as a tool call apply: tier authorization,
+// then a DLP scan of the arguments (banned content is blocked, and
+// arguments classified above the template's MaxDataLevel are never
+// rendered), then a DLP scan of the rendered text with BYOA
+// redaction before it enters the model's context.
+func (s *Server) getPrompt(w http.ResponseWriter, req rpcRequest, tok *store.APIToken, user *store.User) {
+	var params struct {
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments"`
+		Version   string         `json:"version"`
+	}
+	_ = json.Unmarshal(req.Params, &params)
+
+	var tpl *store.PromptTemplate
+	s.st.Read(func(st *store.State) {
+		for _, t := range st.Prompts {
+			if t.Name == params.Name {
+				cp := *t
+				tpl = &cp
+			}
+		}
+	})
+	// Unpublished or unknown templates are indistinguishable to the
+	// caller: a draft's existence must not leak through prompts/get.
+	if tpl == nil || tpl.Status != "published" || tpl.Published() == nil {
+		writeRPCError(w, req.ID, -32602, "unknown prompt")
+		return
+	}
+	deny := func(reason string) {
+		s.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
+			Kind: "violation", Action: "prompt_get_denied", Decision: "block",
+			Detail: map[string]string{"prompt": tpl.Name, "reason": reason}})
+	}
+	if tierRank(tok.Tier) < tierRank(tpl.MinTier) {
+		deny("tier_insufficient")
+		writeRPCError(w, req.ID, -32003, "prompt not permitted for this agent tier")
+		return
+	}
+	if !tpl.InScope(user.Department) {
+		writeRPCError(w, req.ID, -32602, "unknown prompt")
+		return
+	}
+	version := tpl.PublishedVersion
+	switch sel := params.Version; sel {
+	case "", "@latest", "@published":
+		// Published version (already resolved above).
+	case "@draft":
+		writeRPCError(w, req.ID, -32602, "version not published")
+		return
+	default:
+		n, err := strconv.Atoi(sel)
+		if err != nil || n < 1 {
+			writeRPCError(w, req.ID, -32602, "invalid version")
+			return
+		}
+		if tpl.Version(n) == nil || n != tpl.PublishedVersion {
+			writeRPCError(w, req.ID, -32602, "version not published")
+			return
+		}
+		version = n
+	}
+	ver := tpl.Version(version)
+
+	argJSON, _ := json.Marshal(params.Arguments)
+	findings := s.det.Scan(string(argJSON))
+	for _, f := range findings {
+		if f.Category == guard.CatBanned {
+			deny("banned_content")
+			writeRPCError(w, req.ID, -32004, "request blocked by data policy")
+			return
+		}
+	}
+	if lvl := guard.Classify(findings); lvl > tpl.MaxDataLevel {
+		deny("data_level_exceeds_template")
+		writeRPCError(w, req.ID, -32004, "request blocked by data policy")
+		return
+	}
+
+	text, err := store.RenderPrompt(ver, params.Arguments)
+	if err != nil {
+		writeRPCError(w, req.ID, -32602, err.Error())
+		return
+	}
+
+	// DLP scan of the rendered prompt before it enters the model's
+	// context (the template text itself is admin-authored, but
+	// argument values come from the caller).
+	findings = s.det.Scan(text)
+	level := guard.Classify(findings)
+	if tok.Tier == store.TierBYOA && level >= store.LevelConfidential {
+		red, _ := guard.Redact(text, findings)
+		text = red
+	}
+
+	s.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
+		Kind: "prompt_get", Action: "prompts/get", DataLevel: level.String(), Decision: "allow",
+		Detail: map[string]string{"prompt": tpl.Name, "version": strconv.Itoa(version)}})
+	writeRPCResult(w, req.ID, map[string]any{
+		"description": tpl.Description,
+		"messages": []map[string]any{{
+			"role":    "user",
+			"content": map[string]any{"type": "text", "text": text},
+		}},
 	})
 }
 

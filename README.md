@@ -22,7 +22,7 @@ AgentGate 是一个**不绑定任何单一桌面 Agent** 的企业级平台（�
 | Agent 分级信任 | 受管级 / 自带级分级令牌；自带级禁止发送机密数据；设备码登录（`ag-setup` 一条命令接入） |
 | MCP 网关 `/mcp` | 远程 MCP，工具级授权（如 kb_get 仅受管级），工具返回过 DLP，每次调用审计；上游 MCP 服务器可联邦进来，其工具以 `命名空间.工具名` 出现在 tools/list 中；存量 REST 接口可按「方法 + 路径模板 + 参数 schema」注册为工具，以 `rest.工具名` 出现，调用前做参数 schema 校验、等级授权与 DLP（凭据服务端加密托管） |
 | 知识库 | 关键词多轮检索 + 读原文 + 引用，不用向量库；按等级控制可见范围 |
-| 能力中枢 | 技能（SKILL.md）提交 → 审核 → 签名校验和 → 按部门范围下发 |
+| 能力中枢 | 技能（SKILL.md）提交 → 审核 → 签名校验和 → 按部门范围下发；Prompt 模板同样走提交 → 审核 → 发布，版本不可变，Agent 经 `/mcp` `prompts/get` 只读已发布版（参数与渲染结果均过 DLP） |
 | 审计 | 哈希链防篡改审计日志，可验证完整性；原文与敏感值不落日志；`GET /api/audit/export` 按时间段导出 NDJSON（响应头附链校验结果），`POST /api/audit/archive` 把超保留期的事件归档为 gzip + 清单（默认保留 180 天，见 [docs/audit-retention.md](docs/audit-retention.md)） |
 | 用量统计 | `GET /api/stats` 按用户/部门/渠道/模型/Agent 类型/数据密级/处置聚合调用数与 tokens（被拦截调用计入 blocked）；直接聚合审计日志，数字与审计天然对账；支持 `since`/`until` 时间范围 |
 | 告警 Webhook | 拦截、密级越权、渠道熔断、账号锁定触发结构化告警，可推送到企业微信/钉钉/飞书机器人与通用 Webhook；签名可选（通用：`X-AgentGate-Signature` HMAC 头；企微/钉钉/飞书：`timestamp` + `sign` 查询参数）；投递失败最多重试 3 次后放弃并记审计；管理台可配、可测 |

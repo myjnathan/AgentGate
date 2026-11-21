@@ -176,10 +176,16 @@
   不回显、测试端点成功/400/404/502）+ 冒烟新增 16 项断言；
   `gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 53 项断言 0 失败。
 
-### F8 Prompt 模板库 `todo`
+### F8 Prompt 模板库 `done`（2026-11-21）
 - 来源：ContextForge Prompt Registry（模板版本管理 + 回滚）、Portkey prompt management。
 - 适配：模板按部门范围下发，作为一种新能力类型进能力中枢（与技能同流水线：提交→审核→发布）。
 - 验收：管理员可建/改/回滚模板版本；Agent 经 MCP 读取被授权的模板。
+- 借鉴点（ContextForge 官方文档 ibm.github.io/mcp-context-forge；Portkey 官方文档 portkey.ai/docs/product/prompt-engineering-studio，2026-11-21 查阅）：
+  ContextForge 的 Prompt 注册中心：Jinja2 模板 + JSON-Schema 参数校验 + 多模态块，版本管理与回滚，工具/资源/提示词统一注册表。
+  Portkey 的版本语义是关键借鉴：**更新（update）只产生新版本、不推向生产；发布（publish）才把某个版本标为默认生产版本**；版本一旦创建不可变，改动只能产生新版本；调用默认走已发布版本，也可按版本号或 `@latest` 显式引用；历史版本可随时恢复/发布；另有 Render 端点（只取填充变量后的模板、不执行）。
+  我们照此实现，但做三处治理收紧（与 F6/F7 同源）：① 版本选择只服务已发布版本——Agent 永远拿不到未发布版本（Portkey 的 `@latest` 是最新版无论是否发布，我们的 `@latest` 即已发布版），未发布版本只能由管理员在管理台预览；② 参数校验默认严格——未知参数拒绝、必填缺失拒绝、非字符串值拒绝（与 F7 的 schema 即契约一致）；③ 渲染走与工具调用相同的门禁：参数先过 DLP（违禁词直接拦截、参数密级高于模板上限不发送），渲染结果再过 DLP + 自带级脱敏，模板本身按部门范围与最低等级下发。
+- 实现：`store.PromptTemplate`（名称 snake_case 唯一、部门范围、最高密级、最低等级、状态 draft/in_review/published/rejected、当前版本/已发布版本）+ `PromptVersion`（不可变版本：内容 `{{name}}` 占位符 + 声明参数）+ `RenderPrompt`（严格替换：未知/必填缺失/非字符串参数报错，只报字段名不报值）+ `ValidateTemplateVersion`（占位符须已声明、内容 ≤32 KiB、参数 ≤20 个）；`/mcp` 新增 `prompts/list`（仅已发布 + 范围内 + 等级足够）与 `prompts/get`（默认/显式版本选择、数字版本须为已发布版、参数与渲染结果双重 DLP + 自带级脱敏、审计 `prompt_get`）；管理 API `GET/POST /api/prompts`、`GET /api/prompts/{id}`、`POST /api/prompts/{id}/versions`（只追加不改旧版、已发布版继续服务）、`POST /api/prompts/{id}/review`（批准即发布当前版，首次发布时定已发布版）、`POST /api/prompts/{id}/publish`（发布/回滚到指定版本）、`DELETE /api/prompts/{id}`；管理台新增 Prompt 模板卡片（中英双语，建/发布-回滚/删）；演示种子 `weekly_report`（星河精密周报助手，已发布 v1）。
+- 测试：store 5 项（渲染替换与可选参数、参数校验三类拒绝、版本校验八类拒绝、已发布版解析、部门范围）+ API 端点 1 项（提交→加版→审核发布→回滚→删除全链路、重名 409、非法名 400、员工 403）+ MCP 集成 7 项（列表仅已发布/范围/等级过滤、渲染、版本钉选与回滚、参数校验、参数密级拦截、渲染结果自带级脱敏/受管级原文、等级拒绝与草稿不泄漏）+ 冒烟新增 16 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 76 项断言 0 失败。
 
 ### F9 OIDC / LDAP 登录 `todo`
 - 来源：dsh-ee、LiteLLM Enterprise（SSO/SCIM 为其付费墙功能，我们开源实现即差异化）。
