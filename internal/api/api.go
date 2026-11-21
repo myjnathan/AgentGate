@@ -6,10 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/myjnathan/agentgate/internal/alert"
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
 	"github.com/myjnathan/agentgate/internal/secretbox"
@@ -17,14 +19,21 @@ import (
 )
 
 type API struct {
-	st    *store.Store
-	auth  *auth.Service
-	box   *secretbox.Box
-	audit *audit.Log
+	st         *store.Store
+	auth       *auth.Service
+	box        *secretbox.Box
+	audit      *audit.Log
+	dispatcher *alert.Dispatcher
 }
 
 func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log) *API {
 	return &API{st: st, auth: au, box: box, audit: al}
+}
+
+// SetAlertDispatcher wires the alert dispatcher (backlog F5) used by
+// the webhook test endpoint and the list status columns.
+func (a *API) SetAlertDispatcher(d *alert.Dispatcher) {
+	a.dispatcher = d
 }
 
 func (a *API) Register(mux *http.ServeMux) {
@@ -44,6 +53,10 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/stats", a.requireAdmin(a.getStats))
 	mux.HandleFunc("GET /api/tokens", a.requireAdmin(a.listTokens))
 	mux.HandleFunc("PATCH /api/tokens/{id}", a.requireAdmin(a.updateTokenLimits))
+	mux.HandleFunc("GET /api/alerts/webhooks", a.requireAdmin(a.listWebhooks))
+	mux.HandleFunc("POST /api/alerts/webhooks", a.requireAdmin(a.createWebhook))
+	mux.HandleFunc("DELETE /api/alerts/webhooks/{id}", a.requireAdmin(a.deleteWebhook))
+	mux.HandleFunc("POST /api/alerts/webhooks/{id}/test", a.requireAdmin(a.testWebhook))
 	mux.HandleFunc("POST /api/setup/device/start", a.deviceStart)
 	mux.HandleFunc("POST /api/setup/device/poll", a.devicePoll)
 }
@@ -113,7 +126,13 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	}
 	user, tok, err := a.auth.Login(in.Username, in.Password)
 	if err != nil {
-		a.audit.Append(audit.Event{Actor: in.Username, Kind: "auth", Action: "login_failed", Decision: "block"})
+		// A lockout is audited as its own action (alertable, F5);
+		// a plain bad password stays login_failed (noise, no alert).
+		action := "login_failed"
+		if errors.Is(err, auth.ErrAccountLocked) {
+			action = "account_locked"
+		}
+		a.audit.Append(audit.Event{Actor: in.Username, Kind: "auth", Action: action, Decision: "block"})
 		writeErr(w, http.StatusUnauthorized, err.Error())
 		return
 	}
