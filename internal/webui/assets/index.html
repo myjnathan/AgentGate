@@ -5,406 +5,585 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AgentGate</title>
 <style>
-  body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;background:#0f1420;color:#e6ebf2}
-  header{display:flex;justify-content:space-between;align-items:center;padding:14px 22px;background:#151c2c;border-bottom:1px solid #26314a}
-  h1{font-size:19px;margin:0} h1 span{color:#5ea2ff}
-  main{max-width:980px;margin:0 auto;padding:22px}
-  .card{background:#161e30;border:1px solid #26314a;border-radius:10px;padding:18px;margin-bottom:18px}
-  input,button,select{font-size:14px;padding:8px 10px;border-radius:7px;border:1px solid #33456b;background:#0f1626;color:#e6ebf2}
-  button{background:#2f6fed;border-color:#2f6fed;cursor:pointer}
-  button.ghost{background:transparent}
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  td,th{border-bottom:1px solid #26314a;padding:6px 8px;text-align:left;vertical-align:top}
-  .muted{color:#8fa1bd;font-size:13px}
-  .tag{display:inline-block;padding:1px 7px;border-radius:20px;background:#243354;font-size:12px}
-  .block{color:#ff7a7a}.redact{color:#ffcf6e}.allow{color:#7ddb9a}.reroute{color:#6ec3ff}
-  #login{max-width:360px;margin:60px auto}
+  :root{
+    --bg:#f6f9fc; --surface:#ffffff; --border:#e3e9f2; --border-strong:#cbd5e1;
+    --ink:#0f172a; --body:#334155; --muted:#64748b; --faint:#94a3b8;
+    --accent:#4f46e5; --accent-hover:#4338ca; --accent-soft:#eef2ff;
+    --ok:#15803d; --ok-bg:#e8f7ee; --warn:#b45309; --warn-bg:#fdf3e0;
+    --bad:#b91c1c; --bad-bg:#fdecec; --info:#1d4ed8; --info-bg:#e8effd;
+    --radius:10px; --shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.04);
+  }
+  *{box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;margin:0;background:var(--bg);color:var(--body);font-size:14px;line-height:1.55}
+  a{color:var(--accent);text-decoration:none}
+  /* ---------- login ---------- */
+  #loginWrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(160deg,#eef2ff 0%,#f6f9fc 55%,#eef7f1 100%);padding:24px}
+  .loginCard{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 8px 30px rgba(16,24,40,.08);padding:34px 34px 26px;width:380px;max-width:94vw}
+  .brand{display:flex;align-items:center;gap:10px}
+  .brandMark{width:34px;height:34px;border-radius:9px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:17px}
+  .brandName{font-size:19px;font-weight:700;color:var(--ink)} .brandName span{color:var(--accent)}
+  .loginCard h2{font-size:20px;color:var(--ink);margin:20px 0 4px}
+  .loginCard .sub{color:var(--muted);font-size:13px;margin:0 0 18px}
+  /* ---------- layout ---------- */
+  #shell{display:none}
+  aside{position:fixed;top:0;left:0;bottom:0;width:232px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;z-index:20}
+  .sideBrand{padding:18px 18px 12px;display:flex;align-items:center;gap:10px}
+  nav{flex:1;overflow-y:auto;padding:4px 12px 12px}
+  .navGroup{margin-top:16px}
+  .navGroupTitle{font-size:11px;letter-spacing:.08em;color:var(--faint);padding:0 10px;margin-bottom:5px;font-weight:600}
+  .navItem{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:8px;color:var(--body);cursor:pointer;font-size:13.5px;margin-bottom:2px;border:1px solid transparent}
+  .navItem:hover{background:#f4f7fb}
+  .navItem.active{background:var(--accent-soft);color:var(--accent);font-weight:600;border-color:#dfe6ff}
+  .navItem .ico{width:17px;text-align:center;flex:none}
+  .sideFoot{border-top:1px solid var(--border);padding:12px 16px;font-size:13px}
+  .sideFoot .who{color:var(--ink);font-weight:600}
+  .sideFoot .meta{color:var(--muted);font-size:12px;margin:2px 0 9px}
+  main{margin-left:232px;padding:28px 34px 48px}
+  .page{max-width:1180px;margin:0 auto;display:none}
+  .page.active{display:block}
+  .pageHead{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:18px}
+  .pageHead h1{font-size:25px;color:var(--ink);margin:0 0 3px;font-weight:700}
+  .pageHead .desc{color:var(--muted);font-size:13px;margin:0;max-width:720px}
+  .pageActions{display:flex;gap:8px;flex:none}
+  /* ---------- components ---------- */
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px 22px;margin-bottom:18px}
+  .card h3{font-size:15.5px;color:var(--ink);margin:0 0 4px;font-weight:650}
+  .card .hint{color:var(--muted);font-size:12.5px;margin:0 0 12px}
+  .grid{display:grid;gap:16px}
+  .grid.kpis{grid-template-columns:repeat(4,1fr)}
+  .grid.two{grid-template-columns:1fr 1fr}
+  .kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px 20px}
+  .kpi .label{color:var(--muted);font-size:12.5px;margin-bottom:6px}
+  .kpi .num{font-size:29px;font-weight:700;color:var(--ink);line-height:1.15}
+  .kpi .sub{color:var(--muted);font-size:12.5px;margin-top:4px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  thead th{background:#f8fafc;color:var(--muted);font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;font-weight:600;text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+  tbody td{padding:9px 10px;border-bottom:1px solid #eef2f7;vertical-align:middle;color:var(--body)}
+  tbody tr:hover{background:#f8fafd}
+  tbody tr:last-child td{border-bottom:none}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;padding:1.5px 8px;border-radius:999px;font-size:12px;font-weight:550;background:#eef1f6;color:#475569;white-space:nowrap}
+  .pill.public{background:#eef1f6;color:#475569}.pill.internal{background:var(--info-bg);color:var(--info)}
+  .pill.confidential{background:var(--warn-bg);color:var(--warn)}.pill.secret{background:var(--bad-bg);color:var(--bad)}
+  .pill.managed{background:var(--accent-soft);color:var(--accent)}.pill.byoa{background:#eef1f6;color:#475569}
+  .pill.ok,.pill.published,.pill.healthy{background:var(--ok-bg);color:var(--ok)}
+  .pill.warn,.pill.in_review,.pill.cooling{background:var(--warn-bg);color:var(--warn)}
+  .pill.bad,.pill.rejected,.pill.down{background:var(--bad-bg);color:var(--bad)}
+  .pill.info{background:var(--info-bg);color:var(--info)}
+  .pill.signed_cloud{background:var(--info-bg);color:var(--info)}
+  .pill.dedicated_cloud{background:var(--accent-soft);color:var(--accent)}
+  .pill.local_model{background:var(--ok-bg);color:var(--ok)}
+  .decision-allow{color:var(--ok);font-weight:600}.decision-block{color:var(--bad);font-weight:600}
+  .decision-redact{color:var(--warn);font-weight:600}.decision-reroute{color:var(--info);font-weight:600}
+  input,select,textarea{font-size:13.5px;padding:8px 10px;border-radius:8px;border:1px solid var(--border-strong);background:#fff;color:var(--ink);font-family:inherit}
+  input:focus,select:focus,textarea:focus{outline:2px solid #c7d2fe;outline-offset:0;border-color:var(--accent)}
+  textarea{width:100%;min-height:74px;resize:vertical}
+  label.f{display:block;font-size:12.5px;color:var(--muted);margin-bottom:4px;font-weight:550}
+  .formGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 14px;margin-bottom:12px}
+  .formGrid .wide{grid-column:span 2}
+  .formGrid input,.formGrid select{width:100%}
+  .btn{background:var(--accent);border:1px solid var(--accent);color:#fff;padding:8px 15px;border-radius:8px;font-size:13.5px;cursor:pointer;font-weight:550}
+  .btn:hover{background:var(--accent-hover)}
+  .btn.ghost{background:#fff;border-color:var(--border-strong);color:var(--body)}
+  .btn.ghost:hover{border-color:var(--accent);color:var(--accent)}
+  .btn.small{padding:4px 10px;font-size:12.5px}
+  .btn.danger:hover{border-color:var(--bad);color:var(--bad)}
   .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .msg{font-size:13px;color:var(--muted)} .msg.ok{color:var(--ok)} .msg.err{color:var(--bad)}
+  .muted{color:var(--muted);font-size:12.5px}
+  .empty{padding:26px 10px;text-align:center;color:var(--faint);font-size:13px}
+  .bars{display:flex;flex-direction:column;gap:9px;margin-top:6px}
+  .barRow{display:grid;grid-template-columns:110px 1fr 74px;gap:10px;align-items:center;font-size:13px}
+  .barRow .k{color:var(--body);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .barTrack{height:9px;background:#edf1f7;border-radius:99px;overflow:hidden}
+  .barFill{height:100%;background:var(--accent);border-radius:99px;min-width:2px}
+  .barFill.blocked{background:#e05252}.barFill.tokens{background:#38b2ac}
+  .barFill.ok{background:#34a853}.barFill.redact{background:#e8a33d}
+  .barRow .v{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+  .quick{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .quickCard{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;cursor:pointer}
+  .quickCard:hover{border-color:var(--accent)}
+  .quickCard .t{font-weight:650;color:var(--ink);margin-bottom:3px}
+  .quickCard .d{color:var(--muted);font-size:12.5px}
+  #toast{position:fixed;right:22px;bottom:22px;background:var(--ink);color:#fff;padding:10px 16px;border-radius:9px;font-size:13.5px;box-shadow:0 8px 24px rgba(16,24,40,.25);display:none;z-index:50;max-width:min(480px,90vw)}
+  .chainOk{color:var(--ok);font-weight:600}.chainBad{color:var(--bad);font-weight:600}
+  @media (max-width:960px){
+    aside{position:static;width:auto;border-right:none;border-bottom:1px solid var(--border)}
+    nav{display:flex;flex-wrap:wrap;gap:2px} .navGroup{margin-top:6px;display:flex;align-items:center;gap:2px;flex-wrap:wrap}
+    .navGroupTitle{width:100%} .sideFoot{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+    main{margin-left:0;padding:20px 16px 40px}
+    .grid.kpis{grid-template-columns:repeat(2,1fr)} .grid.two,.quick{grid-template-columns:1fr} .formGrid{grid-template-columns:1fr}
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>Agent<span>Gate</span></h1>
-  <div class="row">
-    <span id="who" class="muted"></span>
-    <button class="ghost" id="langBtn" onclick="toggleLang()">EN</button>
-    <button class="ghost" id="logoutBtn" onclick="logout()" style="display:none" data-i18n="logout">退出</button>
-  </div>
-</header>
-<main>
-  <div id="login" class="card">
-    <h2 data-i18n="loginTitle">登录</h2>
-    <p class="muted" data-i18n="loginHint">演示账号：admin / agentgate-admin，员工：lixiaofeng / demo12345</p>
-    <p><input id="lu" placeholder="username" style="width:92%"></p>
-    <p><input id="lp" type="password" placeholder="password" style="width:92%"></p>
-    <button onclick="login()" data-i18n="loginBtn">登录</button>
-    <p id="lerr" style="color:#ff7a7a"></p>
-    <p id="ssoRow" style="display:none"><button class="ghost" onclick="location.href='/auth/oidc/login'" data-i18n="ssoBtn">使用企业 SSO 登录</button>
-    <span class="muted" id="ssoIssuer"></span></p>
-  </div>
 
-  <div id="app" style="display:none">
-    <div class="card">
-      <h3 data-i18n="deviceTitle">批准设备码（Agent 接入）</h3>
-      <div class="row">
-        <input id="dcode" placeholder="AG-XXXXXX">
-        <input id="dname" placeholder="device name">
-        <button onclick="approve()" data-i18n="approveBtn">批准</button>
-        <span id="dmsg" class="muted"></span>
-      </div>
-      <p class="muted" data-i18n="deviceHint">员工在终端运行 ag-setup 后会得到设备码，在此批准即完成接入。</p>
+<!-- ================= login ================= -->
+<div id="loginWrap">
+  <div class="loginCard">
+    <div class="brand"><div class="brandMark">A</div><div class="brandName">Agent<span>Gate</span></div></div>
+    <h2 data-i18n="loginTitle">登录</h2>
+    <p class="sub" data-i18n="loginSub">企业 Agent 治理网关 · 管理控制台</p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <input id="lu" data-i18n-ph="username" placeholder="用户名" autocomplete="username">
+      <input id="lp" type="password" data-i18n-ph="password" placeholder="密码" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
+      <button class="btn" style="width:100%;padding:10px" onclick="login()" data-i18n="loginBtn">登录</button>
     </div>
-    <div class="card">
-      <h3 data-i18n="channelsTitle">模型渠道</h3>
-      <table id="channels"><thead><tr><th data-i18n="name">名称</th><th data-i18n="models">模型</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="trustType">信任类型</th><th>Key</th><th data-i18n="health">健康</th></tr></thead><tbody></tbody></table>
+    <p id="lerr" style="color:var(--bad);font-size:13px;min-height:18px;margin:8px 0 0"></p>
+    <div id="ssoRow" style="display:none;margin-top:6px">
+      <button class="btn ghost" style="width:100%" onclick="location.href='/auth/oidc/login'" data-i18n="ssoBtn">使用企业 SSO 登录</button>
+      <p class="muted" id="ssoIssuer" style="text-align:center;margin:6px 0 0"></p>
     </div>
-    <div class="card">
-      <h3 data-i18n="tokensTitle">令牌与限流</h3>
-      <div class="row"><button class="ghost" onclick="loadTokens()" data-i18n="refresh">刷新</button><span id="tokMsg" class="muted"></span></div>
-      <table id="tokens"><thead><tr><th data-i18n="user">用户</th><th>Agent</th><th data-i18n="tier">等级</th><th>RPM</th><th>TPM</th><th data-i18n="used">已用</th><th data-i18n="expires">过期</th><th></th></tr></thead><tbody></tbody></table>
-      <p class="muted" data-i18n="tokensHint">0 表示使用等级默认（受管级 60 RPM / 100000 TPM，自带级 20 RPM / 20000 TPM）。</p>
-    </div>
-    <div class="card">
-      <h3 data-i18n="alertsTitle">告警 Webhook</h3>
-      <div class="row">
-        <input id="whName" placeholder="name">
-        <input id="whUrl" placeholder="https://…/webhook/send?key=…" style="width:300px">
-        <select id="whKind"><option value="generic">generic</option><option value="wecom">wecom</option><option value="dingtalk">dingtalk</option><option value="feishu">feishu</option></select>
-        <input id="whSecret" type="password" placeholder="signing secret (optional)">
-        <button onclick="addWebhook()" data-i18n="addBtn">添加</button>
-        <span id="whMsg" class="muted"></span>
-      </div>
-      <table id="webhooks"><thead><tr><th data-i18n="name">名称</th><th data-i18n="kind">类型</th><th>URL</th><th data-i18n="lastStatus">最近投递</th><th></th></tr></thead><tbody></tbody></table>
-      <p class="muted" data-i18n="alertsHint">拦截、密级越权、渠道熔断、账号锁定会触发告警；告警只含事件类别与处置，不带请求原文。投递失败最多重试 3 次。</p>
-    </div>
-    <div class="card">
-      <h3 data-i18n="fedTitle">MCP 联邦上游</h3>
-      <div class="row">
-        <input id="upName" placeholder="namespace (e.g. hr)">
-        <input id="upUrl" placeholder="https://…/mcp" style="width:280px">
-        <input id="upToken" type="password" placeholder="upstream token (optional)">
-        <select id="upLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select>
-        <select id="upTier"><option value="byoa">byoa</option><option value="managed">managed</option></select>
-        <button onclick="addUpstream()" data-i18n="addBtn">添加</button>
-        <span id="upMsg" class="muted"></span>
-      </div>
-      <table id="upstreams"><thead><tr><th data-i18n="name">名称</th><th>URL</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="tier">等级</th><th>Token</th><th></th></tr></thead><tbody></tbody></table>
-      <p class="muted" data-i18n="fedHint">上游工具以「命名空间.工具名」出现在 /mcp 的 tools/list 中；调用前按上游的最高密级与最低等级做授权与 DLP，凭据加密存储、永不回显。</p>
-    </div>
-    <div class="card">
-      <h3 data-i18n="restTitle">REST → MCP 工具</h3>
-      <div class="row">
-        <input id="rtName" placeholder="name (e.g. leave_balance)">
-        <input id="rtBase" placeholder="https://…/api" style="width:220px">
-        <select id="rtMethod"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select>
-        <input id="rtPath" placeholder="/path/{{param}}" style="width:180px">
-        <input id="rtToken" type="password" placeholder="credential (optional)">
-        <select id="rtLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select>
-        <select id="rtTier"><option value="byoa">byoa</option><option value="managed">managed</option></select>
-        <button onclick="addRESTTool()" data-i18n="addBtn">添加</button>
-        <span id="rtMsg" class="muted"></span>
-      </div>
-      <div class="row">
-        <input id="rtSchema" style="width:640px" value='{"type":"object","properties":{"employee_id":{"type":"string"}},"required":["employee_id"]}'>
-      </div>
-      <table id="resttools"><thead><tr><th data-i18n="name">名称</th><th>Method</th><th>Path</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="tier">等级</th><th>Token</th><th></th></tr></thead><tbody></tbody></table>
-      <p class="muted" data-i18n="restHint">存量 REST 接口按「方法 + 路径模板 + 参数 schema」注册为工具，以 rest.工具名 出现在 /mcp 的 tools/list 中；路径 {{参数}} 会被替换转义，其余参数走 query（GET/DELETE）或 JSON body（POST/PUT/PATCH），调用前做参数 schema 校验、等级授权与 DLP，凭据加密存储、永不回显。</p>
-    </div>
-    <div class="card">
-      <h3 data-i18n="promptsTitle">Prompt 模板库</h3>
-      <div class="row">
-        <input id="ptName" placeholder="name (e.g. weekly_report)">
-        <input id="ptDesc" placeholder="description" style="width:200px">
-        <input id="ptScope" placeholder="scope (* or 研发部,注册部)" style="width:200px">
-        <select id="ptLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select>
-        <select id="ptTier"><option value="byoa">byoa</option><option value="managed">managed</option></select>
-        <button onclick="addPrompt()" data-i18n="addBtn">添加</button>
-        <span id="ptMsg" class="muted"></span>
-      </div>
-      <div class="row">
-        <input id="ptContent" style="width:640px" placeholder="模板正文，用 {{name}} 形式写占位符" value="你是星河精密的助手。请为{{department}}的{{name}}整理第{{week}}周的工作周报。">
-      </div>
-      <div class="row">
-        <input id="ptArgs" style="width:640px" value='[{"name":"name","description":"员工姓名","required":true},{"name":"department","description":"所属部门","required":true},{"name":"week","description":"周次","required":true}]'>
-      </div>
-      <table id="prompts"><thead><tr><th data-i18n="name">名称</th><th data-i18n="status">状态</th><th data-i18n="versions">版本</th><th data-i18n="scope">范围</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="tier">等级</th><th></th></tr></thead><tbody></tbody></table>
-      <p class="muted" data-i18n="promptsHint">模板走提交 → 审核 → 发布：新版本只追加不改旧版，发布后才对 Agent 可见；回滚就是把旧版本重新发布。Agent 经 /mcp prompts/get 读取已发布版本，参数先过 DLP，渲染结果再过 DLP + 自带级脱敏。</p>
-    </div>
-    <div class="card">
-      <h3 data-i18n="foldersTitle">文件夹知识库</h3>
-      <div class="row">
-        <input id="fbName" placeholder="name (e.g. 公司制度)">
-        <input id="fbPath" placeholder="/path/to/shared/folder" style="width:300px">
-        <select id="fbLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select>
-        <button onclick="addFolder()" data-i18n="addBtn">添加</button>
-        <span id="fbMsg" class="muted"></span>
-      </div>
-      <table id="folders"><thead><tr><th data-i18n="name">名称</th><th data-i18n="path">路径</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="docs">文档</th><th data-i18n="lastScan">最近扫描</th><th></th></tr></thead><tbody></tbody></table>
-      <p class="muted" data-i18n="foldersHint">指定共享文件夹即自动索引其中的 .md / .txt / .docx / .pdf，按文件夹映射密级；增量更新只索引变化文件。Agent 经 /mcp 按「目录 → 章节树 → 章节原文」渐进式取用，引用精确到文件 + 章节 + 页码；摘要为抽取式（章节首句），不经过模型，不产生泄漏通道。</p>
-    </div>
-    <div class="card">
-      <h3 data-i18n="statsTitle">用量统计</h3>
-      <div class="row"><button class="ghost" onclick="loadStats()" data-i18n="refresh">刷新</button><span id="statTotals" class="muted"></span></div>
-      <table id="statsDept"><thead><tr><th data-i18n="byDept">按部门</th><th data-i18n="calls">调用</th><th>Tokens</th><th data-i18n="blocked">拦截</th></tr></thead><tbody></tbody></table>
-      <table id="statsModel"><thead><tr><th data-i18n="byModel">按模型</th><th data-i18n="calls">调用</th><th>Tokens</th><th data-i18n="blocked">拦截</th></tr></thead><tbody></tbody></table>
-      <table id="statsChannel"><thead><tr><th data-i18n="byChannel">按渠道</th><th data-i18n="calls">调用</th><th>Tokens</th><th data-i18n="blocked">拦截</th></tr></thead><tbody></tbody></table>
-      <p id="statsDecision" class="muted"></p>
-    </div>
-    <div class="card">
-      <h3 data-i18n="cacheTitle">响应缓存</h3>
-      <div class="row"><button class="ghost" onclick="loadCache()" data-i18n="refresh">刷新</button>
-        <span id="cacheStats" class="muted"></span>
-        <button class="ghost" onclick="toggleCache()" id="cacheToggleBtn">停用</button>
-        <button class="ghost" onclick="clearCache()" data-i18n="clearBtn">清空</button>
-        <span id="cacheMsg" class="muted"></span></div>
-      <p class="muted" data-i18n="cacheHint">仅缓存公开/内部、无敏感内容的非流式回答（精确匹配整份请求）；命中不计上游用量，审计记为 cache_hit；缓存只在内存中，重启即清空。</p>
-    </div>
-    <div class="card">
-      <h3 data-i18n="auditTitle">审计日志（哈希链）</h3>
-      <div class="row"><button class="ghost" onclick="loadAudit()" data-i18n="refresh">刷新</button><span id="chain" class="muted"></span></div>
-      <div class="row">
-        <input id="expSince" type="date" title="since">
-        <input id="expUntil" type="date" title="until">
-        <button class="ghost" onclick="exportAudit()" data-i18n="exportBtn">导出 NDJSON</button>
-        <button class="ghost" onclick="archiveAudit()" data-i18n="archiveBtn">归档 180 天前</button>
-        <span id="expMsg" class="muted"></span>
-      </div>
-      <p class="muted" data-i18n="exportHint">导出为 NDJSON（可直接喂给 jq / SIEM），响应头附带哈希链校验结果；归档把超过保留期（默认 180 天）的事件移入 gzip 压缩包并留校验锚点。</p>
-      <table id="audit"><thead><tr><th data-i18n="time">时间</th><th data-i18n="actor">操作者</th><th>Agent</th><th data-i18n="action">动作</th><th data-i18n="level">等级</th><th data-i18n="decision">处置</th></tr></thead><tbody></tbody></table>
-    </div>
+    <p class="muted" style="margin:16px 0 0" data-i18n="loginHint">演示账号：admin / agentgate-admin，员工：lixiaofeng / demo12345</p>
   </div>
-</main>
+</div>
+
+<!-- ================= shell ================= -->
+<div id="shell">
+  <aside>
+    <div class="sideBrand"><div class="brandMark">A</div><div class="brandName">Agent<span>Gate</span></div></div>
+    <nav id="sideNav"></nav>
+    <div class="sideFoot">
+      <div class="who" id="whoName">—</div>
+      <div class="meta" id="whoMeta"></div>
+      <div class="row">
+        <button class="btn ghost small" id="langBtn" onclick="toggleLang()">EN</button>
+        <button class="btn ghost small" onclick="logout()" data-i18n="logout">退出</button>
+      </div>
+    </div>
+  </aside>
+  <main>
+    <!-- dashboard -->
+    <section class="page" id="page-dashboard">
+      <div class="pageHead"><div><h1 data-i18n="dashTitle">总览</h1><p class="desc" data-i18n="dashDesc">网关运行与治理态势：调用、拦截、渠道健康与审计完整性。</p></div>
+      <div class="pageActions"><button class="btn ghost" onclick="loadDashboard()" data-i18n="refresh">刷新</button></div></div>
+      <div class="grid kpis" style="margin-bottom:16px">
+        <div class="kpi"><div class="label" data-i18n="kpiCalls">模型调用（累计）</div><div class="num" id="kpiCalls">—</div><div class="sub" id="kpiCallsSub"></div></div>
+        <div class="kpi"><div class="label" data-i18n="kpiTokens">Token 消耗（累计）</div><div class="num" id="kpiTokens">—</div><div class="sub" id="kpiTokensSub"></div></div>
+        <div class="kpi"><div class="label" data-i18n="kpiBlocked">已拦截</div><div class="num" id="kpiBlocked">—</div><div class="sub" data-i18n="kpiBlockedSub">敏感词命中 / 密级越权 / 无合规通道</div></div>
+        <div class="kpi"><div class="label" data-i18n="kpiChain">审计哈希链</div><div class="num" id="kpiChain" style="font-size:22px;padding-top:5px">—</div><div class="sub" id="kpiChainSub"></div></div>
+      </div>
+      <div class="grid two">
+        <div class="card"><h3 data-i18n="byDept">按部门调用</h3><div class="bars" id="dashDept"></div></div>
+        <div class="card"><h3 data-i18n="byDecision">处置分布</h3><div class="bars" id="dashDecision"></div></div>
+      </div>
+      <div class="card"><h3 data-i18n="recentAudit">最近审计事件</h3>
+        <table id="dashAudit"><thead><tr><th data-i18n="time">时间</th><th data-i18n="actor">操作者</th><th>Agent</th><th data-i18n="action">动作</th><th data-i18n="level">等级</th><th data-i18n="decision">处置</th></tr></thead><tbody></tbody></table>
+      </div>
+      <div class="quick">
+        <div class="quickCard" onclick="go('device')"><div class="t" data-i18n="qDevice">批准设备码 →</div><div class="d" data-i18n="qDeviceD">员工运行 ag-setup 后，在此批准完成 Agent 接入。</div></div>
+        <div class="quickCard" onclick="go('channels')"><div class="t" data-i18n="qChannels">模型渠道 →</div><div class="d" data-i18n="qChannelsD">配置上游模型服务、最高密级与渠道信任类型。</div></div>
+        <div class="quickCard" onclick="go('kb')"><div class="t" data-i18n="qKb">文件夹知识库 →</div><div class="d" data-i18n="qKbD">指定共享文件夹即自动索引，按文件夹映射密级。</div></div>
+      </div>
+    </section>
+
+    <!-- stats -->
+    <section class="page" id="page-stats">
+      <div class="pageHead"><div><h1 data-i18n="statsTitle">用量统计</h1><p class="desc" data-i18n="statsDesc">基于审计日志聚合：按部门、模型、渠道统计调用量、Token 与拦截。</p></div>
+      <div class="pageActions"><button class="btn ghost" onclick="loadStats()" data-i18n="refresh">刷新</button></div></div>
+      <div class="grid two">
+        <div class="card"><h3 data-i18n="byDept">按部门</h3><table id="statsDept"><thead><tr><th data-i18n="dept">部门</th><th class="num" data-i18n="calls">调用</th><th class="num">Tokens</th><th class="num" data-i18n="blocked">拦截</th></tr></thead><tbody></tbody></table></div>
+        <div class="card"><h3 data-i18n="byModel">按模型</h3><table id="statsModel"><thead><tr><th data-i18n="model">模型</th><th class="num" data-i18n="calls">调用</th><th class="num">Tokens</th><th class="num" data-i18n="blocked">拦截</th></tr></thead><tbody></tbody></table></div>
+      </div>
+      <div class="card"><h3 data-i18n="byChannel">按渠道</h3><table id="statsChannel"><thead><tr><th data-i18n="channel">渠道</th><th class="num" data-i18n="calls">调用</th><th class="num">Tokens</th><th class="num" data-i18n="blocked">拦截</th></tr></thead><tbody></tbody></table></div>
+      <div class="card"><h3 data-i18n="cacheTitle">响应缓存</h3>
+        <div class="row" style="margin-bottom:10px">
+          <button class="btn ghost small" onclick="loadCache()" data-i18n="refresh">刷新</button>
+          <span id="cacheStats" class="muted"></span><span style="flex:1"></span>
+          <button class="btn ghost small" onclick="toggleCache()" id="cacheToggleBtn">停用</button>
+          <button class="btn ghost small danger" onclick="clearCache()" data-i18n="clearBtn">清空</button>
+          <span id="cacheMsg" class="msg"></span>
+        </div>
+        <p class="hint" data-i18n="cacheHint">仅缓存公开/内部、无敏感内容的非流式回答（精确匹配整份请求）；命中不计上游用量，审计记为 cache_hit；缓存只在内存中，重启即清空。</p>
+      </div>
+    </section>
+
+    <!-- audit -->
+    <section class="page" id="page-audit">
+      <div class="pageHead"><div><h1 data-i18n="auditTitle">审计日志</h1><p class="desc" data-i18n="auditDesc">全量事件以哈希链追加写入，任何篡改都会使链校验失败；可导出 NDJSON 或按保留期归档。</p></div>
+      <div class="pageActions"><button class="btn ghost" onclick="loadAudit()" data-i18n="refresh">刷新</button></div></div>
+      <div class="card">
+        <div class="row" style="margin-bottom:12px">
+          <span id="chain" class="muted"></span><span style="flex:1"></span>
+          <input id="expSince" type="date" title="since"><input id="expUntil" type="date" title="until">
+          <button class="btn ghost small" onclick="exportAudit()" data-i18n="exportBtn">导出 NDJSON</button>
+          <button class="btn ghost small" onclick="archiveAudit()" data-i18n="archiveBtn">归档 180 天前</button>
+          <span id="expMsg" class="msg"></span>
+        </div>
+        <p class="hint" data-i18n="exportHint">导出文件可直接喂给 jq / SIEM，响应头附带哈希链校验结果；归档把超过保留期（默认 180 天）的事件移入 gzip 压缩包并留校验锚点。</p>
+        <table id="audit"><thead><tr><th data-i18n="time">时间</th><th data-i18n="actor">操作者</th><th>Agent</th><th data-i18n="action">动作</th><th data-i18n="level">等级</th><th data-i18n="decision">处置</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <!-- device -->
+    <section class="page" id="page-device">
+      <div class="pageHead"><div><h1 data-i18n="deviceTitle">设备接入</h1><p class="desc" data-i18n="deviceDesc">员工在终端运行 ag-setup 获得设备码，管理员在此批准后，该设备上的 Agent 即接入企业网关。</p></div></div>
+      <div class="card"><h3 data-i18n="deviceApprove">批准设备码</h3>
+        <div class="formGrid" style="grid-template-columns:1fr 1fr auto;align-items:end">
+          <div><label class="f" data-i18n="deviceCode">设备码</label><input id="dcode" placeholder="AG-XXXXXX"></div>
+          <div><label class="f" data-i18n="deviceName">设备名称</label><input id="dname" placeholder="device name"></div>
+          <button class="btn" onclick="approve()" data-i18n="approveBtn">批准</button>
+        </div>
+        <span id="dmsg" class="msg"></span>
+        <p class="hint" style="margin-top:12px" data-i18n="deviceHint">批准后员工端会自动拿到统一令牌（30 天有效），令牌绑定员工、设备与 Agent 等级，全部调用经网关审计。</p>
+      </div>
+    </section>
+
+    <!-- tokens -->
+    <section class="page" id="page-tokens">
+      <div class="pageHead"><div><h1 data-i18n="tokensTitle">令牌与限流</h1><p class="desc" data-i18n="tokensDesc">每个接入令牌的速率限制（RPM / TPM）与本月用量；0 表示使用等级默认值。</p></div>
+      <div class="pageActions"><button class="btn ghost" onclick="loadTokens()" data-i18n="refresh">刷新</button></div></div>
+      <div class="card">
+        <table id="tokens"><thead><tr><th data-i18n="user">用户</th><th>Agent</th><th data-i18n="tier">等级</th><th>RPM</th><th>TPM</th><th data-i18n="used">已用</th><th data-i18n="expires">过期</th><th></th></tr></thead><tbody></tbody></table>
+        <p class="hint" style="margin-top:10px" data-i18n="tokensHint">等级默认：受管级 60 RPM / 100000 TPM，自带级 20 RPM / 20000 TPM。修改后即时生效并写入审计。</p>
+        <span id="tokMsg" class="msg"></span>
+      </div>
+    </section>
+
+    <!-- channels -->
+    <section class="page" id="page-channels">
+      <div class="pageHead"><div><h1 data-i18n="channelsTitle">模型渠道</h1><p class="desc" data-i18n="channelsDesc">上游模型服务与其可承载的最高数据等级、信任类型；网关按分级策略选路，密钥只加密存储、永不回显。</p></div>
+      <div class="pageActions"><button class="btn ghost" onclick="loadChannels()" data-i18n="refresh">刷新</button></div></div>
+      <div class="card"><h3 data-i18n="addChannel">添加渠道</h3>
+        <div class="formGrid">
+          <div><label class="f" data-i18n="name">名称</label><input id="chName" placeholder="e.g. deepseek-contract"></div>
+          <div class="wide"><label class="f">Base URL</label><input id="chUrl" placeholder="https://api.example.com/v1"></div>
+          <div class="wide"><label class="f">API Key</label><input id="chKey" type="password" placeholder="sk-…"></div>
+          <div><label class="f" data-i18n="models">模型（逗号分隔）</label><input id="chModels" placeholder="mock-pro, mock-eco"></div>
+          <div><label class="f" data-i18n="maxLevel">最高数据等级</label><select id="chLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select></div>
+          <div><label class="f" data-i18n="trustType">信任类型</label><select id="chTrust"><option value="signed_cloud">signed_cloud 签约云</option><option value="dedicated_cloud">dedicated_cloud 专有云/VPC</option><option value="local_model">local_model 本地模型</option></select></div>
+        </div>
+        <div class="row"><button class="btn" onclick="addChannel()" data-i18n="addBtn">添加</button><span id="chMsg" class="msg"></span></div>
+      </div>
+      <div class="card"><h3 data-i18n="channelList">渠道列表</h3>
+        <table id="channels"><thead><tr><th data-i18n="name">名称</th><th data-i18n="models">模型</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="trustType">信任类型</th><th>Key</th><th data-i18n="health">健康</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <!-- kb folders -->
+    <section class="page" id="page-kb">
+      <div class="pageHead"><div><h1 data-i18n="foldersTitle">文件夹知识库</h1><p class="desc" data-i18n="foldersDesc">指定共享文件夹即自动索引，按文件夹映射密级；Agent 按「目录 → 章节树 → 原文」渐进式取用。</p></div>
+      <div class="pageActions"><button class="btn ghost" onclick="loadFolders()" data-i18n="refresh">刷新</button></div></div>
+      <div class="card"><h3 data-i18n="addFolder">添加文件夹</h3>
+        <div class="formGrid">
+          <div><label class="f" data-i18n="name">名称</label><input id="fbName" placeholder="e.g. 公司制度"></div>
+          <div><label class="f" data-i18n="path">路径</label><input id="fbPath" placeholder="/path/to/shared/folder"></div>
+          <div><label class="f" data-i18n="maxLevel">数据等级</label><select id="fbLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select></div>
+        </div>
+        <div class="row"><button class="btn" onclick="addFolder()" data-i18n="addBtn">添加</button><span id="fbMsg" class="msg"></span></div>
+        <p class="hint" style="margin-top:10px" data-i18n="foldersHint">支持 .md / .txt / .docx / .pdf，增量更新只索引变化文件；引用精确到文件 + 章节 + 页码。摘要为抽取式（章节首句），不经过模型，不产生泄漏通道。</p>
+      </div>
+      <div class="card"><h3 data-i18n="folderList">已索引文件夹</h3>
+        <table id="folders"><thead><tr><th data-i18n="name">名称</th><th data-i18n="path">路径</th><th data-i18n="maxLevel">数据等级</th><th data-i18n="docs">文档</th><th data-i18n="lastScan">最近扫描</th><th></th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <!-- skills -->
+    <section class="page" id="page-skills">
+      <div class="pageHead"><div><h1 data-i18n="skillsTitle">技能（Skills）</h1><p class="desc" data-i18n="skillsDesc">SKILL.md 技能包的提交、审核与发布；发布后员工的 Agent 可按部门范围取用。</p></div>
+      <div class="pageActions"><button class="btn ghost" onclick="loadSkills()" data-i18n="refresh">刷新</button></div></div>
+      <div class="card"><h3 data-i18n="submitSkill">提交技能</h3>
+        <div class="formGrid">
+          <div><label class="f" data-i18n="name">名称</label><input id="skName" placeholder="e.g. reimbursement-helper"></div>
+          <div><label class="f" data-i18n="version">版本</label><input id="skVersion" placeholder="1.0.0"></div>
+          <div><label class="f" data-i18n="scope">范围（部门，逗号分隔或 *）</label><input id="skScope" placeholder="*"></div>
+        </div>
+        <div style="margin-bottom:12px"><label class="f">SKILL.md</label><textarea id="skContent" placeholder="# Skill&#10;..."></textarea></div>
+        <div class="row"><button class="btn" onclick="addSkill()" data-i18n="submitBtn">提交审核</button><span id="skMsg" class="msg"></span></div>
+      </div>
+      <div class="card"><h3 data-i18n="skillList">技能列表</h3>
+        <table id="skills"><thead><tr><th data-i18n="name">名称</th><th data-i18n="version">版本</th><th data-i18n="status">状态</th><th data-i18n="scope">范围</th><th data-i18n="updated">更新</th><th></th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <!-- prompts -->
+    <section class="page" id="page-prompts">
+      <div class="pageHead"><div><h1 data-i18n="promptsTitle">Prompt 模板库</h1><p class="desc" data-i18n="promptsDesc">模板走提交 → 审核 → 发布：新版本只追加不改旧版，发布后才对 Agent 可见；回滚即重新发布旧版本。</p></div>
+      <div class="pageActions"><button class="btn ghost" onclick="loadPrompts()" data-i18n="refresh">刷新</button></div></div>
+      <div class="card"><h3 data-i18n="addPrompt">新建模板</h3>
+        <div class="formGrid">
+          <div><label class="f" data-i18n="name">名称</label><input id="ptName" placeholder="e.g. weekly_report"></div>
+          <div><label class="f" data-i18n="desc2">描述</label><input id="ptDesc" placeholder="description"></div>
+          <div><label class="f" data-i18n="scope">范围</label><input id="ptScope" placeholder="* or 研发部,注册部"></div>
+          <div><label class="f" data-i18n="maxLevel">最高数据等级</label><select id="ptLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select></div>
+          <div><label class="f" data-i18n="minTier">最低等级</label><select id="ptTier"><option value="byoa">byoa</option><option value="managed">managed</option></select></div>
+        </div>
+        <div style="margin-bottom:10px"><label class="f" data-i18n="ptContentL">模板正文（{{name}} 为占位符）</label><textarea id="ptContent">你是星河精密的助手。请为{{department}}的{{name}}整理第{{week}}周的工作周报。</textarea></div>
+        <div style="margin-bottom:12px"><label class="f" data-i18n="ptArgsL">参数定义（JSON 数组）</label><textarea id="ptArgs" style="min-height:52px">[{"name":"name","description":"员工姓名","required":true},{"name":"department","description":"所属部门","required":true},{"name":"week","description":"周次","required":true}]</textarea></div>
+        <div class="row"><button class="btn" onclick="addPrompt()" data-i18n="addBtn">添加</button><span id="ptMsg" class="msg"></span></div>
+        <p class="hint" style="margin-top:10px" data-i18n="promptsHint">Agent 经 /mcp prompts/get 读取已发布版本；参数先过 DLP，渲染结果再过 DLP + 自带级脱敏。</p>
+      </div>
+      <div class="card"><h3 data-i18n="promptList">模板列表</h3>
+        <table id="prompts"><thead><tr><th data-i18n="name">名称</th><th data-i18n="status">状态</th><th data-i18n="versions">版本</th><th data-i18n="scope">范围</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="tier">等级</th><th></th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <!-- mcp upstreams -->
+    <section class="page" id="page-upstreams">
+      <div class="pageHead"><div><h1 data-i18n="fedTitle">MCP 联邦上游</h1><p class="desc" data-i18n="fedDesc">把外部 MCP 服务器联邦进网关：工具以「命名空间.工具名」出现，调用同样过授权、DLP 与审计。</p></div>
+      <div class="pageActions"><button class="btn ghost" onclick="loadUpstreams()" data-i18n="refresh">刷新</button></div></div>
+      <div class="card"><h3 data-i18n="addUpstream">添加上游</h3>
+        <div class="formGrid">
+          <div><label class="f" data-i18n="namespace">命名空间</label><input id="upName" placeholder="e.g. hr"></div>
+          <div class="wide"><label class="f">URL</label><input id="upUrl" placeholder="https://…/mcp"></div>
+          <div><label class="f">Token（可选）</label><input id="upToken" type="password" placeholder="upstream token"></div>
+          <div><label class="f" data-i18n="maxLevel">最高数据等级</label><select id="upLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select></div>
+          <div><label class="f" data-i18n="minTier">最低等级</label><select id="upTier"><option value="byoa">byoa</option><option value="managed">managed</option></select></div>
+        </div>
+        <div class="row"><button class="btn" onclick="addUpstream()" data-i18n="addBtn">添加</button><span id="upMsg" class="msg"></span></div>
+        <p class="hint" style="margin-top:10px" data-i18n="fedHint">凭据加密存储、永不回显；调用前按上游的最高密级与最低等级做授权与 DLP。</p>
+      </div>
+      <div class="card"><h3 data-i18n="upstreamList">上游列表</h3>
+        <table id="upstreams"><thead><tr><th data-i18n="name">名称</th><th>URL</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="tier">等级</th><th>Token</th><th></th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <!-- rest tools -->
+    <section class="page" id="page-resttools">
+      <div class="pageHead"><div><h1 data-i18n="restTitle">REST → MCP 工具</h1><p class="desc" data-i18n="restDesc">把公司存量 REST 接口注册成 MCP 工具，任何 Agent 都能以统一方式调用。</p></div>
+      <div class="pageActions"><button class="btn ghost" onclick="loadRESTTools()" data-i18n="refresh">刷新</button></div></div>
+      <div class="card"><h3 data-i18n="addRest">注册接口</h3>
+        <div class="formGrid">
+          <div><label class="f" data-i18n="name">名称</label><input id="rtName" placeholder="e.g. leave_balance"></div>
+          <div class="wide"><label class="f">Base URL</label><input id="rtBase" placeholder="https://…/api"></div>
+          <div><label class="f">Method</label><select id="rtMethod"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select></div>
+          <div><label class="f">Path</label><input id="rtPath" placeholder="/path/{{param}}"></div>
+          <div><label class="f">Credential（可选）</label><input id="rtToken" type="password" placeholder="credential"></div>
+          <div><label class="f" data-i18n="maxLevel">最高数据等级</label><select id="rtLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select></div>
+          <div><label class="f" data-i18n="minTier">最低等级</label><select id="rtTier"><option value="byoa">byoa</option><option value="managed">managed</option></select></div>
+        </div>
+        <div style="margin-bottom:12px"><label class="f" data-i18n="rtSchemaL">参数 Schema（JSON）</label><textarea id="rtSchema" style="min-height:52px">{"type":"object","properties":{"employee_id":{"type":"string"}},"required":["employee_id"]}</textarea></div>
+        <div class="row"><button class="btn" onclick="addRESTTool()" data-i18n="addBtn">添加</button><span id="rtMsg" class="msg"></span></div>
+        <p class="hint" style="margin-top:10px" data-i18n="restHint">以 rest.工具名 出现在 /mcp 的 tools/list 中；路径 {{参数}} 会被替换转义，其余参数走 query（GET/DELETE）或 JSON body（POST/PUT/PATCH）；调用前做 schema 校验、等级授权与 DLP，凭据加密存储、永不回显。</p>
+      </div>
+      <div class="card"><h3 data-i18n="restList">已注册接口</h3>
+        <table id="resttools"><thead><tr><th data-i18n="name">名称</th><th>Method</th><th>Path</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="tier">等级</th><th>Token</th><th></th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <!-- alerts -->
+    <section class="page" id="page-alerts">
+      <div class="pageHead"><div><h1 data-i18n="alertsTitle">告警 Webhook</h1><p class="desc" data-i18n="alertsDesc">拦截、密级越权、渠道熔断、账号锁定等事件主动推送到企业微信 / 钉钉 / 飞书或通用 Webhook。</p></div>
+      <div class="pageActions"><button class="btn ghost" onclick="loadAlerts()" data-i18n="refresh">刷新</button></div></div>
+      <div class="card"><h3 data-i18n="addWebhook">添加 Webhook</h3>
+        <div class="formGrid">
+          <div><label class="f" data-i18n="name">名称</label><input id="whName" placeholder="name"></div>
+          <div class="wide"><label class="f">URL</label><input id="whUrl" placeholder="https://…/webhook/send?key=…"></div>
+          <div><label class="f" data-i18n="kind">类型</label><select id="whKind"><option value="generic">generic</option><option value="wecom">wecom</option><option value="dingtalk">dingtalk</option><option value="feishu">feishu</option></select></div>
+          <div><label class="f">Signing secret（可选）</label><input id="whSecret" type="password" placeholder="secret"></div>
+        </div>
+        <div class="row"><button class="btn" onclick="addWebhook()" data-i18n="addBtn">添加</button><span id="whMsg" class="msg"></span></div>
+        <p class="hint" style="margin-top:10px" data-i18n="alertsHint">告警只含事件类别与处置，不带请求原文；投递失败最多重试 3 次。</p>
+      </div>
+      <div class="card"><h3 data-i18n="webhookList">Webhook 列表</h3>
+        <table id="webhooks"><thead><tr><th data-i18n="name">名称</th><th data-i18n="kind">类型</th><th>URL</th><th data-i18n="lastStatus">最近投递</th><th></th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+  </main>
+</div>
+<div id="toast"></div>
+
 <script>
 const I18N = {
-  zh: {loginTitle:"登录",loginHint:"演示账号：admin / agentgate-admin，员工：lixiaofeng / demo12345",loginBtn:"登录",logout:"退出",ssoBtn:"使用企业 SSO 登录",
-       deviceTitle:"批准设备码（Agent 接入）",approveBtn:"批准",deviceHint:"员工在终端运行 ag-setup 后会得到设备码，在此批准即完成接入。",
-       channelsTitle:"模型渠道",name:"名称",models:"模型",maxLevel:"最高数据等级",trustType:"信任类型",health:"健康",auditTitle:"审计日志（哈希链）",refresh:"刷新",
-       statsTitle:"用量统计",byDept:"按部门",byModel:"按模型",byChannel:"按渠道",calls:"调用",blocked:"拦截",
-       tokensTitle:"令牌与限流",user:"用户",tier:"等级",used:"已用",expires:"过期",
-       tokensHint:"0 表示使用等级默认（受管级 60 RPM / 100000 TPM，自带级 20 RPM / 20000 TPM）。",
-       alertsTitle:"告警 Webhook",addBtn:"添加",kind:"类型",lastStatus:"最近投递",
-       alertsHint:"拦截、密级越权、渠道熔断、账号锁定会触发告警；告警只含事件类别与处置，不带请求原文。投递失败最多重试 3 次。",
-       fedTitle:"MCP 联邦上游",
-       fedHint:"上游工具以「命名空间.工具名」出现在 /mcp 的 tools/list 中；调用前按上游的最高密级与最低等级做授权与 DLP，凭据加密存储、永不回显。",
-       restTitle:"REST → MCP 工具",
-       restHint:"存量 REST 接口按「方法 + 路径模板 + 参数 schema」注册为工具，以 rest.工具名 出现在 /mcp 的 tools/list 中；路径 {{参数}} 会被替换转义，其余参数走 query（GET/DELETE）或 JSON body（POST/PUT/PATCH），调用前做参数 schema 校验、等级授权与 DLP，凭据加密存储、永不回显。",
-       promptsTitle:"Prompt 模板库",status:"状态",versions:"版本",scope:"范围",
-       promptsHint:"模板走提交 → 审核 → 发布：新版本只追加不改旧版，发布后才对 Agent 可见；回滚就是把旧版本重新发布。Agent 经 /mcp prompts/get 读取已发布版本，参数先过 DLP，渲染结果再过 DLP + 自带级脱敏。",
-       foldersTitle:"文件夹知识库",path:"路径",docs:"文档",lastScan:"最近扫描",
-       foldersHint:"指定共享文件夹即自动索引其中的 .md / .txt / .docx / .pdf，按文件夹映射密级；增量更新只索引变化文件。Agent 经 /mcp 按「目录 → 章节树 → 章节原文」渐进式取用，引用精确到文件 + 章节 + 页码；摘要为抽取式（章节首句），不经过模型，不产生泄漏通道。",
-       cacheTitle:"响应缓存",clearBtn:"清空",
-       cacheHint:"仅缓存公开/内部、无敏感内容的非流式回答（精确匹配整份请求）；命中不计上游用量，审计记为 cache_hit；缓存只在内存中，重启即清空。",
-       exportBtn:"导出 NDJSON",archiveBtn:"归档 180 天前",
-       exportHint:"导出为 NDJSON（可直接喂给 jq / SIEM），响应头附带哈希链校验结果；归档把超过保留期（默认 180 天）的事件移入 gzip 压缩包并留校验锚点。",
-       time:"时间",actor:"操作者",action:"动作",level:"等级",decision:"处置"},
-  en: {loginTitle:"Sign in",loginHint:"Demo: admin / agentgate-admin, employee: lixiaofeng / demo12345",loginBtn:"Sign in",logout:"Sign out",ssoBtn:"Sign in with enterprise SSO",
-       deviceTitle:"Approve device code (agent onboarding)",approveBtn:"Approve",deviceHint:"An employee runs ag-setup and gets a device code; approve it here to finish onboarding.",
-       channelsTitle:"Model channels",name:"Name",models:"Models",maxLevel:"Max data level",trustType:"Trust type",health:"Health",auditTitle:"Audit log (hash-chained)",refresh:"Refresh",
-       statsTitle:"Usage stats",byDept:"By department",byModel:"By model",byChannel:"By channel",calls:"Calls",blocked:"Blocked",
-       tokensTitle:"Tokens & rate limits",user:"User",tier:"Tier",used:"Used",expires:"Expires",
-       tokensHint:"0 means the tier default (managed 60 RPM / 100000 TPM, BYOA 20 RPM / 20000 TPM).",
-       alertsTitle:"Alert webhooks",addBtn:"Add",kind:"Type",lastStatus:"Last delivery",
-       alertsHint:"Blocks, data-level violations, channel cooldowns and account lockouts trigger alerts. Alerts carry only event categories and decisions, never request content. Failed deliveries retry up to 3 times.",
-       fedTitle:"Federated MCP upstreams",
-       fedHint:"Upstream tools appear in /mcp tools/list as \"namespace.tool\"; calls are authorized by the upstream's max data level and minimum tier, with DLP applied. Credentials are encrypted at rest and never echoed back.",
-       restTitle:"REST → MCP tools",
-       restHint:"Existing REST endpoints register as tools by method + path template + input schema, and appear in /mcp tools/list as rest.<name>. {{param}} placeholders in the path are substituted and escaped; remaining arguments go to the query string (GET/DELETE) or a JSON body (POST/PUT/PATCH). Calls are schema-validated, tier-authorized and DLP-checked; credentials are encrypted at rest and never echoed back.",
-       promptsTitle:"Prompt templates",status:"Status",versions:"Versions",scope:"Scope",
-       promptsHint:"Templates follow submit → review → publish: new versions only append, never rewrite; a version serves agents only after publishing, and rolling back means re-publishing an older version. Agents read the published version via /mcp prompts/get; arguments pass DLP first, and the rendered text passes DLP + BYOA redaction.",
-       foldersTitle:"Folder knowledge base",path:"Path",docs:"Docs",lastScan:"Last scan",
-       foldersHint:"Register a shared folder and its .md / .txt / .docx / .pdf files are indexed automatically, at the folder's data level; rescans only re-index changed files. Agents use /mcp in three steps — catalog → section tree → section text — and cite file + section + pages. Summaries are extractive (the section's opening sentence), never produced by a model, so they open no leak channel.",
-       cacheTitle:"Response cache",clearBtn:"Clear",
-       cacheHint:"Only clean public/internal non-streaming answers are cached (exact match on the full request); hits do not count toward upstream usage and are audited as cache_hit; the cache lives in memory and resets on restart.",
-       exportBtn:"Export NDJSON",archiveBtn:"Archive older than 180d",
-       exportHint:"Export as NDJSON (feed it to jq / your SIEM); response headers carry the hash-chain check. Archiving moves events older than the retention period (default 180 days) into a gzip bundle and leaves a verification anchor.",
-       time:"Time",actor:"Actor",action:"Action",level:"Level",decision:"Decision"}
+  zh: {loginTitle:"登录",loginSub:"企业 Agent 治理网关 · 管理控制台",loginBtn:"登录",logout:"退出",ssoBtn:"使用企业 SSO 登录",username:"用户名",password:"密码",
+    loginHint:"演示账号：admin / agentgate-admin，员工：lixiaofeng / demo12345",
+    navOps:"运营",navAccess:"接入与身份",navModel:"模型网关",navCap:"能力中心",navSys:"系统",
+    dashTitle:"总览",dashDesc:"网关运行与治理态势：调用、拦截、渠道健康与审计完整性。",refresh:"刷新",
+    kpiCalls:"模型调用（累计）",kpiTokens:"Token 消耗（累计）",kpiBlocked:"已拦截",kpiBlockedSub:"敏感词命中 / 密级越权 / 无合规通道",kpiChain:"审计哈希链",
+    byDept:"按部门调用",byDecision:"处置分布",recentAudit:"最近审计事件",
+    qDevice:"批准设备码 →",qDeviceD:"员工运行 ag-setup 后，在此批准完成 Agent 接入。",qChannels:"模型渠道 →",qChannelsD:"配置上游模型服务、最高密级与渠道信任类型。",qKb:"文件夹知识库 →",qKbD:"指定共享文件夹即自动索引，按文件夹映射密级。",
+    statsTitle:"用量统计",statsDesc:"基于审计日志聚合：按部门、模型、渠道统计调用量、Token 与拦截。",byModel:"按模型",byChannel:"按渠道",dept:"部门",model:"模型",channel:"渠道",calls:"调用",blocked:"拦截",
+    cacheTitle:"响应缓存",clearBtn:"清空",cacheHint:"仅缓存公开/内部、无敏感内容的非流式回答（精确匹配整份请求）；命中不计上游用量，审计记为 cache_hit；缓存只在内存中，重启即清空。",
+    auditTitle:"审计日志",auditDesc:"全量事件以哈希链追加写入，任何篡改都会使链校验失败；可导出 NDJSON 或按保留期归档。",exportBtn:"导出 NDJSON",archiveBtn:"归档 180 天前",
+    exportHint:"导出文件可直接喂给 jq / SIEM，响应头附带哈希链校验结果；归档把超过保留期（默认 180 天）的事件移入 gzip 压缩包并留校验锚点。",
+    time:"时间",actor:"操作者",action:"动作",level:"等级",decision:"处置",
+    deviceTitle:"设备接入",deviceDesc:"员工在终端运行 ag-setup 获得设备码，管理员在此批准后，该设备上的 Agent 即接入企业网关。",deviceApprove:"批准设备码",deviceCode:"设备码",deviceName:"设备名称",approveBtn:"批准",
+    deviceHint:"批准后员工端会自动拿到统一令牌（30 天有效），令牌绑定员工、设备与 Agent 等级，全部调用经网关审计。",
+    tokensTitle:"令牌与限流",tokensDesc:"每个接入令牌的速率限制（RPM / TPM）与本月用量；0 表示使用等级默认值。",user:"用户",tier:"等级",used:"已用",expires:"过期",
+    tokensHint:"等级默认：受管级 60 RPM / 100000 TPM，自带级 20 RPM / 20000 TPM。修改后即时生效并写入审计。",
+    channelsTitle:"模型渠道",channelsDesc:"上游模型服务与其可承载的最高数据等级、信任类型；网关按分级策略选路，密钥只加密存储、永不回显。",addChannel:"添加渠道",channelList:"渠道列表",
+    name:"名称",models:"模型",maxLevel:"最高数据等级",trustType:"信任类型",health:"健康",addBtn:"添加",
+    foldersTitle:"文件夹知识库",foldersDesc:"指定共享文件夹即自动索引，按文件夹映射密级；Agent 按「目录 → 章节树 → 原文」渐进式取用。",addFolder:"添加文件夹",folderList:"已索引文件夹",path:"路径",docs:"文档",lastScan:"最近扫描",
+    foldersHint:"支持 .md / .txt / .docx / .pdf，增量更新只索引变化文件；引用精确到文件 + 章节 + 页码。摘要为抽取式（章节首句），不经过模型，不产生泄漏通道。",
+    skillsTitle:"技能（Skills）",skillsDesc:"SKILL.md 技能包的提交、审核与发布；发布后员工的 Agent 可按部门范围取用。",submitSkill:"提交技能",skillList:"技能列表",version:"版本",status:"状态",scope:"范围",updated:"更新",submitBtn:"提交审核",
+    promptsTitle:"Prompt 模板库",promptsDesc:"模板走提交 → 审核 → 发布：新版本只追加不改旧版，发布后才对 Agent 可见；回滚即重新发布旧版本。",addPrompt:"新建模板",promptList:"模板列表",desc2:"描述",minTier:"最低等级",versions:"版本",
+    ptContentL:"模板正文（{{name}} 为占位符）",ptArgsL:"参数定义（JSON 数组）",promptsHint:"Agent 经 /mcp prompts/get 读取已发布版本；参数先过 DLP，渲染结果再过 DLP + 自带级脱敏。",
+    fedTitle:"MCP 联邦上游",fedDesc:"把外部 MCP 服务器联邦进网关：工具以「命名空间.工具名」出现，调用同样过授权、DLP 与审计。",addUpstream:"添加上游",upstreamList:"上游列表",namespace:"命名空间",
+    fedHint:"凭据加密存储、永不回显；调用前按上游的最高密级与最低等级做授权与 DLP。",
+    restTitle:"REST → MCP 工具",restDesc:"把公司存量 REST 接口注册成 MCP 工具，任何 Agent 都能以统一方式调用。",addRest:"注册接口",restList:"已注册接口",rtSchemaL:"参数 Schema（JSON）",
+    restHint:"以 rest.工具名 出现在 /mcp 的 tools/list 中；路径 {{参数}} 会被替换转义，其余参数走 query（GET/DELETE）或 JSON body（POST/PUT/PATCH）；调用前做 schema 校验、等级授权与 DLP，凭据加密存储、永不回显。",
+    alertsTitle:"告警 Webhook",alertsDesc:"拦截、密级越权、渠道熔断、账号锁定等事件主动推送到企业微信 / 钉钉 / 飞书或通用 Webhook。",addWebhook:"添加 Webhook",webhookList:"Webhook 列表",kind:"类型",lastStatus:"最近投递",
+    alertsHint:"告警只含事件类别与处置，不带请求原文；投递失败最多重试 3 次。",
+    saved:"✓ 已保存",deleted:"✓ 已删除",empty:"暂无数据",chainValid:"哈希链完整",chainInvalid:"哈希链校验失败",approve:"通过",reject:"驳回",download:"下载",publish:"发布/回滚",test:"测试",rescan:"重扫",save:"保存"},
+  en: {loginTitle:"Sign in",loginSub:"Enterprise agent governance gateway · Admin console",loginBtn:"Sign in",logout:"Sign out",ssoBtn:"Sign in with enterprise SSO",username:"Username",password:"Password",
+    loginHint:"Demo: admin / agentgate-admin, employee: lixiaofeng / demo12345",
+    navOps:"Operations",navAccess:"Access & identity",navModel:"Model gateway",navCap:"Capabilities",navSys:"System",
+    dashTitle:"Overview",dashDesc:"Gateway operations and governance posture: calls, blocks, channel health and audit integrity.",refresh:"Refresh",
+    kpiCalls:"Model calls (total)",kpiTokens:"Tokens used (total)",kpiBlocked:"Blocked",kpiBlockedSub:"Banned words / level violations / no compliant channel",kpiChain:"Audit hash chain",
+    byDept:"Calls by department",byDecision:"Decision mix",recentAudit:"Recent audit events",
+    qDevice:"Approve a device code →",qDeviceD:"An employee runs ag-setup; approve the code here to finish onboarding.",qChannels:"Model channels →",qChannelsD:"Configure upstream model services, max data level and channel trust type.",qKb:"Folder knowledge base →",qKbD:"Point at a shared folder to index it, at the folder's data level.",
+    statsTitle:"Usage stats",statsDesc:"Aggregated from the audit log: calls, tokens and blocks by department, model and channel.",byModel:"By model",byChannel:"By channel",dept:"Department",model:"Model",channel:"Channel",calls:"Calls",blocked:"Blocked",
+    cacheTitle:"Response cache",clearBtn:"Clear",cacheHint:"Only clean public/internal non-streaming answers are cached (exact match on the full request); hits do not count toward upstream usage and are audited as cache_hit; the cache lives in memory and resets on restart.",
+    auditTitle:"Audit log",auditDesc:"All events are appended to a hash chain; any tampering breaks verification. Export NDJSON or archive by retention.",exportBtn:"Export NDJSON",archiveBtn:"Archive older than 180d",
+    exportHint:"Feed the export to jq / your SIEM; response headers carry the chain check. Archiving moves events older than the retention period (default 180 days) into a gzip bundle with a verification anchor.",
+    time:"Time",actor:"Actor",action:"Action",level:"Level",decision:"Decision",
+    deviceTitle:"Device access",deviceDesc:"An employee runs ag-setup and gets a device code; once an admin approves it here, that device's agents join the enterprise gateway.",deviceApprove:"Approve device code",deviceCode:"Device code",deviceName:"Device name",approveBtn:"Approve",
+    deviceHint:"Approval issues a unified token (30 days) bound to the employee, device and agent tier; all calls are audited by the gateway.",
+    tokensTitle:"Tokens & rate limits",tokensDesc:"Per-token rate limits (RPM / TPM) and this month's usage; 0 means the tier default.",user:"User",tier:"Tier",used:"Used",expires:"Expires",
+    tokensHint:"Tier defaults: managed 60 RPM / 100000 TPM, BYOA 20 RPM / 20000 TPM. Changes apply immediately and are audited.",
+    channelsTitle:"Model channels",channelsDesc:"Upstream model services with the max data level and trust type they may carry; the gateway routes by classification policy. Keys are encrypted at rest and never echoed.",addChannel:"Add channel",channelList:"Channels",
+    name:"Name",models:"Models",maxLevel:"Max data level",trustType:"Trust type",health:"Health",addBtn:"Add",
+    foldersTitle:"Folder knowledge base",foldersDesc:"Register a shared folder and it is indexed automatically, at the folder's data level; agents drill down catalog → section tree → section text.",addFolder:"Add folder",folderList:"Indexed folders",path:"Path",docs:"Docs",lastScan:"Last scan",
+    foldersHint:"Supports .md / .txt / .docx / .pdf; rescans only re-index changed files. Citations are precise to file + section + pages. Summaries are extractive (the section's opening sentence), never produced by a model, so they open no leak channel.",
+    skillsTitle:"Skills",skillsDesc:"Submit, review and publish SKILL.md packages; published skills are available to agents within their department scope.",submitSkill:"Submit a skill",skillList:"Skills",version:"Version",status:"Status",scope:"Scope",updated:"Updated",submitBtn:"Submit for review",
+    promptsTitle:"Prompt templates",promptsDesc:"Templates follow submit → review → publish: new versions only append; a version serves agents only after publishing, and rolling back means re-publishing an older version.",addPrompt:"New template",promptList:"Templates",desc2:"Description",minTier:"Min tier",versions:"Versions",
+    ptContentL:"Template body ({{name}} placeholders)",ptArgsL:"Arguments (JSON array)",promptsHint:"Agents read the published version via /mcp prompts/get; arguments pass DLP first, and the rendered text passes DLP + BYOA redaction.",
+    fedTitle:"Federated MCP upstreams",fedDesc:"Federate external MCP servers through the gateway: tools appear as namespace.tool and calls pass the same authorization, DLP and audit.",addUpstream:"Add upstream",upstreamList:"Upstreams",namespace:"Namespace",
+    fedHint:"Credentials are encrypted at rest and never echoed; calls are authorized by the upstream's max data level and minimum tier, with DLP applied.",
+    restTitle:"REST → MCP tools",restDesc:"Register existing REST endpoints as MCP tools any agent can call in a uniform way.",addRest:"Register endpoint",restList:"Registered endpoints",rtSchemaL:"Input schema (JSON)",
+    restHint:"Tools appear in /mcp tools/list as rest.<name>. {{param}} placeholders in the path are substituted and escaped; remaining arguments go to the query string (GET/DELETE) or a JSON body (POST/PUT/PATCH). Calls are schema-validated, tier-authorized and DLP-checked; credentials are encrypted at rest and never echoed.",
+    alertsTitle:"Alert webhooks",alertsDesc:"Blocks, level violations, channel cooldowns and account lockouts are pushed to WeCom / DingTalk / Feishu or a generic webhook.",addWebhook:"Add webhook",webhookList:"Webhooks",kind:"Type",lastStatus:"Last delivery",
+    alertsHint:"Alerts carry only event categories and decisions, never request content. Failed deliveries retry up to 3 times.",
+    saved:"✓ Saved",deleted:"✓ Deleted",empty:"No data yet",chainValid:"Hash chain intact",chainInvalid:"Hash chain verification FAILED",approve:"Approve",reject:"Reject",download:"Download",publish:"Publish / roll back",test:"Test",rescan:"Rescan",save:"Save"}
 };
 let lang = localStorage.getItem("ag_lang") || "zh";
 let session = localStorage.getItem("ag_session") || "";
+let me = null;
+const T = k => (I18N[lang] && I18N[lang][k]) || I18N.zh[k] || k;
 function applyLang(){
-  document.querySelectorAll("[data-i18n]").forEach(el=>{ const k=el.getAttribute("data-i18n"); if(I18N[lang][k]) el.textContent=I18N[lang][k]; });
+  document.querySelectorAll("[data-i18n]").forEach(el=>{ const v=T(el.getAttribute("data-i18n")); if(v) el.textContent=v; });
+  document.querySelectorAll("[data-i18n-ph]").forEach(el=>{ const v=T(el.getAttribute("data-i18n-ph")); if(v) el.placeholder=v; });
   document.getElementById("langBtn").textContent = lang==="zh" ? "EN" : "中文";
+  buildNav();
 }
-function toggleLang(){ lang = lang==="zh" ? "en" : "zh"; localStorage.setItem("ag_lang", lang); applyLang(); }
+function toggleLang(){ lang = lang==="zh" ? "en" : "zh"; localStorage.setItem("ag_lang", lang); applyLang(); if(me) showPage(current); }
 async function api(path, opts={}){
   const res = await fetch(path, {...opts, headers:{"Content-Type":"application/json", ...(session?{Authorization:"Bearer "+session}:{})}});
   const data = await res.json().catch(()=>({}));
-  if(!res.ok) throw new Error(data.error || res.status);
+  if(!res.ok) throw new Error(data.error || ("HTTP "+res.status));
   return data;
 }
+function toast(msg, ok=true){
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.style.display="block"; t.style.background = ok ? "#0f172a" : "#991b1b";
+  clearTimeout(t._h); t._h = setTimeout(()=>{ t.style.display="none"; }, 3400);
+}
+function setMsg(id, msg, ok=true){ const el=document.getElementById(id); if(el){ el.textContent=msg; el.className="msg "+(ok?"ok":"err"); } }
+function esc(s){ return String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function pill(v){ return v ? `<span class="pill ${esc(v)}">${esc(v)}</span>` : ""; }
+function fmtNum(n){ n=Number(n||0); if(n>=1e6) return (n/1e6).toFixed(1)+"M"; if(n>=1e3) return (n/1e3).toFixed(1)+"K"; return String(n); }
+function timeShort(s){ return (s||"").slice(5,19).replace("T"," "); }
+
+/* ---------- navigation ---------- */
+const NAV = [
+  {group:"navOps", items:[["dashboard","◈","dashTitle"],["stats","▦","statsTitle"],["audit","☰","auditTitle"]]},
+  {group:"navAccess", items:[["device","▣","deviceTitle"],["tokens","⚿","tokensTitle"]]},
+  {group:"navModel", items:[["channels","⇄","channelsTitle"]]},
+  {group:"navCap", items:[["kb","🗀","foldersTitle"],["skills","✦","skillsTitle"],["prompts","✎","promptsTitle"],["upstreams","⛓","fedTitle"],["resttools","⇢","restTitle"]]},
+  {group:"navSys", items:[["alerts","⚠","alertsTitle"]]}
+];
+let current = "dashboard";
+function buildNav(){
+  document.getElementById("sideNav").innerHTML = NAV.map(g=>
+    `<div class="navGroup"><div class="navGroupTitle">${T(g.group)}</div>` +
+    g.items.map(([id,ico,key])=>`<div class="navItem ${id===current?"active":""}" data-nav="${id}" onclick="go('${id}')"><span class="ico">${ico}</span>${T(key)}</div>`).join("") +
+    `</div>`).join("");
+}
+function go(id){ current = id; showPage(id); }
+function showPage(id){
+  document.querySelectorAll(".page").forEach(p=>p.classList.toggle("active", p.id==="page-"+id));
+  document.querySelectorAll(".navItem").forEach(n=>n.classList.toggle("active", n.getAttribute("data-nav")===id));
+  const loaders = {dashboard:loadDashboard, stats:()=>{loadStats(); loadCache();}, audit:loadAudit, tokens:loadTokens, channels:loadChannels,
+    kb:loadFolders, skills:loadSkills, prompts:loadPrompts, upstreams:loadUpstreams, resttools:loadRESTTools, alerts:loadAlerts};
+  if(loaders[id]) loaders[id]();
+}
+
+/* ---------- auth ---------- */
 async function login(){
   try{
     const d = await api("/api/login",{method:"POST",body:JSON.stringify({username:lu.value,password:lp.value})});
     session = d.session; localStorage.setItem("ag_session", session);
-    who.textContent = d.display_name + " · " + d.department + " · " + d.role;
-    login2app();
-  }catch(e){ lerr.textContent = e.message; }
+    me = d; enterApp();
+  }catch(e){ document.getElementById("lerr").textContent = e.message; }
 }
-// Show the enterprise SSO button only when an OIDC provider is configured.
 fetch("/api/auth/providers").then(r=>r.json()).then(d=>{
   if(d.oidc_enabled){ document.getElementById("ssoRow").style.display="block";
     if(d.oidc_issuer) document.getElementById("ssoIssuer").textContent = d.oidc_issuer; }
 }).catch(()=>{});
 function logout(){ session=""; localStorage.removeItem("ag_session"); location.reload(); }
-function login2app(){
-  document.getElementById("login").style.display="none";
-  document.getElementById("app").style.display="block";
-  document.getElementById("logoutBtn").style.display="inline-block";
-  loadChannels(); loadTokens(); loadAlerts(); loadUpstreams(); loadRESTTools(); loadPrompts(); loadFolders(); loadStats(); loadCache(); loadAudit();
+function enterApp(){
+  document.getElementById("loginWrap").style.display="none";
+  document.getElementById("shell").style.display="block";
+  document.getElementById("whoName").textContent = me.display_name || me.username || "";
+  document.getElementById("whoMeta").textContent = [me.department, me.role].filter(Boolean).join(" · ");
+  buildNav(); showPage(current);
 }
+
+/* ---------- dashboard ---------- */
+function bars(el, rows, valFn, clsFn){
+  const max = Math.max(1, ...rows.map(valFn));
+  const clsOf = typeof clsFn === "function" ? clsFn : (()=>clsFn||"");
+  el.innerHTML = rows.length ? rows.map(r=>`<div class="barRow"><span class="k">${esc(r.key)}</span><div class="barTrack"><div class="barFill ${clsOf(r)}" style="width:${Math.max(2, Math.round(valFn(r)/max*100))}%"></div></div><span class="v">${fmtNum(valFn(r))}</span></div>`).join("") : `<div class="empty">${T("empty")}</div>`;
+}
+function auditRows(events){
+  return (events||[]).map(ev=>
+    `<tr><td class="muted">${timeShort(ev.time)}</td><td>${esc(ev.actor)}</td><td>${esc(ev.agent_type||"")} ${ev.tier?pill(ev.tier):""}</td><td>${esc(ev.action)}${ev.model?(" · "+esc(ev.model)):""}</td><td>${ev.data_level?pill(ev.data_level):""}</td><td class="decision-${esc((ev.decision||"").split(":")[0])}">${esc(ev.decision||"")}</td></tr>`).join("");
+}
+async function loadDashboard(){
+  try{ const d = await api("/api/stats");
+    document.getElementById("kpiCalls").textContent = fmtNum(d.totals.calls);
+    document.getElementById("kpiTokens").textContent = fmtNum(d.totals.tokens);
+    document.getElementById("kpiBlocked").textContent = fmtNum(d.totals.blocked);
+    bars(document.getElementById("dashDept"), (d.by_department||[]).slice(0,6), r=>r.calls);
+    bars(document.getElementById("dashDecision"), d.by_decision||[], r=>r.calls, r=>{ const k=(r.key||"").split(":")[0]; return k==="allow"?"ok":k==="block"?"blocked":k==="redact"?"redact":k==="reroute"?"tokens":""; });
+  }catch(e){ toast(e.message, false); }
+  try{ const v = await api("/api/audit/verify");
+    const el = document.getElementById("kpiChain");
+    el.textContent = v.chain_valid ? "✓ "+T("chainValid") : "✗ "+T("chainInvalid");
+    el.className = "num " + (v.chain_valid ? "chainOk" : "chainBad"); el.style.fontSize="19px"; el.style.paddingTop="7px";
+  }catch(e){}
+  try{ const d = await api("/api/audit");
+    document.querySelector("#dashAudit tbody").innerHTML = auditRows((d.events||[]).slice(0,8)) || `<tr><td colspan="6" class="empty">${T("empty")}</td></tr>`;
+  }catch(e){}
+}
+
+/* ---------- stats ---------- */
+async function loadStats(){
+  const fill = (sel, rows)=>{ document.querySelector(sel+" tbody").innerHTML = (rows||[]).map(b=>
+    `<tr><td>${esc(b.key)}</td><td class="num">${b.calls}</td><td class="num">${fmtNum(b.tokens)}</td><td class="num">${b.blocked||0}</td></tr>`).join("") || `<tr><td colspan="4" class="empty">${T("empty")}</td></tr>`; };
+  try{ const d = await api("/api/stats");
+    fill("#statsDept", d.by_department); fill("#statsModel", d.by_model); fill("#statsChannel", d.by_channel);
+  }catch(e){ toast(e.message, false); }
+}
+
+/* ---------- response cache (F11) ---------- */
 let cacheEnabled = true;
 async function loadCache(){
   try{ const d = await api("/api/cache");
     cacheEnabled = d.enabled;
-    cacheStats.textContent = `enabled ${d.enabled} · hits ${d.hits} · misses ${d.misses} · entries ${d.entries} · ttl ${d.ttl_seconds}s`;
-    cacheToggleBtn.textContent = d.enabled ? (lang==="zh"?"停用":"Disable") : (lang==="zh"?"启用":"Enable");
-  }catch(e){ cacheStats.textContent = e.message; }
+    document.getElementById("cacheStats").textContent = `enabled ${d.enabled} · hits ${d.hits} · misses ${d.misses} · entries ${d.entries} · ttl ${d.ttl_seconds}s`;
+    document.getElementById("cacheToggleBtn").textContent = d.enabled ? (lang==="zh"?"停用":"Disable") : (lang==="zh"?"启用":"Enable");
+  }catch(e){ const el=document.getElementById("cacheStats"); if(el) el.textContent = e.message; }
 }
 async function toggleCache(){
   try{ const d = await api("/api/cache",{method:"POST",body:JSON.stringify({enabled:!cacheEnabled})});
-    cacheMsg.textContent="✓ "+(d.enabled?"enabled":"disabled"); loadCache(); loadAudit(); }catch(e){ cacheMsg.textContent=e.message; }
+    setMsg("cacheMsg", "✓ "+(d.enabled?"enabled":"disabled")); loadCache();
+  }catch(e){ setMsg("cacheMsg", e.message, false); }
 }
 async function clearCache(){
   try{ const d = await api("/api/cache/clear",{method:"POST",body:"{}"});
-    cacheMsg.textContent="✓ cleared "+d.cleared; loadCache(); loadAudit(); }catch(e){ cacheMsg.textContent=e.message; }
+    setMsg("cacheMsg", "✓ cleared "+d.cleared); loadCache();
+  }catch(e){ setMsg("cacheMsg", e.message, false); }
 }
-async function loadFolders(){
-  try{ const d = await api("/api/kb/folders");
-    document.querySelector("#folders tbody").innerHTML = (d.folders||[]).map(f=>
-      `<tr><td>${f.name}</td><td class="muted">${f.path||""}</td><td><span class="tag">${f.level}</span></td><td>${f.docs||0}</td><td class="muted">${(f.last_scan||"").slice(0,19).replace("T"," ")}${f.last_error?(" · ✗ "+f.last_error):""}</td>`+
-      `<td><button class="ghost" onclick="rescanFolder('${f.id}')">Rescan</button> <button class="ghost" onclick="deleteFolder('${f.id}')">✕</button></td></tr>`).join("");
-  }catch(e){ document.querySelector("#folders tbody").innerHTML = `<tr><td colspan="6" class="muted">${e.message}</td></tr>`; }
-}
-async function addFolder(){
-  try{ const d = await api("/api/kb/folders",{method:"POST",body:JSON.stringify({name:fbName.value.trim(),path:fbPath.value.trim(),level:fbLevel.value})});
-    fbMsg.textContent="✓ saved ("+(d.docs||0)+" docs)"; fbName.value=""; fbPath.value=""; loadFolders(); loadAudit(); }catch(e){ fbMsg.textContent=e.message; }
-}
-async function rescanFolder(id){
-  try{ const d = await api("/api/kb/folders/"+id+"/rescan",{method:"POST",body:"{}"});
-    fbMsg.textContent="✓ added "+(d.stats.added||0)+" · updated "+(d.stats.updated||0)+" · removed "+(d.stats.removed||0); loadFolders(); loadAudit(); }catch(e){ fbMsg.textContent=e.message; }
-}
-async function deleteFolder(id){
-  try{ await api("/api/kb/folders/"+id,{method:"DELETE"});
-    fbMsg.textContent="✓ deleted"; loadFolders(); loadAudit(); }catch(e){ fbMsg.textContent=e.message; }
-}
-async function loadUpstreams(){
-  try{ const d = await api("/api/mcp/upstreams");
-    document.querySelector("#upstreams tbody").innerHTML = (d.upstreams||[]).map(u=>
-      `<tr><td>${u.name}</td><td class="muted">${u.url||""}</td><td><span class="tag">${u.max_data_level}</span></td><td><span class="tag">${u.min_tier}</span></td><td>${u.has_token?"✓":"—"}</td>`+
-      `<td><button class="ghost" onclick="testUpstream('${u.id}')">Test</button> <button class="ghost" onclick="deleteUpstream('${u.id}')">✕</button></td></tr>`).join("");
-  }catch(e){ document.querySelector("#upstreams tbody").innerHTML = `<tr><td colspan="6" class="muted">${e.message}</td></tr>`; }
-}
-async function addUpstream(){
-  try{ await api("/api/mcp/upstreams",{method:"POST",body:JSON.stringify({name:upName.value.trim(),url:upUrl.value.trim(),token:upToken.value,max_data_level:upLevel.value,min_tier:upTier.value})});
-    upMsg.textContent="✓ saved"; upName.value=""; upUrl.value=""; upToken.value=""; loadUpstreams(); loadAudit(); }catch(e){ upMsg.textContent=e.message; }
-}
-async function testUpstream(id){
-  try{ const d = await api("/api/mcp/upstreams/"+id+"/test",{method:"POST",body:"{}"});
-    upMsg.textContent = d.ok ? "✓ " + (d.tools||[]).join(", ") : "✗ "+(d.error||"failed"); loadAudit(); }catch(e){ upMsg.textContent=e.message; }
-}
-async function deleteUpstream(id){
-  try{ await api("/api/mcp/upstreams/"+id,{method:"DELETE"});
-    upMsg.textContent="✓ deleted"; loadUpstreams(); loadAudit(); }catch(e){ upMsg.textContent=e.message; }
-}
-async function loadRESTTools(){
-  try{ const d = await api("/api/mcp/rest-tools");
-    document.querySelector("#resttools tbody").innerHTML = (d.rest_tools||[]).map(t=>
-      `<tr><td>rest.${t.name}</td><td>${t.method||""}</td><td class="muted">${t.path||""}</td><td><span class="tag">${t.max_data_level}</span></td><td><span class="tag">${t.min_tier}</span></td><td>${t.has_token?"✓":"—"}</td>`+
-      `<td><button class="ghost" onclick="testRESTTool('${t.id}')">Test</button> <button class="ghost" onclick="deleteRESTTool('${t.id}')">✕</button></td></tr>`).join("");
-  }catch(e){ document.querySelector("#resttools tbody").innerHTML = `<tr><td colspan="7" class="muted">${e.message}</td></tr>`; }
-}
-async function addRESTTool(){
-  try{ const schema = JSON.parse(rtSchema.value||"{}");
-    await api("/api/mcp/rest-tools",{method:"POST",body:JSON.stringify({name:rtName.value.trim(),base_url:rtBase.value.trim(),method:rtMethod.value,path:rtPath.value.trim(),token:rtToken.value,input_schema:schema,max_data_level:rtLevel.value,min_tier:rtTier.value})});
-    rtMsg.textContent="✓ saved"; rtName.value=""; rtBase.value=""; rtPath.value=""; rtToken.value=""; loadRESTTools(); loadAudit(); }catch(e){ rtMsg.textContent=e.message; }
-}
-async function testRESTTool(id){
-  try{ const raw = prompt("arguments JSON", "{}");
-    if(raw===null) return;
-    const d = await api("/api/mcp/rest-tools/"+id+"/test",{method:"POST",body:JSON.stringify({arguments:JSON.parse(raw)})});
-    rtMsg.textContent = d.ok ? "✓ " + (d.preview||"") : "✗ " + (d.error||"failed"); loadAudit(); }catch(e){ rtMsg.textContent=e.message; }
-}
-async function deleteRESTTool(id){
-  try{ await api("/api/mcp/rest-tools/"+id,{method:"DELETE"});
-    rtMsg.textContent="✓ deleted"; loadRESTTools(); loadAudit(); }catch(e){ rtMsg.textContent=e.message; }
-}
-async function loadPrompts(){
-  try{ const d = await api("/api/prompts");
-    document.querySelector("#prompts tbody").innerHTML = (d.prompts||[]).map(p=>
-      `<tr><td>${p.name}</td><td><span class="tag">${p.status}</span></td><td>v${p.current_version} / 已发布 v${p.published_version||"—"}</td><td class="muted">${p.scope||""}</td><td><span class="tag">${p.max_data_level}</span></td><td><span class="tag">${p.min_tier}</span></td>`+
-      `<td><button class="ghost" onclick="publishPrompt('${p.id}', ${p.current_version})">发布/回滚</button> <button class="ghost" onclick="deletePrompt('${p.id}')">✕</button></td></tr>`).join("");
-  }catch(e){ document.querySelector("#prompts tbody").innerHTML = `<tr><td colspan="7" class="muted">${e.message}</td></tr>`; }
-}
-async function addPrompt(){
-  try{ const args = JSON.parse(ptArgs.value||"[]");
-    await api("/api/prompts",{method:"POST",body:JSON.stringify({name:ptName.value.trim(),description:ptDesc.value.trim(),scope:ptScope.value.trim(),content:ptContent.value,arguments:args,max_data_level:ptLevel.value,min_tier:ptTier.value})});
-    ptMsg.textContent="✓ saved (in_review)"; ptName.value=""; ptDesc.value=""; ptScope.value=""; loadPrompts(); loadAudit(); }catch(e){ ptMsg.textContent=e.message; }
-}
-async function publishPrompt(id, current){
-  try{ const raw = prompt("publish version", String(current));
-    if(raw===null) return;
-    const d = await api("/api/prompts/"+id+"/publish",{method:"POST",body:JSON.stringify({version:parseInt(raw,10)})});
-    ptMsg.textContent="✓ published v"+d.published_version; loadPrompts(); loadAudit(); }catch(e){ ptMsg.textContent=e.message; }
-}
-async function deletePrompt(id){
-  try{ await api("/api/prompts/"+id,{method:"DELETE"});
-    ptMsg.textContent="✓ deleted"; loadPrompts(); loadAudit(); }catch(e){ ptMsg.textContent=e.message; }
-}
-async function loadAlerts(){
-  try{ const d = await api("/api/alerts/webhooks");
-    document.querySelector("#webhooks tbody").innerHTML = (d.webhooks||[]).map(w=>
-      `<tr><td>${w.name}</td><td>${w.kind}</td><td class="muted">${w.url||""}</td>`+
-      `<td>${w.last_attempt_at?((w.last_ok?"✓ ":"✗ ")+(w.last_error||"")+" ("+w.attempts+")"):"—"}</td>`+
-      `<td><button class="ghost" onclick="testWebhook('${w.id}')">Test</button> <button class="ghost" onclick="deleteWebhook('${w.id}')">✕</button></td></tr>`).join("");
-  }catch(e){ document.querySelector("#webhooks tbody").innerHTML = `<tr><td colspan="5" class="muted">${e.message}</td></tr>`; }
-}
-async function addWebhook(){
-  try{ await api("/api/alerts/webhooks",{method:"POST",body:JSON.stringify({name:whName.value.trim(),url:whUrl.value.trim(),kind:whKind.value,secret:whSecret.value})});
-    whMsg.textContent="✓ saved"; whName.value=""; whUrl.value=""; whSecret.value=""; loadAlerts(); loadAudit(); }catch(e){ whMsg.textContent=e.message; }
-}
-async function testWebhook(id){
-  try{ const d = await api("/api/alerts/webhooks/"+id+"/test",{method:"POST",body:"{}"});
-    whMsg.textContent = d.delivered ? "✓ delivered" : "✗ "+(d.error||"failed"); loadAlerts(); loadAudit(); }catch(e){ whMsg.textContent=e.message; }
-}
-async function deleteWebhook(id){
-  try{ await api("/api/alerts/webhooks/"+id,{method:"DELETE"});
-    whMsg.textContent="✓ deleted"; loadAlerts(); loadAudit(); }catch(e){ whMsg.textContent=e.message; }
-}
-async function loadStats(){
-  const fill = (sel, rows)=>{ document.querySelector(sel+" tbody").innerHTML = (rows||[]).map(b=>
-    `<tr><td>${b.key}</td><td>${b.calls}</td><td>${b.tokens}</td><td>${b.blocked||""}</td></tr>`).join(""); };
-  try{ const d = await api("/api/stats");
-    statTotals.textContent = `calls ${d.totals.calls} · tokens ${d.totals.tokens} · blocked ${d.totals.blocked}`;
-    fill("#statsDept", d.by_department); fill("#statsModel", d.by_model); fill("#statsChannel", d.by_channel);
-    statsDecision.textContent = (d.by_decision||[]).map(b=>`${b.key}: ${b.calls}`).join(" · ");
-  }catch(e){ statTotals.textContent = e.message; }
-}
-async function approve(){
-  try{ await api("/api/device/approve",{method:"POST",body:JSON.stringify({code:dcode.value.trim(),device_name:dname.value})});
-    dmsg.textContent="✓ approved"; loadAudit(); }catch(e){ dmsg.textContent=e.message; }
-}
-async function loadChannels(){
-  try{ const d = await api("/api/channels");
-    document.querySelector("#channels tbody").innerHTML = (d.channels||[]).map(c=>
-      `<tr><td>${c.name}</td><td>${(c.models||[]).join(", ")}</td><td><span class="tag">${c.max_data_level}</span></td><td><span class="tag">${c.trust_type||""}</span></td><td>${c.key_masked||""}</td><td>${c.health||""}${c.consecutive_failures?(" ("+c.consecutive_failures+")"):""}</td></tr>`).join("");
-  }catch(e){ document.querySelector("#channels tbody").innerHTML = `<tr><td colspan="6" class="muted">${e.message}</td></tr>`; }
-}
-async function loadTokens(){
-  try{ const d = await api("/api/tokens");
-    document.querySelector("#tokens tbody").innerHTML = (d.tokens||[]).map(tk=>
-      `<tr><td>${tk.username||tk.user_id}</td><td>${tk.agent_type||""}</td><td><span class="tag">${tk.tier}</span></td>`+
-      `<td><input style="width:70px" id="rpm-${tk.id}" type="number" min="0" value="${tk.rpm_limit}"></td>`+
-      `<td><input style="width:90px" id="tpm-${tk.id}" type="number" min="0" value="${tk.tpm_limit}"></td>`+
-      `<td>${tk.used_tokens||0}${tk.monthly_cap_tokens?(" / "+tk.monthly_cap_tokens):""}</td>`+
-      `<td>${(tk.expires_at||"").slice(0,10)}</td>`+
-      `<td><button class="ghost" onclick="saveToken('${tk.id}')">保存</button></td></tr>`).join("");
-  }catch(e){ document.querySelector("#tokens tbody").innerHTML = `<tr><td colspan="8" class="muted">${e.message}</td></tr>`; }
-}
-async function saveToken(id){
-  try{ const rpm = parseInt(document.getElementById("rpm-"+id).value, 10);
-    const tpm = parseInt(document.getElementById("tpm-"+id).value, 10);
-    await api("/api/tokens/"+id,{method:"PATCH",body:JSON.stringify({rpm_limit:rpm,tpm_limit:tpm})});
-    tokMsg.textContent="✓ saved"; loadAudit(); }catch(e){ tokMsg.textContent=e.message; }
+
+/* ---------- audit ---------- */
+async function loadAudit(){
+  try{ const d = await api("/api/audit");
+    document.querySelector("#audit tbody").innerHTML = auditRows(d.events) || `<tr><td colspan="6" class="empty">${T("empty")}</td></tr>`;
+    const v = await api("/api/audit/verify");
+    const c = document.getElementById("chain");
+    c.innerHTML = v.chain_valid ? `<span class="chainOk">✓ ${T("chainValid")}</span>` : `<span class="chainBad">✗ ${T("chainInvalid")}</span>`;
+  }catch(e){ toast(e.message, false); }
 }
 async function exportAudit(){
   try{
@@ -416,28 +595,209 @@ async function exportAudit(){
     const blob = await res.blob();
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob); a.download = "agentgate-audit.ndjson"; a.click();
-    expMsg.textContent = "chain_valid: "+res.headers.get("X-Audit-Chain-Valid")+" · "+res.headers.get("X-Audit-Event-Count")+" events";
+    setMsg("expMsg", "chain_valid: "+res.headers.get("X-Audit-Chain-Valid")+" · "+res.headers.get("X-Audit-Event-Count")+" events");
     loadAudit();
-  }catch(e){ expMsg.textContent = e.message; }
+  }catch(e){ setMsg("expMsg", e.message, false); }
 }
 async function archiveAudit(){
   try{
-    // Default retention is 180 days (AGENTGATE_AUDIT_RETENTION_DAYS).
     const before = new Date(Date.now()-180*864e5).toISOString();
     const d = await api("/api/audit/archive",{method:"POST",body:JSON.stringify({before})});
-    expMsg.textContent = "archived "+d.archived+" events → "+(d.archive_file||"(none)");
+    setMsg("expMsg", "archived "+d.archived+" events → "+(d.archive_file||"(none)"));
     loadAudit();
-  }catch(e){ expMsg.textContent = e.message; }
+  }catch(e){ setMsg("expMsg", e.message, false); }
 }
-async function loadAudit(){
-  try{ const d = await api("/api/audit");
-    document.querySelector("#audit tbody").innerHTML = (d.events||[]).map(ev=>
-      `<tr><td>${(ev.time||"").slice(5,19).replace("T"," ")}</td><td>${ev.actor}</td><td>${ev.agent_type||""} ${ev.tier?('<span class="tag">'+ev.tier+'</span>'):""}</td><td>${ev.action}${ev.model?(" · "+ev.model):""}</td><td>${ev.data_level||""}</td><td class="${(ev.decision||'').split(':')[0]}">${ev.decision||""}</td></tr>`).join("");
-    const v = await api("/api/audit/verify"); chain.textContent = "chain_valid: " + v.chain_valid;
-  }catch(e){ chain.textContent = e.message; }
+
+/* ---------- device & tokens ---------- */
+async function approve(){
+  try{ await api("/api/device/approve",{method:"POST",body:JSON.stringify({code:dcode.value.trim(),device_name:dname.value})});
+    setMsg("dmsg", "✓ approved"); toast("✓ approved"); loadAudit();
+  }catch(e){ setMsg("dmsg", e.message, false); }
 }
+async function loadTokens(){
+  try{ const d = await api("/api/tokens");
+    document.querySelector("#tokens tbody").innerHTML = (d.tokens||[]).map(tk=>
+      `<tr><td>${esc(tk.username||tk.user_id)}</td><td>${esc(tk.agent_type||"")}</td><td>${pill(tk.tier)}</td>`+
+      `<td><input style="width:74px" id="rpm-${tk.id}" type="number" min="0" value="${tk.rpm_limit}"></td>`+
+      `<td><input style="width:94px" id="tpm-${tk.id}" type="number" min="0" value="${tk.tpm_limit}"></td>`+
+      `<td>${fmtNum(tk.used_tokens||0)}${tk.monthly_cap_tokens?(" / "+fmtNum(tk.monthly_cap_tokens)):""}</td>`+
+      `<td class="muted">${(tk.expires_at||"").slice(0,10)}</td>`+
+      `<td><button class="btn ghost small" onclick="saveToken('${tk.id}')">${T("save")}</button></td></tr>`).join("") || `<tr><td colspan="8" class="empty">${T("empty")}</td></tr>`;
+  }catch(e){ toast(e.message, false); }
+}
+async function saveToken(id){
+  try{ const rpm = parseInt(document.getElementById("rpm-"+id).value, 10);
+    const tpm = parseInt(document.getElementById("tpm-"+id).value, 10);
+    await api("/api/tokens/"+id,{method:"PATCH",body:JSON.stringify({rpm_limit:rpm,tpm_limit:tpm})});
+    toast(T("saved")); loadAudit();
+  }catch(e){ toast(e.message, false); }
+}
+
+/* ---------- channels ---------- */
+async function loadChannels(){
+  try{ const d = await api("/api/channels");
+    document.querySelector("#channels tbody").innerHTML = (d.channels||[]).map(c=>
+      `<tr><td style="font-weight:600;color:var(--ink)">${esc(c.name)}</td><td>${esc((c.models||[]).join(", "))}</td><td>${pill(c.max_data_level)}</td><td>${pill(c.trust_type||"")}</td><td class="muted">${esc(c.key_masked||"")}</td><td>${c.health?`<span class="pill ${esc(c.health)}">${esc(c.health)}</span>`:""}${c.consecutive_failures?(" ("+c.consecutive_failures+")"):""}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">${T("empty")}</td></tr>`;
+  }catch(e){ toast(e.message, false); }
+}
+async function addChannel(){
+  try{ const models = chModels.value.split(",").map(s=>s.trim()).filter(Boolean);
+    await api("/api/channels",{method:"POST",body:JSON.stringify({name:chName.value.trim(),base_url:chUrl.value.trim(),api_key:chKey.value,models,max_data_level:chLevel.value,trust_type:chTrust.value})});
+    setMsg("chMsg", T("saved")); chName.value=""; chUrl.value=""; chKey.value=""; chModels.value=""; loadChannels();
+  }catch(e){ setMsg("chMsg", e.message, false); }
+}
+
+/* ---------- kb folders ---------- */
+async function loadFolders(){
+  try{ const d = await api("/api/kb/folders");
+    document.querySelector("#folders tbody").innerHTML = (d.folders||[]).map(f=>
+      `<tr><td style="font-weight:600;color:var(--ink)">${esc(f.name)}</td><td class="muted">${esc(f.path||"")}</td><td>${pill(f.level)}</td><td>${f.docs||0}</td><td class="muted">${(f.last_scan||"").slice(0,19).replace("T"," ")}${f.last_error?(" · ✗ "+esc(f.last_error)):""}</td>`+
+      `<td style="white-space:nowrap"><button class="btn ghost small" onclick="rescanFolder('${f.id}')">${T("rescan")}</button> <button class="btn ghost small danger" onclick="deleteFolder('${f.id}')">✕</button></td></tr>`).join("") || `<tr><td colspan="6" class="empty">${T("empty")}</td></tr>`;
+  }catch(e){ toast(e.message, false); }
+}
+async function addFolder(){
+  try{ const d = await api("/api/kb/folders",{method:"POST",body:JSON.stringify({name:fbName.value.trim(),path:fbPath.value.trim(),level:fbLevel.value})});
+    setMsg("fbMsg", "✓ saved ("+(d.docs||0)+" docs)"); fbName.value=""; fbPath.value=""; loadFolders();
+  }catch(e){ setMsg("fbMsg", e.message, false); }
+}
+async function rescanFolder(id){
+  try{ const d = await api("/api/kb/folders/"+id+"/rescan",{method:"POST",body:"{}"});
+    toast("✓ added "+(d.stats.added||0)+" · updated "+(d.stats.updated||0)+" · removed "+(d.stats.removed||0)); loadFolders();
+  }catch(e){ toast(e.message, false); }
+}
+async function deleteFolder(id){
+  try{ await api("/api/kb/folders/"+id,{method:"DELETE"}); toast(T("deleted")); loadFolders();
+  }catch(e){ toast(e.message, false); }
+}
+
+/* ---------- skills ---------- */
+async function loadSkills(){
+  try{ const d = await api("/api/skills");
+    document.querySelector("#skills tbody").innerHTML = (d.skills||[]).map(s=>
+      `<tr><td style="font-weight:600;color:var(--ink)">${esc(s.name)}</td><td>${esc(s.version||"")}</td><td><span class="pill ${esc(s.status)}">${esc(s.status)}</span></td><td class="muted">${esc(s.scope||"")}</td><td class="muted">${(s.updated_at||"").slice(0,10)}</td>`+
+      `<td style="white-space:nowrap">${s.status==="in_review"?`<button class="btn ghost small" onclick="reviewSkill('${s.id}',true)">${T("approve")}</button> <button class="btn ghost small danger" onclick="reviewSkill('${s.id}',false)">${T("reject")}</button> `:""}${s.status==="published"?`<button class="btn ghost small" onclick="downloadSkill('${s.id}')">${T("download")}</button>`:""}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">${T("empty")}</td></tr>`;
+  }catch(e){ toast(e.message, false); }
+}
+async function addSkill(){
+  try{ await api("/api/skills",{method:"POST",body:JSON.stringify({name:skName.value.trim(),version:skVersion.value.trim(),scope:skScope.value.trim(),content:skContent.value})});
+    setMsg("skMsg", "✓ submitted (in_review)"); skName.value=""; skVersion.value=""; skContent.value=""; loadSkills();
+  }catch(e){ setMsg("skMsg", e.message, false); }
+}
+async function reviewSkill(id, approveIt){
+  try{ await api("/api/skills/"+id+"/review",{method:"POST",body:JSON.stringify({approve:approveIt})});
+    toast(T("saved")); loadSkills();
+  }catch(e){ toast(e.message, false); }
+}
+async function downloadSkill(id){
+  try{ const res = await fetch("/api/skills/"+id+"/download", {headers: session?{Authorization:"Bearer "+session}:{}});
+    if(!res.ok) throw new Error(await res.text());
+    const blob = await res.blob(); const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "SKILL.md"; a.click();
+  }catch(e){ toast(e.message, false); }
+}
+
+/* ---------- prompts ---------- */
+async function loadPrompts(){
+  try{ const d = await api("/api/prompts");
+    document.querySelector("#prompts tbody").innerHTML = (d.prompts||[]).map(p=>
+      `<tr><td style="font-weight:600;color:var(--ink)">${esc(p.name)}</td><td><span class="pill ${esc(p.status)}">${esc(p.status)}</span></td><td>v${p.current_version} / published v${p.published_version||"—"}</td><td class="muted">${esc(p.scope||"")}</td><td>${pill(p.max_data_level)}</td><td>${pill(p.min_tier)}</td>`+
+      `<td style="white-space:nowrap"><button class="btn ghost small" onclick="publishPrompt('${p.id}', ${p.current_version})">${T("publish")}</button> <button class="btn ghost small danger" onclick="deletePrompt('${p.id}')">✕</button></td></tr>`).join("") || `<tr><td colspan="7" class="empty">${T("empty")}</td></tr>`;
+  }catch(e){ toast(e.message, false); }
+}
+async function addPrompt(){
+  try{ const args = JSON.parse(ptArgs.value||"[]");
+    await api("/api/prompts",{method:"POST",body:JSON.stringify({name:ptName.value.trim(),description:ptDesc.value.trim(),scope:ptScope.value.trim(),content:ptContent.value,arguments:args,max_data_level:ptLevel.value,min_tier:ptTier.value})});
+    setMsg("ptMsg", "✓ saved (in_review)"); ptName.value=""; ptDesc.value=""; ptScope.value=""; loadPrompts();
+  }catch(e){ setMsg("ptMsg", e.message, false); }
+}
+async function publishPrompt(id, currentVer){
+  try{ const raw = prompt("publish version", String(currentVer));
+    if(raw===null) return;
+    const d = await api("/api/prompts/"+id+"/publish",{method:"POST",body:JSON.stringify({version:parseInt(raw,10)})});
+    toast("✓ published v"+d.published_version); loadPrompts();
+  }catch(e){ toast(e.message, false); }
+}
+async function deletePrompt(id){
+  try{ await api("/api/prompts/"+id,{method:"DELETE"}); toast(T("deleted")); loadPrompts();
+  }catch(e){ toast(e.message, false); }
+}
+
+/* ---------- mcp upstreams ---------- */
+async function loadUpstreams(){
+  try{ const d = await api("/api/mcp/upstreams");
+    document.querySelector("#upstreams tbody").innerHTML = (d.upstreams||[]).map(u=>
+      `<tr><td style="font-weight:600;color:var(--ink)">${esc(u.name)}</td><td class="muted">${esc(u.url||"")}</td><td>${pill(u.max_data_level)}</td><td>${pill(u.min_tier)}</td><td>${u.has_token?"✓":"—"}</td>`+
+      `<td style="white-space:nowrap"><button class="btn ghost small" onclick="testUpstream('${u.id}')">${T("test")}</button> <button class="btn ghost small danger" onclick="deleteUpstream('${u.id}')">✕</button></td></tr>`).join("") || `<tr><td colspan="6" class="empty">${T("empty")}</td></tr>`;
+  }catch(e){ toast(e.message, false); }
+}
+async function addUpstream(){
+  try{ await api("/api/mcp/upstreams",{method:"POST",body:JSON.stringify({name:upName.value.trim(),url:upUrl.value.trim(),token:upToken.value,max_data_level:upLevel.value,min_tier:upTier.value})});
+    setMsg("upMsg", T("saved")); upName.value=""; upUrl.value=""; upToken.value=""; loadUpstreams();
+  }catch(e){ setMsg("upMsg", e.message, false); }
+}
+async function testUpstream(id){
+  try{ const d = await api("/api/mcp/upstreams/"+id+"/test",{method:"POST",body:"{}"});
+    toast(d.ok ? "✓ " + (d.tools||[]).join(", ") : "✗ "+(d.error||"failed"), !!d.ok);
+  }catch(e){ toast(e.message, false); }
+}
+async function deleteUpstream(id){
+  try{ await api("/api/mcp/upstreams/"+id,{method:"DELETE"}); toast(T("deleted")); loadUpstreams();
+  }catch(e){ toast(e.message, false); }
+}
+
+/* ---------- rest tools ---------- */
+async function loadRESTTools(){
+  try{ const d = await api("/api/mcp/rest-tools");
+    document.querySelector("#resttools tbody").innerHTML = (d.rest_tools||[]).map(t=>
+      `<tr><td style="font-weight:600;color:var(--ink)">rest.${esc(t.name)}</td><td>${esc(t.method||"")}</td><td class="muted">${esc(t.path||"")}</td><td>${pill(t.max_data_level)}</td><td>${pill(t.min_tier)}</td><td>${t.has_token?"✓":"—"}</td>`+
+      `<td style="white-space:nowrap"><button class="btn ghost small" onclick="testRESTTool('${t.id}')">${T("test")}</button> <button class="btn ghost small danger" onclick="deleteRESTTool('${t.id}')">✕</button></td></tr>`).join("") || `<tr><td colspan="7" class="empty">${T("empty")}</td></tr>`;
+  }catch(e){ toast(e.message, false); }
+}
+async function addRESTTool(){
+  try{ const schema = JSON.parse(rtSchema.value||"{}");
+    await api("/api/mcp/rest-tools",{method:"POST",body:JSON.stringify({name:rtName.value.trim(),base_url:rtBase.value.trim(),method:rtMethod.value,path:rtPath.value.trim(),token:rtToken.value,input_schema:schema,max_data_level:rtLevel.value,min_tier:rtTier.value})});
+    setMsg("rtMsg", T("saved")); rtName.value=""; rtBase.value=""; rtPath.value=""; rtToken.value=""; loadRESTTools();
+  }catch(e){ setMsg("rtMsg", e.message, false); }
+}
+async function testRESTTool(id){
+  try{ const raw = prompt("arguments JSON", "{}");
+    if(raw===null) return;
+    const d = await api("/api/mcp/rest-tools/"+id+"/test",{method:"POST",body:JSON.stringify({arguments:JSON.parse(raw)})});
+    toast(d.ok ? "✓ " + (d.preview||"") : "✗ " + (d.error||"failed"), !!d.ok);
+  }catch(e){ toast(e.message, false); }
+}
+async function deleteRESTTool(id){
+  try{ await api("/api/mcp/rest-tools/"+id,{method:"DELETE"}); toast(T("deleted")); loadRESTTools();
+  }catch(e){ toast(e.message, false); }
+}
+
+/* ---------- alert webhooks ---------- */
+async function loadAlerts(){
+  try{ const d = await api("/api/alerts/webhooks");
+    document.querySelector("#webhooks tbody").innerHTML = (d.webhooks||[]).map(w=>
+      `<tr><td style="font-weight:600;color:var(--ink)">${esc(w.name)}</td><td>${esc(w.kind)}</td><td class="muted">${esc(w.url||"")}</td>`+
+      `<td>${w.last_attempt_at?((w.last_ok?"✓ ":"✗ ")+esc(w.last_error||"")+" ("+w.attempts+")"):"—"}</td>`+
+      `<td style="white-space:nowrap"><button class="btn ghost small" onclick="testWebhook('${w.id}')">${T("test")}</button> <button class="btn ghost small danger" onclick="deleteWebhook('${w.id}')">✕</button></td></tr>`).join("") || `<tr><td colspan="5" class="empty">${T("empty")}</td></tr>`;
+  }catch(e){ toast(e.message, false); }
+}
+async function addWebhook(){
+  try{ await api("/api/alerts/webhooks",{method:"POST",body:JSON.stringify({name:whName.value.trim(),url:whUrl.value.trim(),kind:whKind.value,secret:whSecret.value})});
+    setMsg("whMsg", T("saved")); whName.value=""; whUrl.value=""; whSecret.value=""; loadAlerts();
+  }catch(e){ setMsg("whMsg", e.message, false); }
+}
+async function testWebhook(id){
+  try{ const d = await api("/api/alerts/webhooks/"+id+"/test",{method:"POST",body:"{}"});
+    toast(d.delivered ? "✓ delivered" : "✗ "+(d.error||"failed"), !!d.delivered); loadAlerts();
+  }catch(e){ toast(e.message, false); }
+}
+async function deleteWebhook(id){
+  try{ await api("/api/alerts/webhooks/"+id,{method:"DELETE"}); toast(T("deleted")); loadAlerts();
+  }catch(e){ toast(e.message, false); }
+}
+
+/* ---------- boot ---------- */
 applyLang();
-if(session){ api("/api/me").then(d=>{ who.textContent=d.display_name+" · "+d.department+" · "+d.role; login2app(); }).catch(()=>{}); }
+if(session){ api("/api/me").then(d=>{ me=d; enterApp(); }).catch(()=>{}); }
 </script>
 </body>
 </html>
