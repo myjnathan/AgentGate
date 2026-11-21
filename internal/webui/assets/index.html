@@ -63,6 +63,19 @@
       <p class="muted" data-i18n="tokensHint">0 表示使用等级默认（受管级 60 RPM / 100000 TPM，自带级 20 RPM / 20000 TPM）。</p>
     </div>
     <div class="card">
+      <h3 data-i18n="alertsTitle">告警 Webhook</h3>
+      <div class="row">
+        <input id="whName" placeholder="name">
+        <input id="whUrl" placeholder="https://…/webhook/send?key=…" style="width:300px">
+        <select id="whKind"><option value="generic">generic</option><option value="wecom">wecom</option><option value="dingtalk">dingtalk</option><option value="feishu">feishu</option></select>
+        <input id="whSecret" type="password" placeholder="signing secret (optional)">
+        <button onclick="addWebhook()" data-i18n="addBtn">添加</button>
+        <span id="whMsg" class="muted"></span>
+      </div>
+      <table id="webhooks"><thead><tr><th data-i18n="name">名称</th><th data-i18n="kind">类型</th><th>URL</th><th data-i18n="lastStatus">最近投递</th><th></th></tr></thead><tbody></tbody></table>
+      <p class="muted" data-i18n="alertsHint">拦截、密级越权、渠道熔断、账号锁定会触发告警；告警只含事件类别与处置，不带请求原文。投递失败最多重试 3 次。</p>
+    </div>
+    <div class="card">
       <h3 data-i18n="statsTitle">用量统计</h3>
       <div class="row"><button class="ghost" onclick="loadStats()" data-i18n="refresh">刷新</button><span id="statTotals" class="muted"></span></div>
       <table id="statsDept"><thead><tr><th data-i18n="byDept">按部门</th><th data-i18n="calls">调用</th><th>Tokens</th><th data-i18n="blocked">拦截</th></tr></thead><tbody></tbody></table>
@@ -93,6 +106,8 @@ const I18N = {
        statsTitle:"用量统计",byDept:"按部门",byModel:"按模型",byChannel:"按渠道",calls:"调用",blocked:"拦截",
        tokensTitle:"令牌与限流",user:"用户",tier:"等级",used:"已用",expires:"过期",
        tokensHint:"0 表示使用等级默认（受管级 60 RPM / 100000 TPM，自带级 20 RPM / 20000 TPM）。",
+       alertsTitle:"告警 Webhook",addBtn:"添加",kind:"类型",lastStatus:"最近投递",
+       alertsHint:"拦截、密级越权、渠道熔断、账号锁定会触发告警；告警只含事件类别与处置，不带请求原文。投递失败最多重试 3 次。",
        exportBtn:"导出 NDJSON",archiveBtn:"归档 180 天前",
        exportHint:"导出为 NDJSON（可直接喂给 jq / SIEM），响应头附带哈希链校验结果；归档把超过保留期（默认 180 天）的事件移入 gzip 压缩包并留校验锚点。",
        time:"时间",actor:"操作者",action:"动作",level:"等级",decision:"处置"},
@@ -102,6 +117,8 @@ const I18N = {
        statsTitle:"Usage stats",byDept:"By department",byModel:"By model",byChannel:"By channel",calls:"Calls",blocked:"Blocked",
        tokensTitle:"Tokens & rate limits",user:"User",tier:"Tier",used:"Used",expires:"Expires",
        tokensHint:"0 means the tier default (managed 60 RPM / 100000 TPM, BYOA 20 RPM / 20000 TPM).",
+       alertsTitle:"Alert webhooks",addBtn:"Add",kind:"Type",lastStatus:"Last delivery",
+       alertsHint:"Blocks, data-level violations, channel cooldowns and account lockouts trigger alerts. Alerts carry only event categories and decisions, never request content. Failed deliveries retry up to 3 times.",
        exportBtn:"Export NDJSON",archiveBtn:"Archive older than 180d",
        exportHint:"Export as NDJSON (feed it to jq / your SIEM); response headers carry the hash-chain check. Archiving moves events older than the retention period (default 180 days) into a gzip bundle and leaves a verification anchor.",
        time:"Time",actor:"Actor",action:"Action",level:"Level",decision:"Decision"}
@@ -132,7 +149,27 @@ function login2app(){
   document.getElementById("login").style.display="none";
   document.getElementById("app").style.display="block";
   document.getElementById("logoutBtn").style.display="inline-block";
-  loadChannels(); loadTokens(); loadStats(); loadAudit();
+  loadChannels(); loadTokens(); loadAlerts(); loadStats(); loadAudit();
+}
+async function loadAlerts(){
+  try{ const d = await api("/api/alerts/webhooks");
+    document.querySelector("#webhooks tbody").innerHTML = (d.webhooks||[]).map(w=>
+      `<tr><td>${w.name}</td><td>${w.kind}</td><td class="muted">${w.url||""}</td>`+
+      `<td>${w.last_attempt_at?((w.last_ok?"✓ ":"✗ ")+(w.last_error||"")+" ("+w.attempts+")"):"—"}</td>`+
+      `<td><button class="ghost" onclick="testWebhook('${w.id}')">Test</button> <button class="ghost" onclick="deleteWebhook('${w.id}')">✕</button></td></tr>`).join("");
+  }catch(e){ document.querySelector("#webhooks tbody").innerHTML = `<tr><td colspan="5" class="muted">${e.message}</td></tr>`; }
+}
+async function addWebhook(){
+  try{ await api("/api/alerts/webhooks",{method:"POST",body:JSON.stringify({name:whName.value.trim(),url:whUrl.value.trim(),kind:whKind.value,secret:whSecret.value})});
+    whMsg.textContent="✓ saved"; whName.value=""; whUrl.value=""; whSecret.value=""; loadAlerts(); loadAudit(); }catch(e){ whMsg.textContent=e.message; }
+}
+async function testWebhook(id){
+  try{ const d = await api("/api/alerts/webhooks/"+id+"/test",{method:"POST",body:"{}"});
+    whMsg.textContent = d.delivered ? "✓ delivered" : "✗ "+(d.error||"failed"); loadAlerts(); loadAudit(); }catch(e){ whMsg.textContent=e.message; }
+}
+async function deleteWebhook(id){
+  try{ await api("/api/alerts/webhooks/"+id,{method:"DELETE"});
+    whMsg.textContent="✓ deleted"; loadAlerts(); loadAudit(); }catch(e){ whMsg.textContent=e.message; }
 }
 async function loadStats(){
   const fill = (sel, rows)=>{ document.querySelector(sel+" tbody").innerHTML = (rows||[]).map(b=>
