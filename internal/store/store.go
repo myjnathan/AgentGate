@@ -281,6 +281,37 @@ type ChannelKey struct {
 	DisabledAt     time.Time `json:"disabled_at,omitempty"`
 }
 
+// ModelPrice is the per-model price of one channel, in USD per
+// million tokens (backlog F13). The shape follows LiteLLM's model
+// cost table (input_cost_per_token / output_cost_per_token, scaled
+// to per-million for readability): a model may cost differently to
+// prompt and to complete, and the price is configured per channel
+// because the same model can be bought at different rates from
+// different providers. No price means the model is unpriced —
+// calls are still served and audited, but stats report them as
+// unpriced instead of inventing a cost.
+type ModelPrice struct {
+	InputPerMillion  float64 `json:"input_per_million"`
+	OutputPerMillion float64 `json:"output_per_million"`
+}
+
+// DepartmentBudget is a monthly spend cap for one department
+// (backlog F13). The month is the calendar month in UTC and resets
+// on the 1st at 00:00 UTC (Portkey's monthly reset). MonthlyCapUSD
+// is the hard cap: once the department's spend this month reaches
+// it, the gateway rejects further model calls with 429
+// department_budget_exceeded until the next month. AlertThreshold,
+// when > 0, is the fraction of the cap (e.g. 0.8) at which one
+// warning audit event (and, via F5, one alert) fires per month.
+type DepartmentBudget struct {
+	ID             string    `json:"id"`
+	Department     string    `json:"department"`
+	MonthlyCapUSD  float64   `json:"monthly_cap_usd"`
+	AlertThreshold float64   `json:"alert_threshold"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
 // Channel is an upstream model provider. Keys holds every upstream API
 // key for this channel (index 0 is the primary key); the gateway
 // round-robins across the enabled keys and auto-disables any key the
@@ -291,6 +322,9 @@ type Channel struct {
 	BaseURL string       `json:"base_url"`
 	Keys    []ChannelKey `json:"-"`
 	Models  []string     `json:"models"`
+	// Pricing maps model name -> price per million tokens (F13).
+	// A model without an entry is unpriced.
+	Pricing map[string]ModelPrice `json:"pricing,omitempty"`
 	// MaxDataLevel is the highest data level this channel may receive.
 	// Public-cloud channels are typically LevelInternal; private
 	// deployments may be LevelSecret.
@@ -407,6 +441,9 @@ type State struct {
 	Upstreams   map[string]*UpstreamServer `json:"upstreams"`
 	RESTTools   map[string]*RESTTool       `json:"rest_tools"`
 	Prompts     map[string]*PromptTemplate `json:"prompts"`
+	// Budgets holds the monthly department spend caps (backlog F13),
+	// keyed by budget ID; at most one budget per department.
+	Budgets map[string]*DepartmentBudget `json:"budgets"`
 	// KBFolderSources registers shared folders as knowledge-base
 	// sources (backlog F18); the file index is rebuilt in memory.
 	KBFolderSources map[string]*KBFolderSource `json:"kb_folder_sources"`
@@ -425,6 +462,7 @@ func newState() *State {
 		Upstreams:       map[string]*UpstreamServer{},
 		RESTTools:       map[string]*RESTTool{},
 		Prompts:         map[string]*PromptTemplate{},
+		Budgets:         map[string]*DepartmentBudget{},
 		KBFolderSources: map[string]*KBFolderSource{},
 	}
 }
@@ -476,6 +514,9 @@ func New(dir string) (*Store, error) {
 		}
 		if st.Prompts == nil {
 			st.Prompts = map[string]*PromptTemplate{}
+		}
+		if st.Budgets == nil {
+			st.Budgets = map[string]*DepartmentBudget{}
 		}
 		if st.KBFolderSources == nil {
 			st.KBFolderSources = map[string]*KBFolderSource{}

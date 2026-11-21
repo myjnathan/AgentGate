@@ -255,9 +255,18 @@
 - 测试：gateway 白盒 2 项（轮询顺序与环绕、停用后跳过、全停用无 key 可选、摘除审计字段齐全）+ 网关端到端 3 项（401 摘除 + 同请求重试 + 后续请求只走存活 key、两 key 轮询分摊 a/b/a、全 key 失效时返回上游 401、再请求报 `channel_no_enabled_key`）+ API 端点 1 项（创建 3 key、列表脱敏、加密存储、重复 400、增/停用/恢复/删除全链路、删最后一把 400、未知索引 404、员工 403、明文永不泄漏）+ alert 分类 1 项（`channel_key_disabled` 触发 warning 告警）+ 冒烟新增 9 项断言；`gofmt`/`go vet`/`go test ./...` 全绿，`go test -race`（gateway/api）全绿；`make smoke` 114 项断言 0 失败。
 - 已知注意点：key 停用状态与轮询游标是运行态（与 F1 冷却一致），重启后失效 key 会重新启用、由网关再次向上游证明（401 后重新摘除）；删除 key 后其后 key 的索引前移（与 new-api 的位置索引语义一致）；429 不触发 key 内轮换——限流仍走 F1 的渠道级故障转移。
 
-### F13 成本计价与部门预算 `todo`
+### F13 成本计价与部门预算 `done`（2026-11-21）
 - 来源：LiteLLM budgets（硬顶 429）、Portkey per-key budget。
 - 适配：渠道配置模型单价，统计折算金额（联动 F2）；部门月度预算超限拦截。
+- 验收：渠道配置模型单价后，统计折算出金额且与审计对账；部门月度预算超限后下一调用被 429 拦截；花费达告警阈值时每月发一次提醒；管理台可配预算与单价。
+- 借鉴点（LiteLLM 官方文档 docs.litellm.ai/docs/tutorials/claude_code_cut_costs，2026-11-21 查阅；Portkey 官方文档 portkey.ai/docs/virtual_key_old/product/ai-gateway/virtual-keys/budget-limits 与 docs.gw.prismaairs.com 限额用例指南，2026-11-21 查阅）：
+  LiteLLM 的虚拟 key 预算是 `max_budget`（USD）+ `budget_duration`（"24h"/"30d" 等滚动窗口，可叠加多档），计数到期自动重置；超限后**下一调用直接拒绝**、不走到模型；另有 `model_max_budget` 按模型设限 + `budget_fallbacks` 链（超限静默降级到更便宜的模型）。
+  Portkey 的预算上限是按虚拟 key（或按工作区，即部门）设的成本上限（USD，最低 $1）或 token 上限（最低 100），达限自动停用该 key 防止超支；可设告警阈值（如 80%）提前通知；可按周（周日 0 点 UTC）/按月（每月 1 日 0 点 UTC）自动重置；上限一旦设定不可改（改需复制 key 重建）。
+  我们照此实现，但做三处改动：① 预算按**部门**设而非按 key——企业是按部门分钱的，同一部门的多个 key/令牌共享一个钱袋；② 不做 LiteLLM 的静默降级——超限直接 429 明确拒绝（降级会改变模型行为、且分级约束高于可用性，降级到的便宜模型未必合规）；③ 预算可随时 PATCH 改上限（Portkey 的不可改是为防抵赖，我们的改动本身记审计、可追溯）。
+  计价形状沿用 LiteLLM 成本表的输入/输出分开计价（input/output 每百万 Token，USD）；其整张真实厂商价目表未复制——AgentGate 的渠道服务的是管理员配置的模型（含 mock 与本地模型），价目应由管理员按合同价配，抄一张真实厂商价目表是错误的复用。
+- 实现：新包 `internal/billing`（`Cost` 输入/输出拆分计价、`MonthWindow` 自然月 UTC 窗口、`DepartmentSpend` 按审计日志汇总部门本月花费）；`store.ModelPrice`（输入/输出每百万 Token USD）+ `Channel.Pricing map[string]ModelPrice` + `store.DepartmentBudget`（部门/月度上限/告警阈值 0–1）；`audit.Event` 增加 `CostUSD`（调用时按服务渠道单价写入，哈希链覆盖；0 表示未定价）；网关 `parseUsage`/`streamCopy` 返回 prompt/completion/total 拆分（流式用量同样拆分），调用完成即计价入审计；预算预检在流水线之前（限流与令牌配额之后）：本月花费 ≥ 上限时 429 `department_budget_exceeded` + `violation` 审计事件；花费首次达到告警阈值时记一条 `budget_threshold` 审计事件（每月每部门一次，`alert.FromEvent` 映射为 warning）；`GET /api/stats` 各维度与 totals 增加 `cost_usd`，totals 增加 `unpriced_calls`（有 token 但成本为 0 的调用数，成本总数因此是下限）；管理 API `GET/POST /api/budgets` + `PATCH/DELETE /api/budgets/{id}`（仅 admin，部门唯一、重复 409、上限须 >0、阈值须在 (0,1] 内）；管理台用量统计页三张表加成本列、总览 KPI 下显示累计成本与未定价调用数、新增部门月度预算卡片（列表/新建/行内改上限/删除）、渠道表加单价列、添加渠道表单可填单价 JSON（中英双语）；演示种子：四条渠道配演示单价（mock-eco $0.50/$1.50、mock-pro $2.50/$10.00、专有云 $5.00/$15.00、本地模型 $0），研发部演示预算 $50/月、阈值 0.8。
+- 测试：billing 包 3 项（计价拆分/未定价为 0、自然月窗口含闰年二月、部门花费聚合：跨部门/跨月/拦截与缓存命中不计/未知部门不计）+ 网关预算测试 4 项（调用成本入审计且数额与 mock usage 拆分一致、流式调用同样计价、超预算后下一调用 429 `department_budget_exceeded` 且审计为 violation、其他部门不受影响、阈值警告每月恰一次、未定价渠道成本为 0）+ API 端点 1 项（预算 CRUD 全链路、种子预算、400/403/404/409）+ stats 聚合 1 项（cost_usd 汇总、unpriced_calls、currency USD）+ alert 分类 1 项（`budget_threshold` 为 warning）；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（gateway/api）全绿；`make smoke` 126 项断言 0 失败（新增 12 项 F13 断言）。
+- 已知注意点：同一模型、同一密级有多个渠道时按 ID 排序取首个——未配单价的渠道会使调用记为未定价（冒烟初版即因此失败：F12 轮建的 mock-eco 渠道随机 ID 排在 ch_cloud 之前、无单价，跨越预算的调用记了 $0；冒烟改用只由定价渠道服务的 mock-pro 钉住，产品行为本身不变）；成本是调用完成时才知道的精确数，一次调用本身可能把花费推过上限，拦的是下一次调用；审计归档（F4）把事件移出热日志后，归档段的花费不再计入当月预算（归档只对已过保留期的旧事件做，默认 180 天，不会动当月数据）；本地模型单价为 0，在统计中计入 `unpriced_calls`（0 价与未定价在事件中无法区分，是有意的保守口径）；单价是静态配置，上游调价后需管理员同步改。
 
 ### F14 Agent 证明（Attestation） `todo`
 - 来源：蓝图既有设计；WorkBuddy 企业版的终端管控（iOA 类）思想。

@@ -8,17 +8,20 @@
 // Counted events:
 //   - Kind "model_call": a forwarded chat completion (any decision:
 //     allow | warn | redact | reroute | dry_run:*). Tokens come from the
-//     upstream usage report recorded on the event.
+//     upstream usage report recorded on the event, and CostUSD from the
+//     serving channel's per-model price at call time (F13).
 //   - Kind "violation" + Action "model_call_blocked": a call the
 //     protection pipeline refused (banned content, BYOA confidential,
-//     no channel for the data level). Tokens are 0 and the call counts
-//     toward "blocked".
+//     no channel for the data level, department budget exceeded).
+//     Tokens are 0 and the call counts toward "blocked".
 //
 // Dimensions (the enterprise angles generic gateways lack): user,
 // department (resolved from the actor's user record), channel, model,
 // agent type, data level, and disposition. Cost in currency is
-// deliberately out of scope here — channels carry no price yet;
-// that is F13 (department budgets).
+// priced per call from the serving channel's configured model price
+// (F13) and summed here; calls on unpriced models are counted
+// separately as unpriced_calls so the cost total is never mistaken
+// for the whole spend.
 package api
 
 import (
@@ -31,23 +34,31 @@ import (
 )
 
 // statsBucket is one row of an aggregation: calls, tokens consumed,
-// and how many of the calls were blocked by the protection pipeline.
+// how many of the calls were blocked by the protection pipeline,
+// and the priced cost in USD (F13; 0 for unpriced calls).
 type statsBucket struct {
-	Key     string `json:"key"`
-	Calls   int64  `json:"calls"`
-	Tokens  int64  `json:"tokens"`
-	Blocked int64  `json:"blocked"`
+	Key     string  `json:"key"`
+	Calls   int64   `json:"calls"`
+	Tokens  int64   `json:"tokens"`
+	Blocked int64   `json:"blocked"`
+	CostUSD float64 `json:"cost_usd"`
 }
 
 type statsTotals struct {
-	Calls   int64 `json:"calls"`
-	Tokens  int64 `json:"tokens"`
-	Blocked int64 `json:"blocked"`
+	Calls   int64   `json:"calls"`
+	Tokens  int64   `json:"tokens"`
+	Blocked int64   `json:"blocked"`
+	CostUSD float64 `json:"cost_usd"`
+	// UnpricedCalls counts model calls whose channel had no price
+	// for the model: they consumed tokens but carry no cost, so the
+	// cost above is a lower bound, not the whole spend.
+	UnpricedCalls int64 `json:"unpriced_calls"`
 }
 
 type statsResponse struct {
 	Since        *time.Time    `json:"since,omitempty"`
 	Until        *time.Time    `json:"until,omitempty"`
+	Currency     string        `json:"currency"`
 	Totals       statsTotals   `json:"totals"`
 	ByUser       []statsBucket `json:"by_user"`
 	ByDepartment []statsBucket `json:"by_department"`
@@ -90,7 +101,7 @@ func orNone(s string) string {
 // since/until bound the window (zero value = unbounded, half-open
 // [since, until)).
 func aggregateStats(events []audit.Event, deptOf func(actorID string) string, since, until time.Time) statsResponse {
-	res := statsResponse{}
+	res := statsResponse{Currency: "USD"}
 	if !since.IsZero() {
 		t := since.UTC()
 		res.Since = &t
@@ -100,7 +111,7 @@ func aggregateStats(events []audit.Event, deptOf func(actorID string) string, si
 		res.Until = &t
 	}
 	acc := map[string]map[string]*statsBucket{}
-	add := func(dim, key string, tokens int64, blocked bool) {
+	add := func(dim, key string, tokens int64, cost float64, blocked bool) {
 		m := acc[dim]
 		if m == nil {
 			m = map[string]*statsBucket{}
@@ -113,6 +124,7 @@ func aggregateStats(events []audit.Event, deptOf func(actorID string) string, si
 		}
 		b.Calls++
 		b.Tokens += tokens
+		b.CostUSD += cost
 		if blocked {
 			b.Blocked++
 		}
@@ -130,6 +142,10 @@ func aggregateStats(events []audit.Event, deptOf func(actorID string) string, si
 		}
 		res.Totals.Calls++
 		res.Totals.Tokens += ev.Tokens
+		res.Totals.CostUSD += ev.CostUSD
+		if !blocked && ev.Tokens > 0 && ev.CostUSD == 0 {
+			res.Totals.UnpricedCalls++
+		}
 		if blocked {
 			res.Totals.Blocked++
 		}
@@ -137,13 +153,13 @@ func aggregateStats(events []audit.Event, deptOf func(actorID string) string, si
 		if blocked {
 			decision = "block"
 		}
-		add("user", orUnknown(ev.Actor), ev.Tokens, blocked)
-		add("department", orUnknown(deptOf(ev.ActorID)), ev.Tokens, blocked)
-		add("channel", orNone(ev.Channel), ev.Tokens, blocked)
-		add("model", orUnknown(ev.Model), ev.Tokens, blocked)
-		add("agent_type", orUnknown(ev.AgentType), ev.Tokens, blocked)
-		add("data_level", orUnknown(ev.DataLevel), ev.Tokens, blocked)
-		add("decision", orUnknown(decision), ev.Tokens, blocked)
+		add("user", orUnknown(ev.Actor), ev.Tokens, ev.CostUSD, blocked)
+		add("department", orUnknown(deptOf(ev.ActorID)), ev.Tokens, ev.CostUSD, blocked)
+		add("channel", orNone(ev.Channel), ev.Tokens, ev.CostUSD, blocked)
+		add("model", orUnknown(ev.Model), ev.Tokens, ev.CostUSD, blocked)
+		add("agent_type", orUnknown(ev.AgentType), ev.Tokens, ev.CostUSD, blocked)
+		add("data_level", orUnknown(ev.DataLevel), ev.Tokens, ev.CostUSD, blocked)
+		add("decision", orUnknown(decision), ev.Tokens, ev.CostUSD, blocked)
 	}
 	flatten := func(dim string) []statsBucket {
 		m := acc[dim]

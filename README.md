@@ -24,7 +24,8 @@ AgentGate 是一个**不绑定任何单一桌面 Agent** 的企业级平台（�
 | 知识库 | 关键词多轮检索 + 读原文 + 引用，不用向量库；按等级控制可见范围；共享文件夹即知识库（指定文件夹自动索引 .md/.txt/.docx/.pdf，按文件夹映射密级，增量更新；Agent 按「目录 → 章节树 → 章节原文」渐进式取用，引用精确到文件 + 章节 + 页码，见 [docs/folder-kb.md](docs/folder-kb.md)） |
 | 能力中枢 | 技能（SKILL.md）提交 → 审核 → 签名校验和 → 按部门范围下发；Prompt 模板同样走提交 → 审核 → 发布，版本不可变，Agent 经 `/mcp` `prompts/get` 只读已发布版（参数与渲染结果均过 DLP） |
 | 审计 | 哈希链防篡改审计日志，可验证完整性；原文与敏感值不落日志；`GET /api/audit/export` 按时间段导出 NDJSON（响应头附链校验结果），`POST /api/audit/archive` 把超保留期的事件归档为 gzip + 清单（默认保留 180 天，见 [docs/audit-retention.md](docs/audit-retention.md)） |
-| 用量统计 | `GET /api/stats` 按用户/部门/渠道/模型/Agent 类型/数据密级/处置聚合调用数与 tokens（被拦截调用计入 blocked）；直接聚合审计日志，数字与审计天然对账；支持 `since`/`until` 时间范围 |
+| 用量统计 | `GET /api/stats` 按用户/部门/渠道/模型/Agent 类型/数据密级/处置聚合调用数与 tokens（被拦截调用计入 blocked）；直接聚合审计日志，数字与审计天然对账；支持 `since`/`until` 时间范围；每次调用按渠道配置的模型单价（输入/输出每百万 Token，USD）折算成本记进审计，统计含 `cost_usd` 与未定价调用数（见 [docs/cost-budgets.md](docs/cost-budgets.md)） |
+| 部门预算 | 部门月度预算硬上限（自然月 UTC）：本月花费达到上限后网关以 `429 department_budget_exceeded` 拒绝后续调用；花费达告警阈值时每月发一次提醒（见 [docs/cost-budgets.md](docs/cost-budgets.md)） |
 | 告警 Webhook | 拦截、密级越权、渠道熔断、账号锁定触发结构化告警，可推送到企业微信/钉钉/飞书机器人与通用 Webhook；签名可选（通用：`X-AgentGate-Signature` HMAC 头；企微/钉钉/飞书：`timestamp` + `sign` 查询参数）；投递失败最多重试 3 次后放弃并记审计；管理台可配、可测 |
 | 管理台 `/` | 内嵌 Web UI（中英双语），渠道/健康状态/用量统计/审计/设备批准/令牌限流/告警 Webhook/MCP 联邦上游/REST → MCP 工具/文件夹知识库配置 |
 

@@ -689,6 +689,70 @@ def main():
           and cache1.get("hits", 0) - cache0.get("hits", 0) >= 2
           and cache1.get("misses", 0) - cache0.get("misses", 0) >= 3)
 
+    # F13: model pricing + department monthly budgets. The demo seed
+    # prices mock-eco at $0.50/$1.50 per million tokens and carries a
+    # $50/month budget for 研发部 (80% threshold). The crossing call
+    # uses fresh content: an identical call would be a cache HIT and
+    # add no spend at all.
+    s, budgets = call("/api/budgets", token=admin_tok, method="GET")
+    rd = [b for b in budgets.get("budgets", []) if b.get("department") == "研发部"]
+    check("seeded RD budget listed with spend",
+          s == 200 and len(rd) == 1 and rd[0].get("monthly_cap_usd") == 50
+          and rd[0].get("alert_threshold") == 0.8 and rd[0].get("spent_usd", 0) > 0
+          and rd[0].get("remaining_usd", 0) < 50)
+    rd_id = rd[0].get("id", "")
+    s, _ = call("/api/budgets", token=sess, method="GET")
+    check("budgets forbidden for employee", s == 403)
+    s, nb = call("/api/budgets",
+                 {"department": "注册部", "monthly_cap_usd": 100, "alert_threshold": 0.8},
+                 token=admin_tok)
+    check("budget created for 注册部", s == 201 and nb.get("id", "").startswith("bud_"))
+    s, _ = call("/api/budgets",
+                {"department": "研发部", "monthly_cap_usd": 10}, token=admin_tok)
+    check("duplicate department budget rejected", s == 409)
+    s, _ = call("/api/budgets",
+                {"department": "财务部", "monthly_cap_usd": -1}, token=admin_tok)
+    check("negative budget cap rejected", s == 400)
+    s, _ = call("/api/budgets",
+                {"department": "财务部", "monthly_cap_usd": 10}, token=sess)
+    check("budget create forbidden for employee", s == 403)
+    # Lower the RD cap to just above current spend; one more priced
+    # call crosses it, and the call after that is refused at the door
+    # (before the cache — even a repeat of the same prompt is 429).
+    # mock-pro (not mock-eco): the F12 section created extra mock-eco
+    # channels whose random IDs can sort before ch_cloud and which
+    # carry no pricing — a call through one of those would record $0
+    # and never cross the cap. mock-pro is only served by priced
+    # seed channels, with ch_cloud first by data level, so the
+    # crossing call is priced deterministically.
+    s, budgets = call("/api/budgets", token=admin_tok, method="GET")
+    spent = [b for b in budgets.get("budgets", []) if b.get("department") == "研发部"][0].get("spent_usd", 0)
+    s, upd = call("/api/budgets/" + rd_id, {"monthly_cap_usd": spent + 0.000001},
+                  token=admin_tok, method="PATCH")
+    check("budget cap lowered to just above spend", s == 200
+          and abs(upd.get("monthly_cap_usd", 0) - (spent + 0.000001)) < 1e-9)
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-pro", "messages": [{"role": "user", "content": "预算冒烟：本月研发花费"}]}, token=tok3)
+    check("crossing call still succeeds", s == 200 and "choices" in chat)
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-pro", "messages": [{"role": "user", "content": "预算冒烟：本月研发花费"}]}, token=tok3)
+    check("over-budget call refused with 429",
+          s == 429 and chat.get("error", {}).get("code") == "department_budget_exceeded")
+    s, stats = call("/api/stats", token=admin_tok, method="GET")
+    rd_stat = [b for b in stats.get("by_department", []) if b.get("key") == "研发部"]
+    check("stats report USD cost and unpriced calls",
+          s == 200 and stats.get("currency") == "USD"
+          and stats.get("totals", {}).get("cost_usd", 0) > 0
+          and len(rd_stat) == 1 and rd_stat[0].get("cost_usd", 0) > 0
+          # The local-model channel is priced $0 (no upstream bill),
+          # so the secret call it served counts as unpriced — cost is
+          # a lower bound, never an invented number.
+          and stats.get("totals", {}).get("unpriced_calls", 0) >= 1)
+    s, _ = call("/api/budgets/" + rd_id, {"monthly_cap_usd": 50}, token=admin_tok, method="PATCH")
+    check("budget cap restored", s == 200)
+    s, _ = call("/api/budgets/" + nb.get("id", ""), token=admin_tok, method="DELETE")
+    check("budget deleted", s == 200)
+
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
 

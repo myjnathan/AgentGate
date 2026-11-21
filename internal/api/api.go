@@ -70,6 +70,10 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/audit/export", a.requireAdmin(a.exportAudit))
 	mux.HandleFunc("POST /api/audit/archive", a.requireAdmin(a.archiveAudit))
 	mux.HandleFunc("GET /api/stats", a.requireAdmin(a.getStats))
+	mux.HandleFunc("GET /api/budgets", a.requireAdmin(a.listBudgets))
+	mux.HandleFunc("POST /api/budgets", a.requireAdmin(a.createBudget))
+	mux.HandleFunc("PATCH /api/budgets/{id}", a.requireAdmin(a.updateBudget))
+	mux.HandleFunc("DELETE /api/budgets/{id}", a.requireAdmin(a.deleteBudget))
 	mux.HandleFunc("GET /api/cache", a.requireAdmin(a.getCache))
 	mux.HandleFunc("POST /api/cache", a.requireAdmin(a.setCache))
 	mux.HandleFunc("POST /api/cache/clear", a.requireAdmin(a.clearCache))
@@ -267,19 +271,20 @@ type channelKeyView struct {
 }
 
 type channelView struct {
-	ID                  string           `json:"id"`
-	Name                string           `json:"name"`
-	BaseURL             string           `json:"base_url"`
-	KeyMasked           string           `json:"key_masked"`
-	Keys                []channelKeyView `json:"keys,omitempty"`
-	Models              []string         `json:"models"`
-	MaxDataLevel        store.DataLevel  `json:"max_data_level"`
-	TrustType           store.TrustType  `json:"trust_type"`
-	Weight              int              `json:"weight"`
-	Disabled            bool             `json:"disabled"`
-	Health              string           `json:"health"`
-	ConsecutiveFailures int              `json:"consecutive_failures"`
-	CooldownUntil       *time.Time       `json:"cooldown_until,omitempty"`
+	ID                  string                      `json:"id"`
+	Name                string                      `json:"name"`
+	BaseURL             string                      `json:"base_url"`
+	KeyMasked           string                      `json:"key_masked"`
+	Keys                []channelKeyView            `json:"keys,omitempty"`
+	Models              []string                    `json:"models"`
+	Pricing             map[string]store.ModelPrice `json:"pricing,omitempty"`
+	MaxDataLevel        store.DataLevel             `json:"max_data_level"`
+	TrustType           store.TrustType             `json:"trust_type"`
+	Weight              int                         `json:"weight"`
+	Disabled            bool                        `json:"disabled"`
+	Health              string                      `json:"health"`
+	ConsecutiveFailures int                         `json:"consecutive_failures"`
+	CooldownUntil       *time.Time                  `json:"cooldown_until,omitempty"`
 }
 
 func channelKeysView(ch *store.Channel) []channelKeyView {
@@ -302,7 +307,7 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request, u *store.User
 		for _, ch := range st.Channels {
 			v := channelView{ID: ch.ID, Name: ch.Name, BaseURL: ch.BaseURL,
 				KeyMasked: ch.PrimaryMasked(), Keys: channelKeysView(ch),
-				Models: ch.Models, MaxDataLevel: ch.MaxDataLevel,
+				Models: ch.Models, Pricing: ch.Pricing, MaxDataLevel: ch.MaxDataLevel,
 				TrustType: ch.TrustTypeOrDefault(),
 				Weight:    ch.Weight, Disabled: ch.Disabled, Health: ch.Health(now),
 				ConsecutiveFailures: ch.ConsecutiveFailures}
@@ -318,17 +323,31 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request, u *store.User
 
 func (a *API) createChannel(w http.ResponseWriter, r *http.Request, u *store.User) {
 	var in struct {
-		Name         string   `json:"name"`
-		BaseURL      string   `json:"base_url"`
-		APIKey       string   `json:"api_key"`
-		APIKeys      []string `json:"api_keys"`
-		Models       []string `json:"models"`
-		MaxDataLevel string   `json:"max_data_level"`
-		TrustType    string   `json:"trust_type"`
+		Name         string                      `json:"name"`
+		BaseURL      string                      `json:"base_url"`
+		APIKey       string                      `json:"api_key"`
+		APIKeys      []string                    `json:"api_keys"`
+		Models       []string                    `json:"models"`
+		Pricing      map[string]store.ModelPrice `json:"pricing"`
+		MaxDataLevel string                      `json:"max_data_level"`
+		TrustType    string                      `json:"trust_type"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Name == "" || in.BaseURL == "" {
 		writeErr(w, http.StatusBadRequest, "name and base_url required")
 		return
+	}
+	// F13: per-model prices (USD per million tokens). A negative
+	// price is a mistake, not a discount; more than a handful of
+	// entries is a malformed payload, not a price list.
+	if len(in.Pricing) > 32 {
+		writeErr(w, http.StatusBadRequest, "too many pricing entries (max 32)")
+		return
+	}
+	for model, p := range in.Pricing {
+		if model == "" || p.InputPerMillion < 0 || p.OutputPerMillion < 0 {
+			writeErr(w, http.StatusBadRequest, "pricing entries need a model name and non-negative prices")
+			return
+		}
 	}
 	if !strings.HasPrefix(in.BaseURL, "https://") && !strings.HasPrefix(in.BaseURL, "http://127.0.0.1") && !strings.HasPrefix(in.BaseURL, "http://localhost") {
 		writeErr(w, http.StatusBadRequest, "base_url must be https (or loopback http for testing)")
@@ -387,7 +406,7 @@ func (a *API) createChannel(w http.ResponseWriter, r *http.Request, u *store.Use
 		keys = append(keys, store.ChannelKey{Enc: enc, Masked: secretbox.Mask(p)})
 	}
 	ch := &store.Channel{ID: store.NewID("ch"), Name: in.Name, BaseURL: in.BaseURL,
-		Keys: keys, Models: in.Models, MaxDataLevel: lvl, TrustType: tt, Weight: 1}
+		Keys: keys, Models: in.Models, Pricing: in.Pricing, MaxDataLevel: lvl, TrustType: tt, Weight: 1}
 	a.st.WithLock(func(st *store.State) { st.Channels[ch.ID] = ch })
 	_ = a.st.Save()
 	a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, Kind: "admin", Action: "channel_created",
