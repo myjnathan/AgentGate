@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/myjnathan/agentgate/internal/alert"
 	"github.com/myjnathan/agentgate/internal/api"
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
@@ -97,8 +98,27 @@ func main() {
 		CustomWords:   custom,
 		RedactForTier: map[store.Tier]bool{store.TierManaged: true},
 	})
+	// Webhook alerts (backlog F5): every audit event flows through the
+	// notify hook; only alertable kinds (blocks, cooldowns, lockouts)
+	// are delivered. Delivery reports are Kind "alert" and therefore
+	// never re-trigger delivery.
+	dispatcher := alert.New(st, box, alert.WithOnResult(func(r alert.Result) {
+		action := "alert_delivered"
+		detail := map[string]string{"webhook_id": r.Webhook.ID, "webhook_name": r.Webhook.Name,
+			"attempts": strconv.Itoa(r.Attempts), "alert": r.Alert.Action}
+		if r.Err != nil {
+			action = "alert_delivery_failed"
+			detail["error"] = alert.ErrClass(r.Err, r.Status)
+		}
+		al.Append(audit.Event{Actor: "system", Kind: "alert", Action: action, Detail: detail})
+	}))
+	dispatcher.Start()
+	defer dispatcher.Stop()
+	al.SetNotifyHook(dispatcher.Notify)
+
 	mcpSrv := mcp.New(st, au, al, det)
 	rest := api.New(st, au, box, al)
+	rest.SetAlertDispatcher(dispatcher)
 
 	mux := http.NewServeMux()
 	mux.Handle("/", webui.Handler())
