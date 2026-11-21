@@ -198,6 +198,195 @@ def main():
             err_code = json.loads(e.read() or b"{}").get("error", {}).get("code", "")
     check("rpm limit enforced at 6th call", codes == [200, 200, 429] and err_code == "rate_limit_exceeded")
 
+    # F6: MCP federation. A local fake upstream MCP server stands in
+    # for an enterprise system (e.g. HR); its tools must appear
+    # namespaced, forward calls, and respect tier and data-level gates.
+    class FakeUpstream(BaseHTTPRequestHandler):
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", "0"))
+            req = json.loads(self.rfile.read(n) or b"{}")
+            method = req.get("method")
+            if method == "tools/list":
+                result = {"tools": [
+                    {"name": "leave_balance", "description": "remaining leave days",
+                     "inputSchema": {"type": "object", "properties": {}}},
+                    {"name": "project_status", "description": "project status",
+                     "inputSchema": {"type": "object", "properties": {}}}]}
+            elif method == "tools/call":
+                name = req.get("params", {}).get("name")
+                text = {"leave_balance": '{"balance": 5, "employee": "lixiaofeng"}',
+                        "project_status": "XH-200 进度正常"}.get(name, "ok")
+                result = {"content": [{"type": "text", "text": text}], "isError": False}
+            else:
+                result = {}
+            body = json.dumps({"jsonrpc": "2.0", "id": req.get("id", 1), "result": result}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *a):
+            pass
+
+    up_httpd = ThreadingHTTPServer(("127.0.0.1", 0), FakeUpstream)
+    threading.Thread(target=up_httpd.serve_forever, daemon=True).start()
+    up_url = f"http://127.0.0.1:{up_httpd.server_address[1]}/mcp"
+
+    def mcp_rpc(token, method, params=None):
+        req = urllib.request.Request(BASE + "/mcp", data=json.dumps(
+            {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}).encode())
+        req.add_header("Authorization", "Bearer " + token)
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req) as r:
+            return json.loads(r.read())
+
+    s, up = call("/api/mcp/upstreams",
+                 {"name": "hr", "url": up_url, "max_data_level": "internal", "min_tier": "byoa"},
+                 token=admin_tok)
+    check("upstream hr registered", s == 201 and up.get("id", "").startswith("up_"))
+    s, up2 = call("/api/mcp/upstreams",
+                  {"name": "ops", "url": up_url, "max_data_level": "confidential", "min_tier": "managed"},
+                  token=admin_tok)
+    check("upstream ops registered", s == 201 and up2.get("id", "").startswith("up_"))
+    s, _ = call("/api/mcp/upstreams",
+                {"name": "hr", "url": up_url}, token=admin_tok)
+    check("duplicate upstream namespace rejected", s == 409)
+    s, _ = call("/api/mcp/upstreams",
+                {"name": "hr2", "url": up_url}, token=sess)
+    check("upstream create forbidden for employee", s == 403)
+    s, tst = call("/api/mcp/upstreams/" + up.get("id", "") + "/test", {}, token=admin_tok, method="POST")
+    check("upstream test lists namespaced tools", s == 200 and tst.get("ok") is True
+          and "hr.leave_balance" in tst.get("tools", []))
+
+    listed = mcp_rpc(tok, "tools/list")
+    names = [t["name"] for t in listed.get("result", {}).get("tools", [])]
+    check("federated tools listed namespaced for BYOA",
+          "hr.leave_balance" in names and "ops.leave_balance" not in names)
+    listed2 = mcp_rpc(tok2, "tools/list")
+    names2 = [t["name"] for t in listed2.get("result", {}).get("tools", [])]
+    check("managed token sees managed-only upstream tools", "ops.leave_balance" in names2)
+
+    res = mcp_rpc(tok, "tools/call", {"name": "hr.leave_balance", "arguments": {}})
+    text = res.get("result", {}).get("content", [{}])[0].get("text", "")
+    check("federated tool call forwards to upstream", '"balance": 5' in text)
+    res = mcp_rpc(tok, "tools/call", {"name": "ops.leave_balance", "arguments": {}})
+    check("BYOA call to managed-only upstream denied",
+          res.get("error", {}).get("code") == -32003)
+    res = mcp_rpc(tok, "tools/call", {"name": "hr.leave_balance", "arguments": {"note": "XH-200"}})
+    check("confidential args blocked from internal-only upstream",
+          res.get("error", {}).get("code") == -32004)
+    res = mcp_rpc(tok, "tools/call", {"name": "hr.project_status", "arguments": {}})
+    text = res.get("result", {}).get("content", [{}])[0].get("text", "")
+    check("federated result redacted for BYOA",
+          "XH-200" not in text and "<CUSTOM_1>" in text)
+    res = mcp_rpc(tok2, "tools/call", {"name": "hr.project_status", "arguments": {}})
+    text = res.get("result", {}).get("content", [{}])[0].get("text", "")
+    check("managed token receives raw federated result", "XH-200" in text)
+    up_httpd.shutdown()
+
+    # F7: REST -> MCP adapter. The demo seed already registers
+    # rest.leave_balance against the mock HR endpoint; a local fake
+    # REST server stands in for a second enterprise system to cover
+    # POST bodies, schema validation and tier gating.
+    res = mcp_rpc(tok, "tools/call", {"name": "rest.leave_balance", "arguments": {"employee_id": "lixiaofeng"}})
+    text = res.get("result", {}).get("content", [{}])[0].get("text", "")
+    check("seeded REST tool calls demo HR endpoint", '"balance_days":12' in text)
+    res = mcp_rpc(tok, "tools/call", {"name": "rest.leave_balance", "arguments": {}})
+    check("REST tool schema validation rejects missing arg", res.get("error", {}).get("code") == -32602)
+
+    class FakeREST(BaseHTTPRequestHandler):
+        def do_GET(self):
+            from urllib.parse import urlparse, parse_qs
+            u = urlparse(self.path)
+            if u.path == "/hr/leave-balance":
+                emp = parse_qs(u.query).get("employee_id", [""])[0]
+                body = json.dumps({"employee_id": emp, "balance_days": 12}).encode()
+            elif u.path == "/hr/notice":
+                body = "XH-200 进度正常".encode()
+            else:
+                self.send_response(404); self.end_headers(); return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers(); self.wfile.write(body)
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", "0"))
+            req = json.loads(self.rfile.read(n) or b"{}")
+            body = json.dumps({"status": "submitted", "employee_id": req.get("employee_id"),
+                               "days": req.get("days")}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers(); self.wfile.write(body)
+        def log_message(self, *a):
+            pass
+
+    rest_httpd = ThreadingHTTPServer(("127.0.0.1", 0), FakeREST)
+    threading.Thread(target=rest_httpd.serve_forever, daemon=True).start()
+    rest_url = f"http://127.0.0.1:{rest_httpd.server_address[1]}"
+
+    s, rt = call("/api/mcp/rest-tools",
+                 {"name": "fake_balance", "base_url": rest_url, "method": "GET", "path": "/hr/leave-balance",
+                  "input_schema": {"type": "object", "properties": {"employee_id": {"type": "string"}},
+                                   "required": ["employee_id"]},
+                  "max_data_level": "internal", "min_tier": "byoa"},
+                 token=admin_tok)
+    check("REST tool registered", s == 201 and rt.get("id", "").startswith("rt_"))
+    s, rt2 = call("/api/mcp/rest-tools",
+                  {"name": "fake_request", "base_url": rest_url, "method": "POST", "path": "/hr/leave-request",
+                   "input_schema": {"type": "object", "properties": {"employee_id": {"type": "string"}, "days": {"type": "integer"}},
+                                    "required": ["employee_id", "days"]},
+                   "max_data_level": "internal", "min_tier": "managed"},
+                  token=admin_tok)
+    check("managed-only REST tool registered", s == 201)
+    s, rt3 = call("/api/mcp/rest-tools",
+                  {"name": "fake_notice", "base_url": rest_url, "method": "GET", "path": "/hr/notice",
+                   "input_schema": {"type": "object", "properties": {}},
+                   "max_data_level": "internal", "min_tier": "byoa"},
+                  token=admin_tok)
+    check("notice REST tool registered", s == 201)
+    s, _ = call("/api/mcp/rest-tools",
+                {"name": "fake_balance", "base_url": rest_url, "method": "GET", "path": "/hr/leave-balance",
+                 "input_schema": {"type": "object", "properties": {}}},
+                token=admin_tok)
+    check("duplicate REST tool name rejected", s == 409)
+    s, _ = call("/api/mcp/rest-tools",
+                {"name": "bad_tool", "base_url": rest_url, "method": "GET", "path": "/hr/leave-balance",
+                 "input_schema": {"type": "object", "properties": {}, "required": ["nope"]}},
+                token=admin_tok)
+    check("invalid input schema rejected", s == 400)
+    s, _ = call("/api/mcp/rest-tools",
+                {"name": "emp_tool", "base_url": rest_url, "method": "GET", "path": "/x",
+                 "input_schema": {"type": "object", "properties": {}}},
+                token=sess)
+    check("REST tool create forbidden for employee", s == 403)
+    s, tst = call("/api/mcp/rest-tools/" + rt.get("id", "") + "/test",
+                  {"arguments": {"employee_id": "lixiaofeng"}}, token=admin_tok, method="POST")
+    check("REST tool test calls upstream", s == 200 and tst.get("ok") is True
+          and "balance_days" in tst.get("preview", ""))
+
+    listed = mcp_rpc(tok, "tools/list")
+    names = [t["name"] for t in listed.get("result", {}).get("tools", [])]
+    check("REST tools listed namespaced for BYOA",
+          "rest.fake_balance" in names and "rest.fake_request" not in names)
+    res = mcp_rpc(tok, "tools/call", {"name": "rest.fake_balance", "arguments": {"employee_id": "lixiaofeng"}})
+    text = res.get("result", {}).get("content", [{}])[0].get("text", "")
+    check("REST GET tool forwards query param", '"balance_days": 12' in text)
+    res = mcp_rpc(tok2, "tools/call", {"name": "rest.fake_request", "arguments": {"employee_id": "chenjing", "days": 2}})
+    text = res.get("result", {}).get("content", [{}])[0].get("text", "")
+    check("REST POST tool forwards JSON body", '"status": "submitted"' in text and '"days": 2' in text)
+    res = mcp_rpc(tok, "tools/call", {"name": "rest.fake_request", "arguments": {"employee_id": "li", "days": 1}})
+    check("BYOA call to managed-only REST tool denied", res.get("error", {}).get("code") == -32003)
+    res = mcp_rpc(tok, "tools/call", {"name": "rest.fake_balance", "arguments": {"employee_id": "XH-200"}})
+    check("confidential args blocked from internal-only REST tool", res.get("error", {}).get("code") == -32004)
+    res = mcp_rpc(tok, "tools/call", {"name": "rest.fake_notice", "arguments": {}})
+    text = res.get("result", {}).get("content", [{}])[0].get("text", "")
+    check("REST result redacted for BYOA", "XH-200" not in text and "<CUSTOM_1>" in text)
+    res = mcp_rpc(tok2, "tools/call", {"name": "rest.fake_notice", "arguments": {}})
+    text = res.get("result", {}).get("content", [{}])[0].get("text", "")
+    check("managed token receives raw REST result", "XH-200" in text)
+    rest_httpd.shutdown()
+
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
 
