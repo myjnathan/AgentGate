@@ -2,6 +2,60 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-21 · F3 令牌级限流（RPM/TPM）
+- 借鉴 LiteLLM 官方动态限流文档（docs.litellm.ai/docs/proxy/dynamic_rate_limit）：
+  每 key 可配 rpm_limit/tpm_limit，超限 429；tokens 在响应完成后才记入计数器，
+  在途请求不被刚耗尽的预算拦截；60 秒滚动窗口。我们照此实现，差异是限流键为
+  AgentGate 自有令牌、未配的令牌走等级默认（受管级 60 RPM / 100000 TPM，
+  自带级 20 RPM / 20000 TPM）。
+- 实现：新包 `internal/ratelimit`（60s 滑动窗口，RPM 计请求、TPM 计响应后上报的
+  tokens，0 = 不限）；`store.APIToken` 增加 `rpm_limit`/`tpm_limit`；
+  网关鉴权后立即检查，超限返回 429 `rate_limit_exceeded` + `Retry-After`，
+  并写 Kind `rate_limit` 审计事件（不含请求原文；该 Kind 不计入 F2 用量统计，
+  统计对账不受影响）；`GET /api/tokens` + `PATCH /api/tokens/{id}`（仅
+  admin/security，不暴露令牌哈希）；管理台新增令牌限流卡片（中英双语）。
+- 关键决策：限流检查放在鉴权后、防护管线前——被防护拦截的调用同样计 RPM
+  （已占用网关处理）；限流状态为进程内运行时状态，重启即复位（与 F1 熔断一致，
+  不引入 Redis）；限流不写新表，审计即事实来源。
+- 测试：ratelimit 单元测试 6 项（RPM 边界、窗口滑动、TPM 响应后记账、0 不限、
+  Retry-After 递减、200 并发恰好放行 100）+ 网关集成测试 4 项（RPM 429 +
+  Retry-After + 审计事件、TPM 429、限流按令牌隔离、等级默认 BYOA 20 RPM）+
+  API 端点测试（列表/修改/部分修改/负值 400/未知令牌 404/员工 403、不暴露哈希）；
+  `gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 17 项断言 0 失败
+  （含新增 2 项：RPM 配置生效、第 6 次调用 429）。
+- 推送（阻塞，待 Nathan 在线时批卡或下一轮重试）：本地提交 1f5d185 已完成；
+  按任务书用 `push-files` 全量快照推送两次（UTC 11-20 21:55 与 23:24），两次均因
+  GitHub 写入审批卡无人决策而超时（`permissions.history` 查证：Decision 均为
+  Timed out；`list_pending` 当前无待批卡）。远端 HEAD 经读回验证仍停在 F1
+  （81ab47e），F2（5acccac）与 F3（1f5d185）均未上远端。注意：这不是 push-files
+  403——审批超时才是卡点，白天 Nathan 在线批一次卡即可一次推完（F1 当时就是这样
+  批卡通过的）。下一轮优先重试推送；若届时仍无人批卡，改做 F4。
+
+## 2026-11-21 · F2 用量与成本统计
+- 借鉴 LiteLLM 官方成本追踪文档（docs.litellm.ai/docs/proxy/cost_tracking）与
+  Portkey Analytics 文档（portkey.ai/docs/product/observability/analytics）：
+  按 key/user/team/model 的 spend 日志与时间范围查询、多维度聚合（调用数、成本、
+  平均 tokens、成功率）与任意维度分组。我们照此实现，但统计口径改为**直接聚合
+  哈希链审计日志**（不另建统计表，数字与审计天然对账），维度换成企业口径
+  （部门/Agent 类型/数据密级/处置），被拦截的调用计入调用数与 blocked（tokens 为 0）。
+- 实现：`audit.Log.All()` 快照；新增 `internal/api/stats.go`，`GET /api/stats`
+  （仅 admin/security，`since`/`until` RFC3339 半开区间过滤，非法时间返回 400）；
+  聚合维度 by_user/by_department/by_channel/by_model/by_agent_type/by_data_level/
+  by_decision，桶内含 calls/tokens/blocked，按调用数降序、key 升序；部门由事件的
+  ActorID 查用户表解析，未知记为 unknown；被拦截调用无渠道，归入 channel "none"。
+  管理台新增用量统计卡片（总调用/tokens/拦截 + 按部门/模型/渠道表 + 处置汇总，中英双语）。
+- 关键决策：金额暂不计入——渠道尚未配置单价，计价与部门预算留给 F13；
+  统计不写新表、不引入外部存储，审计日志即唯一事实来源（对账零成本）。
+- 测试：纯聚合测试（各维度、拦截、范围外事件过滤、半开时间窗口、空输入）+
+  HTTP 端点测试（鉴权 401/403、非法时间 400、未来窗口 0 调用）；`gofmt`/`go vet`/
+  `go test ./...` 全绿；`make smoke` 15 项断言 0 失败（含新增 2 项：统计与审计对账、员工访问 403）。
+- 推送阻塞（待下一轮优先处理）：本地提交 692b8ce 已完成，但向 myjnathan/AgentGate
+  main 的 contents API 推送两次均未执行——GitHub 写入每次需新的审批卡，而本轮是深夜
+  无人值守运行，两次审批请求均超时未决策（`permissions.list_active` 显示当前无任何
+  有效授权）；远端 HEAD 仍停在 F1（81ab47e），`internal/api/stats.go` 经读回验证确认
+  未上远端。按 Loop 规程，推送失败留待下一轮优先重试（届时 Nathan 在线可批审批卡）。
+  未尝试 push-files：Loop 规程已记明其对非空仓库建 tree 会 403，且同样要过同一审批关。
+
 ## 2026-11-21 · F1 渠道健康、重试与熔断
 - 借鉴 LiteLLM 官方文档（docs.litellm.ai/docs/router/learn/reliability）：
   可重试错误按类型区分（5xx/429 可重试，其余 4xx 不重试）、`allowed_fails`=3 +
