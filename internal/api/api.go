@@ -39,6 +39,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/skills/{id}/download", a.requireTokenOrSession(a.downloadSkill))
 	mux.HandleFunc("GET /api/audit", a.requireAdmin(a.queryAudit))
 	mux.HandleFunc("GET /api/audit/verify", a.requireAdmin(a.verifyAudit))
+	mux.HandleFunc("GET /api/audit/export", a.requireAdmin(a.exportAudit))
+	mux.HandleFunc("POST /api/audit/archive", a.requireAdmin(a.archiveAudit))
 	mux.HandleFunc("GET /api/stats", a.requireAdmin(a.getStats))
 	mux.HandleFunc("GET /api/tokens", a.requireAdmin(a.listTokens))
 	mux.HandleFunc("PATCH /api/tokens/{id}", a.requireAdmin(a.updateTokenLimits))
