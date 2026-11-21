@@ -34,11 +34,30 @@ type Event struct {
 }
 
 type Log struct {
-	mu       sync.Mutex
-	path     string
-	seq      int64
-	lastHash string
-	events   []Event // in-memory tail for queries (all events, night-one scale)
+	mu            sync.Mutex
+	path          string
+	seq           int64
+	lastHash      string
+	retentionDays int     // configured retention policy (days); 0 = unset
+	events        []Event // in-memory tail for queries (all events, night-one scale)
+}
+
+// chainHeadHash returns the hash the next appended event must link
+// from: normally the last event's hash, but when the log ends with an
+// archive checkpoint the archived segment's head hash — the
+// checkpoint is a marker, not a link, and the chain continues from
+// the archived head (see verifyEvents).
+func chainHeadHash(events []Event) string {
+	if len(events) == 0 {
+		return "genesis"
+	}
+	last := events[len(events)-1]
+	if isCheckpoint(last) {
+		if h, ok := last.Detail["archived_head_hash"]; ok && h != "" {
+			return h
+		}
+	}
+	return last.Hash
 }
 
 func Open(path string) (*Log, error) {
@@ -53,9 +72,9 @@ func Open(path string) (*Log, error) {
 			if json.Unmarshal(sc.Bytes(), &ev) == nil {
 				l.events = append(l.events, ev)
 				l.seq = ev.Seq
-				l.lastHash = ev.Hash
 			}
 		}
+		l.lastHash = chainHeadHash(l.events)
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -88,6 +107,17 @@ func (l *Log) Append(ev Event) Event {
 	return ev
 }
 
+// All returns a copy of all recorded events, oldest first.
+// Stats aggregation reads from this same log, so reported numbers
+// reconcile with the audit trail by construction.
+func (l *Log) All() []Event {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]Event, len(l.events))
+	copy(out, l.events)
+	return out
+}
+
 // Query returns events matching the filters, newest first, up to limit.
 func (l *Log) Query(kind, actor string, limit int) []Event {
 	l.mu.Lock()
@@ -109,19 +139,11 @@ func (l *Log) Query(kind, actor string, limit int) []Event {
 	return out
 }
 
-// Verify checks the hash chain integrity.
+// Verify checks the hash chain integrity. A checkpoint event
+// (written by Archive) re-anchors the chain at the archived segment's
+// head hash; see verifyEvents.
 func (l *Log) Verify() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	prev := "genesis"
-	for _, ev := range l.events {
-		if ev.PrevHash != prev {
-			return false
-		}
-		if hashEvent(ev) != ev.Hash {
-			return false
-		}
-		prev = ev.Hash
-	}
-	return true
+	return verifyEvents(l.events)
 }
