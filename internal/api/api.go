@@ -14,6 +14,8 @@ import (
 	"github.com/myjnathan/agentgate/internal/alert"
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
+	"github.com/myjnathan/agentgate/internal/federation"
+	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/store"
 )
@@ -24,6 +26,8 @@ type API struct {
 	box        *secretbox.Box
 	audit      *audit.Log
 	dispatcher *alert.Dispatcher
+	fed        *federation.Registry
+	restAd     *restadapter.Adapter
 }
 
 func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log) *API {
@@ -57,6 +61,14 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/alerts/webhooks", a.requireAdmin(a.createWebhook))
 	mux.HandleFunc("DELETE /api/alerts/webhooks/{id}", a.requireAdmin(a.deleteWebhook))
 	mux.HandleFunc("POST /api/alerts/webhooks/{id}/test", a.requireAdmin(a.testWebhook))
+	mux.HandleFunc("GET /api/mcp/upstreams", a.requireAdmin(a.listUpstreams))
+	mux.HandleFunc("POST /api/mcp/upstreams", a.requireAdmin(a.createUpstream))
+	mux.HandleFunc("DELETE /api/mcp/upstreams/{id}", a.requireAdmin(a.deleteUpstream))
+	mux.HandleFunc("POST /api/mcp/upstreams/{id}/test", a.requireAdmin(a.testUpstream))
+	mux.HandleFunc("GET /api/mcp/rest-tools", a.requireAdmin(a.listRESTTools))
+	mux.HandleFunc("POST /api/mcp/rest-tools", a.requireAdmin(a.createRESTTool))
+	mux.HandleFunc("DELETE /api/mcp/rest-tools/{id}", a.requireAdmin(a.deleteRESTTool))
+	mux.HandleFunc("POST /api/mcp/rest-tools/{id}/test", a.requireAdmin(a.testRESTTool))
 	mux.HandleFunc("POST /api/setup/device/start", a.deviceStart)
 	mux.HandleFunc("POST /api/setup/device/poll", a.devicePoll)
 }
