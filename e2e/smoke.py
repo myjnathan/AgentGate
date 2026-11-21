@@ -502,6 +502,46 @@ def main():
     s, _ = call("/api/auth/oidc/status", token=sess, method="GET")
     check("oidc status requires admin", s == 403)
 
+    # F10: streaming desensitization restore + tool_calls protection
+    # (blueprint probe 3). A fresh BYOA token keeps the RPM accounting
+    # of the earlier tokens untouched.
+    s, start3 = call("/api/setup/device/start", {"agent_type": "dsh", "tier": "byoa"})
+    s, _ = call("/api/device/approve", {"code": start3["code"], "device_name": "ci-smoke-f10"}, token=sess)
+    s, poll3 = call("/api/setup/device/poll", {"code": start3["code"], "secret": start3["secret"]})
+    tok3 = poll3.get("token", "")
+    # Streaming call with a phone number: the managed token's reply
+    # must carry the original value, never a placeholder, and end
+    # with data: [DONE].
+    req = urllib.request.Request(BASE + "/v1/chat/completions",
+        data=json.dumps({"model": "mock-eco", "stream": True,
+                         "messages": [{"role": "user", "content": "我的手机号是13812345678，帮我记下来"}]}).encode())
+    req.add_header("Authorization", "Bearer " + tok2)
+    req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req) as r:
+        sse = r.read().decode(errors="replace")
+    check("streaming redacted placeholder restored", "13812345678" in sse
+          and "PII_1" not in sse and sse.strip().endswith("data: [DONE]"))
+    # Banned word inside tool_calls arguments is blocked like content.
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-eco", "messages": [
+                       {"role": "user", "content": "帮我发个短信"},
+                       {"role": "assistant", "tool_calls": [
+                           {"id": "call_1", "type": "function", "function": {
+                               "name": "send_sms",
+                               "arguments": '{"text":"this contains test_sensitive word"}'}}]}]},
+                   token=tok2)
+    check("banned word in tool_calls blocked", s == 400 and chat.get("error", {}).get("code") == "request_rejected")
+    # Confidential tool_calls arguments classify the request: BYOA refused.
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-pro", "messages": [
+                       {"role": "user", "content": "帮我查项目"},
+                       {"role": "assistant", "tool_calls": [
+                           {"id": "call_1", "type": "function", "function": {
+                               "name": "project_status",
+                               "arguments": '{"project":"XH-200"}'}}]}]},
+                   token=tok3)
+    check("confidential tool_calls blocked for BYOA", s == 403 and chat.get("error", {}).get("code") == "data_level_forbidden")
+
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
 
