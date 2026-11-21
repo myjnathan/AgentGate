@@ -118,6 +118,10 @@ type APIToken struct {
 	CreatedAt  time.Time `json:"created_at"`
 	MonthlyCap int64     `json:"monthly_cap_tokens"` // 0 = unlimited
 	UsedTokens int64     `json:"used_tokens"`
+	// RPM/TPM are the per-minute rate limits for this token
+	// (backlog F3). 0 = fall back to the tier default.
+	RPM int `json:"rpm_limit"`
+	TPM int `json:"tpm_limit"`
 }
 
 type DeviceCode struct {
