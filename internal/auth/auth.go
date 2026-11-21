@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -16,6 +17,12 @@ import (
 
 	"github.com/myjnathan/agentgate/internal/store"
 )
+
+// ErrAccountLocked is returned when the account is inside its
+// lockout window; callers use errors.Is to distinguish a lockout
+// from a plain bad password (the API audits it as account_locked,
+// which is an alertable event — backlog F5).
+var ErrAccountLocked = errors.New("account temporarily locked")
 
 const pbkdf2Iter = 210_000
 
@@ -88,7 +95,7 @@ func (s *Service) Login(username, password string) (*store.User, string, error) 
 		}
 	}
 	if len(fails) >= 20 {
-		return nil, "", fmt.Errorf("account temporarily locked")
+		return nil, "", ErrAccountLocked
 	}
 	var user *store.User
 	s.st.Read(func(st *store.State) {
