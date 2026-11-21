@@ -40,6 +40,18 @@ type Log struct {
 	lastHash      string
 	retentionDays int     // configured retention policy (days); 0 = unset
 	events        []Event // in-memory tail for queries (all events, night-one scale)
+	notify        func(Event)
+}
+
+// SetNotifyHook registers a callback invoked after every appended
+// event (outside the log lock). AgentGate wires the alert dispatcher
+// here (backlog F5): the hook only reads the event, and alertable
+// kinds exclude Kind "alert", so delivery reports cannot re-trigger
+// delivery.
+func (l *Log) SetNotifyHook(fn func(Event)) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.notify = fn
 }
 
 // chainHeadHash returns the hash the next appended event must link
@@ -89,9 +101,10 @@ func hashEvent(ev Event) string {
 }
 
 // Append records an event and returns it with its hash assigned.
+// The notify hook (if any) runs after the lock is released, so a hook
+// that appends its own event cannot deadlock.
 func (l *Log) Append(ev Event) Event {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	l.seq++
 	ev.Seq = l.seq
 	ev.Time = time.Now().UTC()
@@ -99,10 +112,15 @@ func (l *Log) Append(ev Event) Event {
 	ev.Hash = hashEvent(ev)
 	l.lastHash = ev.Hash
 	l.events = append(l.events, ev)
+	notify := l.notify
 	if f, err := os.OpenFile(l.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
 		b, _ := json.Marshal(ev)
 		_, _ = f.Write(append(b, '\n'))
 		_ = f.Close()
+	}
+	l.mu.Unlock()
+	if notify != nil {
+		notify(ev)
 	}
 	return ev
 }
