@@ -258,6 +258,14 @@
       <div class="card"><h3 data-i18n="channelList">渠道列表</h3>
         <table id="channels"><thead><tr><th data-i18n="name">名称</th><th data-i18n="models">模型</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="trustType">信任类型</th><th>Key</th><th data-i18n="health">健康</th></tr></thead><tbody></tbody></table>
       </div>
+      <div class="card"><h3 data-i18n="manageKeys">管理渠道密钥</h3>
+        <div class="formGrid">
+          <div><label class="f" data-i18n="channel">渠道</label><select id="keyCh"></select></div>
+          <div class="wide"><label class="f">API Key</label><input id="keyNew" type="password" placeholder="sk-…"></div>
+        </div>
+        <div class="row"><button class="btn" onclick="addKey()" data-i18n="addKey">添加密钥</button><span id="keyMsg" class="msg"></span></div>
+        <p class="hint" data-i18n="keysHint">同一渠道可配多把上游密钥，网关按轮询分摊调用；上游返回 401 的密钥会自动摘除并告警，管理员也可在此停用 / 恢复 / 删除。密钥只显示后四位，永不回显。</p>
+      </div>
     </section>
 
     <!-- kb folders -->
@@ -403,6 +411,8 @@ const I18N = {
     tokensHint:"等级默认：受管级 60 RPM / 100000 TPM，自带级 20 RPM / 20000 TPM。修改后即时生效并写入审计。",
     channelsTitle:"模型渠道",channelsDesc:"上游模型服务与其可承载的最高数据等级、信任类型；网关按分级策略选路，密钥只加密存储、永不回显。",addChannel:"添加渠道",channelList:"渠道列表",
     name:"名称",models:"模型",maxLevel:"最高数据等级",trustType:"信任类型",health:"健康",addBtn:"添加",
+    manageKeys:"管理渠道密钥",addKey:"添加密钥",keyDisabled:"已停用",enable:"启用",disable:"停用",
+    keysHint:"同一渠道可配多把上游密钥，网关按轮询分摊调用；上游返回 401 的密钥会自动摘除并告警，管理员也可在此停用 / 恢复 / 删除。密钥只显示后四位，永不回显。",
     foldersTitle:"文件夹知识库",foldersDesc:"指定共享文件夹即自动索引，按文件夹映射密级；Agent 按「目录 → 章节树 → 原文」渐进式取用。",addFolder:"添加文件夹",folderList:"已索引文件夹",path:"路径",docs:"文档",lastScan:"最近扫描",
     foldersHint:"支持 .md / .txt / .docx / .pdf，增量更新只索引变化文件；引用精确到文件 + 章节 + 页码。摘要为抽取式（章节首句），不经过模型，不产生泄漏通道。",
     skillsTitle:"技能（Skills）",skillsDesc:"SKILL.md 技能包的提交、审核与发布；发布后员工的 Agent 可按部门范围取用。",submitSkill:"提交技能",skillList:"技能列表",version:"版本",status:"状态",scope:"范围",updated:"更新",submitBtn:"提交审核",
@@ -433,6 +443,8 @@ const I18N = {
     tokensHint:"Tier defaults: managed 60 RPM / 100000 TPM, BYOA 20 RPM / 20000 TPM. Changes apply immediately and are audited.",
     channelsTitle:"Model channels",channelsDesc:"Upstream model services with the max data level and trust type they may carry; the gateway routes by classification policy. Keys are encrypted at rest and never echoed.",addChannel:"Add channel",channelList:"Channels",
     name:"Name",models:"Models",maxLevel:"Max data level",trustType:"Trust type",health:"Health",addBtn:"Add",
+    manageKeys:"Manage channel keys",addKey:"Add key",keyDisabled:"disabled",enable:"Enable",disable:"Disable",
+    keysHint:"A channel can hold several upstream keys; the gateway round-robins calls across them. A key the upstream rejects with 401 is auto-removed and alerted; admins can also disable, re-enable or delete keys here. Only the last 4 characters are ever shown.",
     foldersTitle:"Folder knowledge base",foldersDesc:"Register a shared folder and it is indexed automatically, at the folder's data level; agents drill down catalog → section tree → section text.",addFolder:"Add folder",folderList:"Indexed folders",path:"Path",docs:"Docs",lastScan:"Last scan",
     foldersHint:"Supports .md / .txt / .docx / .pdf; rescans only re-index changed files. Citations are precise to file + section + pages. Summaries are extractive (the section's opening sentence), never produced by a model, so they open no leak channel.",
     skillsTitle:"Skills",skillsDesc:"Submit, review and publish SKILL.md packages; published skills are available to agents within their department scope.",submitSkill:"Submit a skill",skillList:"Skills",version:"Version",status:"Status",scope:"Scope",updated:"Updated",submitBtn:"Submit for review",
@@ -636,8 +648,30 @@ async function saveToken(id){
 /* ---------- channels ---------- */
 async function loadChannels(){
   try{ const d = await api("/api/channels");
-    document.querySelector("#channels tbody").innerHTML = (d.channels||[]).map(c=>
-      `<tr><td style="font-weight:600;color:var(--ink)">${esc(c.name)}</td><td>${esc((c.models||[]).join(", "))}</td><td>${pill(c.max_data_level)}</td><td>${pill(c.trust_type||"")}</td><td class="muted">${esc(c.key_masked||"")}</td><td>${c.health?`<span class="pill ${esc(c.health)}">${esc(c.health)}</span>`:""}${c.consecutive_failures?(" ("+c.consecutive_failures+")"):""}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">${T("empty")}</td></tr>`;
+    document.querySelector("#channels tbody").innerHTML = (d.channels||[]).map(c=>{
+      const keys = (c.keys||[]).map(k=>
+        `<div style="white-space:nowrap"><span class="muted">${esc(k.masked||"")}</span> ${k.disabled?`<span class="pill bad">${T("keyDisabled")}</span>`:""}`+
+        ` <button class="btn ghost small" onclick="keyToggle('${c.id}',${k.index},${k.disabled})">${k.disabled?T("enable"):T("disable")}</button>`+
+        ` <button class="btn ghost small danger" onclick="keyDelete('${c.id}',${k.index})">✕</button></div>`).join("") || `<span class="muted">${esc(c.key_masked||"")}</span>`;
+      return `<tr><td style="font-weight:600;color:var(--ink)">${esc(c.name)}</td><td>${esc((c.models||[]).join(", "))}</td><td>${pill(c.max_data_level)}</td><td>${pill(c.trust_type||"")}</td><td>${keys}</td><td>${c.health?`<span class="pill ${esc(c.health)}">${esc(c.health)}</span>`:""}${c.consecutive_failures?(" ("+c.consecutive_failures+")"):""}</td></tr>`;}).join("") || `<tr><td colspan="6" class="empty">${T("empty")}</td></tr>`;
+    const sel = document.getElementById("keyCh"), cur = sel.value;
+    sel.innerHTML = (d.channels||[]).map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
+    if(cur) sel.value = cur;
+  }catch(e){ toast(e.message, false); }
+}
+async function addKey(){
+  try{ await api("/api/channels/"+keyCh.value+"/keys",{method:"POST",body:JSON.stringify({api_key:keyNew.value})});
+    setMsg("keyMsg", T("saved")); keyNew.value=""; loadChannels();
+  }catch(e){ setMsg("keyMsg", e.message, false); }
+}
+async function keyToggle(id, idx, disabled){
+  try{ await api(`/api/channels/${id}/keys/${idx}/${disabled?"enable":"disable"}`,{method:"POST",body:"{}"});
+    toast(T("saved")); loadChannels();
+  }catch(e){ toast(e.message, false); }
+}
+async function keyDelete(id, idx){
+  try{ await api(`/api/channels/${id}/keys/${idx}`,{method:"DELETE"});
+    toast(T("saved")); loadChannels();
   }catch(e){ toast(e.message, false); }
 }
 async function addChannel(){

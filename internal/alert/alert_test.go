@@ -21,6 +21,7 @@ func TestFromEventClassification(t *testing.T) {
 		{"mcp tool denial alerts", audit.Event{Kind: "violation", Action: "tool_call_denied", Decision: "block"}, true, "critical"},
 		{"violation warn does not alert", audit.Event{Kind: "violation", Action: "model_call_blocked", Decision: "warn"}, false, ""},
 		{"channel cooldown alerts", audit.Event{Kind: "channel", Action: "channel_cooldown"}, true, "warning"},
+		{"channel key disabled alerts", audit.Event{Kind: "channel", Action: "channel_key_disabled"}, true, "warning"},
 		{"channel fallback does not alert", audit.Event{Kind: "channel", Action: "channel_fallback"}, false, ""},
 		{"account lockout alerts", audit.Event{Kind: "auth", Action: "account_locked", Decision: "block"}, true, "critical"},
 		{"plain login failure does not alert", audit.Event{Kind: "auth", Action: "login_failed", Decision: "block"}, false, ""},

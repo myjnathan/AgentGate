@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/myjnathan/agentgate/internal/audit"
@@ -65,12 +66,17 @@ type Gateway struct {
 	client  *http.Client
 	limiter *ratelimit.Limiter
 	cache   *cache.Cache
+	// keyMu guards keyNext; every method that also touches the store
+	// takes keyMu first and the store lock second, so the lock order
+	// is always keyMu -> store and can never invert.
+	keyMu   sync.Mutex
+	keyNext map[string]int // channel ID -> next key index to try
 }
 
 func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log, pol Policy) *Gateway {
 	return &Gateway{st: st, auth: au, box: box, audit: al, policy: pol,
 		client: &http.Client{Timeout: 10 * time.Minute}, limiter: ratelimit.New(),
-		cache: cache.New(pol.CacheTTL, 0)}
+		cache: cache.New(pol.CacheTTL, 0), keyNext: map[string]int{}}
 }
 
 // Cache exposes the exact-match response cache (F11) so the server
@@ -570,47 +576,96 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	var resp *http.Response
 	var channel *store.Channel
 	fallbackFrom := ""
+	// noEnabledKey tracks whether every candidate channel was skipped
+	// because all of its keys are disabled — that deserves an explicit
+	// error (add a key or re-enable one), not a generic 502.
+	noEnabledKey := false
 	for i, ch := range chain {
-		apiKey, err := g.box.Decrypt(ch.APIKeyEnc)
-		if err != nil {
-			continue // misconfigured channel key: never receives the request
-		}
-		upURL := strings.TrimSuffix(ch.BaseURL, "/") + "/chat/completions"
-		upReq, err := http.NewRequestWithContext(context.WithoutCancel(r.Context()), http.MethodPost, upURL, bytes.NewReader(body))
-		if err != nil {
-			writeErr(w, http.StatusBadGateway, "bad_gateway", "cannot build upstream request")
-			return
-		}
-		upReq.Header.Set("Content-Type", "application/json")
-		upReq.Header.Set("Authorization", "Bearer "+apiKey)
-		if req.Stream {
-			upReq.Header.Set("Accept", "text/event-stream")
-		}
-		r2, err := g.client.Do(upReq)
-		if err != nil {
-			g.noteFailure(ch)
-			if i+1 < len(chain) {
-				g.auditFallback(user, tok, req.Model, level, ch, chain[i+1], "upstream_unavailable")
-			}
+		// Try this channel's keys in rotation order (F12): a 401 means
+		// this key is dead, not the channel — disable the key and retry
+		// the same in-flight request with the next key. Other failures
+		// keep the existing F1 semantics (channel-level failover):
+		// 429/5xx is the channel or upstream being unwell, not one key.
+		enabled := ch.EnabledKeyCount()
+		if enabled == 0 {
+			// Every key on this channel is disabled (upstream rejected
+			// them, or an admin did): the channel cannot serve, but it
+			// is not a transport failure — report it explicitly.
+			noEnabledKey = true
 			continue
 		}
-		if retryableStatus(r2.StatusCode) {
-			g.noteFailure(ch)
-			if i+1 < len(chain) {
-				g.auditFallback(user, tok, req.Model, level, ch, chain[i+1], fmt.Sprintf("upstream_%d", r2.StatusCode))
+		tried := 0
+		for tried < enabled {
+			keyIdx, enc, ok := g.nextKey(ch)
+			if !ok {
+				noEnabledKey = true
+				break
 			}
-			r2.Body.Close()
-			continue
+			tried++
+			apiKey, err := g.box.Decrypt(enc)
+			if err != nil {
+				continue // undecryptable key: try the next one
+			}
+			upURL := strings.TrimSuffix(ch.BaseURL, "/") + "/chat/completions"
+			upReq, err := http.NewRequestWithContext(context.WithoutCancel(r.Context()), http.MethodPost, upURL, bytes.NewReader(body))
+			if err != nil {
+				writeErr(w, http.StatusBadGateway, "bad_gateway", "cannot build upstream request")
+				return
+			}
+			upReq.Header.Set("Content-Type", "application/json")
+			upReq.Header.Set("Authorization", "Bearer "+apiKey)
+			if req.Stream {
+				upReq.Header.Set("Accept", "text/event-stream")
+			}
+			r2, err := g.client.Do(upReq)
+			if err != nil {
+				g.noteFailure(ch)
+				if i+1 < len(chain) {
+					g.auditFallback(user, tok, req.Model, level, ch, chain[i+1], "upstream_unavailable")
+				}
+				break
+			}
+			if r2.StatusCode == http.StatusUnauthorized {
+				// The key is invalid or revoked: remove just this key
+				// (F12) and retry the same request with the next one.
+				// When it was the last enabled key, return the
+				// upstream 401 itself — the caller sees the real
+				// auth failure, not a rewritten 502.
+				g.disableKey(ch, keyIdx, "upstream_401")
+				if tried < enabled {
+					r2.Body.Close()
+					continue
+				}
+				resp = r2
+				channel = ch
+				break
+			}
+			if retryableStatus(r2.StatusCode) {
+				g.noteFailure(ch)
+				if i+1 < len(chain) {
+					g.auditFallback(user, tok, req.Model, level, ch, chain[i+1], fmt.Sprintf("upstream_%d", r2.StatusCode))
+				}
+				r2.Body.Close()
+				break
+			}
+			resp = r2
+			channel = ch
+			if i > 0 {
+				fallbackFrom = chain[0].Name
+			}
+			g.recordSuccess(ch.ID)
+			break
 		}
-		resp = r2
-		channel = ch
-		if i > 0 {
-			fallbackFrom = chain[0].Name
+		if resp != nil {
+			break
 		}
-		g.recordSuccess(ch.ID)
-		break
 	}
 	if resp == nil {
+		if noEnabledKey {
+			writeErr(w, http.StatusBadGateway, "channel_no_enabled_key",
+				"all API keys for the model channel are disabled (the upstream rejected them); add a new key or re-enable one in the console")
+			return
+		}
 		writeErr(w, http.StatusBadGateway, "upstream_unavailable", "upstream model service unavailable")
 		return
 	}

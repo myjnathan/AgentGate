@@ -40,6 +40,15 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 	if err != nil {
 		return err
 	}
+	// F12: the demo cloud channel carries a second key so key rotation
+	// is observable out of the box (the mock upstream accepts any key).
+	keyEnc2, err := box.Encrypt("mock-upstream-key-2")
+	if err != nil {
+		return err
+	}
+	mkKey := func(enc, plain string) store.ChannelKey {
+		return store.ChannelKey{Enc: enc, Masked: secretbox.Mask(plain)}
+	}
 	st.WithLock(func(s *store.State) {
 		s.Users[admin.ID] = admin
 		s.Users[li.ID] = li
@@ -48,7 +57,7 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 		// Trust: signed cloud (zero-retention / no-training contract).
 		s.Channels["ch_cloud"] = &store.Channel{
 			ID: "ch_cloud", Name: "cloud-contract (mock)", BaseURL: selfBaseURL + "/mock/v1",
-			APIKeyEnc: keyEnc, KeyMasked: secretbox.Mask("mock-upstream-key"),
+			Keys:   []store.ChannelKey{mkKey(keyEnc, "mock-upstream-key"), mkKey(keyEnc2, "mock-upstream-key-2")},
 			Models: []string{"mock-eco", "mock-pro"}, MaxDataLevel: store.LevelInternal, Weight: 1,
 			TrustType: store.TrustSignedCloud,
 		}
@@ -57,7 +66,7 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 		// gateway first — the cloud only ever sees placeholders.
 		s.Channels["ch_cloud_conf"] = &store.Channel{
 			ID: "ch_cloud_conf", Name: "cloud-contract-desensitized (mock)", BaseURL: selfBaseURL + "/mock/v1",
-			APIKeyEnc: keyEnc, KeyMasked: secretbox.Mask("mock-upstream-key"),
+			Keys:   []store.ChannelKey{mkKey(keyEnc, "mock-upstream-key")},
 			Models: []string{"mock-pro"}, MaxDataLevel: store.LevelConfidential, Weight: 1,
 			TrustType: store.TrustSignedCloud,
 		}
@@ -66,7 +75,7 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 		// contracted deployment instead of a shared public cloud.
 		s.Channels["ch_private"] = &store.Channel{
 			ID: "ch_private", Name: "private-onprem (mock)", BaseURL: selfBaseURL + "/mock/v1",
-			APIKeyEnc: keyEnc, KeyMasked: secretbox.Mask("mock-upstream-key"),
+			Keys:   []store.ChannelKey{mkKey(keyEnc, "mock-upstream-key")},
 			Models: []string{"mock-pro"}, MaxDataLevel: store.LevelSecret, Weight: 1,
 			TrustType: store.TrustDedicatedCloud,
 		}
@@ -74,7 +83,7 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 		// receive top-secret data — the data never leaves the company.
 		s.Channels["ch_local"] = &store.Channel{
 			ID: "ch_local", Name: "local-model (mock)", BaseURL: selfBaseURL + "/mock/v1",
-			APIKeyEnc: keyEnc, KeyMasked: secretbox.Mask("mock-upstream-key"),
+			Keys:   []store.ChannelKey{mkKey(keyEnc, "mock-upstream-key")},
 			Models: []string{"mock-pro"}, MaxDataLevel: store.LevelSecret, Weight: 1,
 			TrustType: store.TrustLocalModel,
 		}

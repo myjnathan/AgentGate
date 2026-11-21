@@ -430,6 +430,48 @@ def main():
                  "models": ["mock-eco"]}, token=sess)
     check("channel create forbidden for employee", s == 403)
 
+    # F12: channel multi-key rotation — add / disable / re-enable /
+    # delete keys; only masked forms are ever returned.
+    s, mk = call("/api/channels",
+                 {"name": "multi-key (smoke)", "base_url": BASE + "/mock/v1",
+                  "api_key": "smoke-key-one", "api_keys": ["smoke-key-two", "smoke-key-three"],
+                  "models": ["mock-eco"], "max_data_level": "internal"}, token=admin_tok)
+    check("multi-key channel created with 3 keys", s == 201 and mk.get("key_count") == 3)
+    mk_id = mk.get("id", "")
+    s, chans = call("/api/channels", token=admin_tok, method="GET")
+    mk_ch = [c for c in chans.get("channels", []) if c.get("id") == mk_id]
+    check("channel lists 3 masked keys, none disabled",
+          s == 200 and len(mk_ch) == 1 and len(mk_ch[0].get("keys", [])) == 3
+          and all(k.get("masked", "").startswith("****") and not k.get("disabled") for k in mk_ch[0]["keys"])
+          and "smoke-key-one" not in json.dumps(chans))
+    s, added = call("/api/channels/" + mk_id + "/keys", {"api_key": "smoke-key-four"}, token=admin_tok)
+    check("fourth key added", s == 201 and added.get("index") == 3 and added.get("key_masked") == "****four")
+    s, _ = call("/api/channels/" + mk_id + "/keys", {"api_key": "smoke-key-two"}, token=admin_tok)
+    check("duplicate key rejected", s == 400)
+    s, _ = call("/api/channels/" + mk_id + "/keys/3/disable", {"reason": "smoke test"}, token=admin_tok)
+    s, chans = call("/api/channels", token=admin_tok, method="GET")
+    mk_ch = [c for c in chans.get("channels", []) if c.get("id") == mk_id]
+    check("key disabled with reason",
+          len(mk_ch) == 1 and mk_ch[0]["keys"][3].get("disabled") is True
+          and mk_ch[0]["keys"][3].get("disabled_reason") == "smoke test")
+    s, _ = call("/api/channels/" + mk_id + "/keys/3/enable", {}, token=admin_tok)
+    s, chans = call("/api/channels", token=admin_tok, method="GET")
+    mk_ch = [c for c in chans.get("channels", []) if c.get("id") == mk_id]
+    check("key re-enabled",
+          len(mk_ch) == 1 and mk_ch[0]["keys"][3].get("disabled") is False)
+    s, _ = call("/api/channels/" + mk_id + "/keys/3", token=admin_tok, method="DELETE")
+    s, chans = call("/api/channels", token=admin_tok, method="GET")
+    mk_ch = [c for c in chans.get("channels", []) if c.get("id") == mk_id]
+    check("key deleted, 3 keys remain",
+          len(mk_ch) == 1 and len(mk_ch[0].get("keys", [])) == 3)
+    s, _ = call("/api/channels/" + mk_id + "/keys", {"api_key": "smoke-key-x"}, token=sess)
+    check("employee cannot add channel key", s == 403)
+    s, single = call("/api/channels",
+                     {"name": "single-key (smoke)", "base_url": BASE + "/mock/v1",
+                      "api_key": "only-smoke-key", "models": ["mock-eco"]}, token=admin_tok)
+    s, _ = call("/api/channels/" + single.get("id", "") + "/keys/0", token=admin_tok, method="DELETE")
+    check("last key cannot be deleted", s == 400)
+
     # F8: prompt templates — versioned, reviewed, published; agents
     # only ever receive the published version via prompts/get.
     s, plist = call("/api/prompts", token=admin_tok, method="GET")
