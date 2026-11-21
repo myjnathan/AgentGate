@@ -18,11 +18,21 @@ AgentGate 由一个定时 Loop 持续推进开发（Nathan 于 2026-11-21 授权
 4. **验证**：`gofmt`、`go vet ./...`、`go test ./...` 全绿；涉及端到端流程时补跑演示模式冒烟。
 5. **记录**：更新 backlog 条目状态（doing→done 注明日期）；在 `docs/DEVLOG.md` 追加一条
    （日期、做了什么、关键决策、测试结果、提交哈希）；用户可见变化同步更新 README。
-6. **提交与推送**：本地 `git commit`（信息格式 `feat/fix/test/docs(scope): 摘要`）；
-   再把本轮变更的文件逐个用 GitHub 连接器的 `create_or_update_file` 同步到
-   `myjnathan/AgentGate` main 分支（更新已有文件需带该文件当前远端 sha，先用
-   `get_file_contents` 取得；注意：`push-files` 对非空仓库会报 403，不要用它做增量推送），
-   并读回验证。**测试不绿绝不推送**；推送失败记录在 DEVLOG 并在下一轮优先处理。
+6. **提交与推送（分支 + PR，2026-11-21 Nathan 指示改版：本地完善后再推送，main 只收完整成品，禁止再逐文件直推 main）**：
+   本地 `git commit`（信息格式 `feat/fix/test/docs(scope): 摘要`）。本地全部开发与验证
+   完成并提交之后才允许开始推送；工作区不干净或测试不绿，绝不推送。推送内容只取已提交快照：
+   用 `git worktree` 把目标 commit 固定到临时目录后从那里读文件，禁止读正在变动的工作区。
+   a. 用 `create_branch` 在远端建本轮分支 `loop/<条目小写>`（如 `loop/f6`），基点为远端 main
+      最新提交；若该分支已存在（上一轮中断），复用它续传，不要新开。
+   b. 用 contents API（`create_or_update_file`，branch 参数填该分支）逐文件同步本轮全部变更
+      文件到该分支；`push-files` 禁用（对非空仓库建 tree 会 403）。同步后逐文件用
+      `get_file_contents` 读回并与本地快照做哈希核对，全部一致才算同步完成；不一致或中途
+      中断就停在分支上，main 不受影响，下一轮在同一分支续传。
+   c. 同步完成后用 `create_pull_request` 开 PR（base=main，head=该分支），核对 PR 的变更文件
+      清单与本轮清单一致后用 `merge_pull_request` 合并；main 只产生一个合并提交，CI 只对
+      完整成品跑一次。合并后读回 main 上一两个关键文件验证，并把远端 main 提交号记入 DEVLOG 与本轮汇报。
+   d. 若开 PR 或合并失败（冲突、权限等），停下并在本轮汇报中说明，不要回退到逐文件直推 main 的老办法。
+   e. 推送失败记录在 DEVLOG 并在下一轮优先处理。**测试不绿绝不推送**。
 7. **汇报**：向主对话发一条简短进展（做了什么、测试结果、下一轮计划）。
    失败或阻塞时说明原因与需要的协助；无实质进展不发空汇报。
 
