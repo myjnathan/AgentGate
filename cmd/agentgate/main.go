@@ -27,10 +27,12 @@ import (
 	"github.com/myjnathan/agentgate/internal/api"
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
+	"github.com/myjnathan/agentgate/internal/federation"
 	"github.com/myjnathan/agentgate/internal/gateway"
 	"github.com/myjnathan/agentgate/internal/guard"
 	"github.com/myjnathan/agentgate/internal/mcp"
 	"github.com/myjnathan/agentgate/internal/mockllm"
+	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/seed"
 	"github.com/myjnathan/agentgate/internal/store"
@@ -116,8 +118,12 @@ func main() {
 	defer dispatcher.Stop()
 	al.SetNotifyHook(dispatcher.Notify)
 
-	mcpSrv := mcp.New(st, au, al, det)
+	fed := federation.New(st, box)
+	restAd := restadapter.New(st, box)
+	mcpSrv := mcp.New(st, au, al, det, fed, restAd)
 	rest := api.New(st, au, box, al)
+	rest.SetFederation(fed)
+	rest.SetRESTAdapter(restAd)
 	rest.SetAlertDispatcher(dispatcher)
 
 	mux := http.NewServeMux()
