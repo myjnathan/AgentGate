@@ -24,15 +24,49 @@
   管理台渠道表新增健康列；7 个新测试覆盖 5xx 转移、冷却进入/到期恢复、
   全渠道冷却 503、拒绝向高密级渠道升级、机密数据不降级、4xx 不重试不计数、成功清零。
 
-### F2 用量与成本统计 `todo`
+### F2 用量与成本统计 `done`（2026-11-21）
 - 来源：Portkey observability（按 key/用户/模型看 latency、tokens、cost）；LiteLLM spend tracking。
 - 适配：统计维度加**部门、Agent 类型、数据密级、处置（放行/脱敏/拦截）**——这是企业安全复盘要看的口径，通用网关没有。
 - 验收：`GET /api/stats` 返回按用户/部门/渠道/模型聚合的调用数与 tokens；管理台新增统计视图；数字与审计日志可对账。
+- 借鉴点（LiteLLM 官方文档 docs.litellm.ai/docs/proxy/cost_tracking；Portkey Analytics 文档 portkey.ai/docs/product/observability/analytics，2026-11-21 查阅）：
+  LiteLLM 按 key/user/team/model 记录 spend 日志并支持按用户与时间范围查询；
+  Portkey Analytics 按请求/用户/错误/成本多维度聚合，任意维度分组出调用数、成本、平均 tokens 与成功率，
+  并支持时间范围过滤。我们照此实现，但统计口径改为**直接聚合哈希链审计日志**（不另建统计表，
+  数字与审计天然对账），维度换成企业口径（部门/Agent 类型/数据密级/处置），被拦截的调用
+  计入调用数与 blocked（tokens 为 0，相当于 Portkey 的错误率视角）；金额暂不计入——
+  渠道尚未配置单价，计价与预算留给 F13。
+- 实现：`audit.Log.All()` 快照；`internal/api/stats.go`（`GET /api/stats`，admin/security 可见，
+  `since`/`until` RFC3339 半开区间过滤，非法时间返回 400）；聚合维度 by_user/by_department/
+  by_channel/by_model/by_agent_type/by_data_level/by_decision，桶内含 calls/tokens/blocked，
+  按调用数降序、key 升序；管理台新增用量统计卡片（总调用/tokens/拦截 + 按部门/模型/渠道表 + 处置汇总，
+  中英双语）；冒烟新增 2 项断言（统计与审计对账、员工 403）。
+- 测试：纯聚合测试（维度、拦截、范围外事件、半开时间窗口、空输入）+ HTTP 端点测试
+  （鉴权 401/403、非法时间 400、未来窗口 0 调用），`gofmt`/`go vet`/`go test ./...` 全绿，
+  `make smoke` 15 项断言 0 失败。
 
-### F3 令牌级限流（RPM/TPM） `todo`
+### F3 令牌级限流（RPM/TPM） `done`（2026-11-21）
 - 来源：LiteLLM per-key rate limit、Kong AI Gateway 限流插件。
 - 适配：限流按令牌配置，超限返回 429 并审计；受管级默认更宽松、自带级更严。
 - 验收：配置 RPM=5 后第 6 次/分钟请求被拒；窗口滑动正确；测试覆盖。
+- 借鉴点（LiteLLM 官方文档 docs.litellm.ai/docs/proxy/dynamic_rate_limit，2026-11-21 查阅）：
+  每个虚拟 key 可配 `rpm_limit`/`tpm_limit`，在 `/key/generate` 时设定；超限返回 429
+  throttling_error；tokens 在响应完成后才记入计数器——已在途的请求不会因刚耗尽的
+  预算被拦，限流在已记录用量达到 TPM 后的下一请求才触发；窗口为 60 秒滚动。
+  我们照此实现：60 秒滑动窗口、429 + `Retry-After`、tokens 响应后记账；差异是
+  限流键为 AgentGate 自有令牌 ID、限流值可按令牌单独改（`PATCH /api/tokens/{id}`），
+  未配的令牌走等级默认（受管级 60 RPM / 100000 TPM，自带级 20 RPM / 20000 TPM），
+  且限流发生在鉴权后、防护管线前——被防护拦截的调用同样计 RPM（已占用网关处理）。
+- 实现：新包 `internal/ratelimit`（60s 滑动窗口，RPM 计请求、TPM 计响应后上报的 tokens，
+  0 = 不限该维）；`store.APIToken` 增加 `rpm_limit`/`tpm_limit`（0 = 走等级默认）；
+  网关在鉴权后立即检查，超限 429 `rate_limit_exceeded` 并写 `rate_limit` 审计事件
+  （不含请求原文，Kind 为 rate_limit 故不计入 F2 用量统计）；`GET /api/tokens` +
+  `PATCH /api/tokens/{id}`（仅 admin/security，不暴露令牌哈希）；管理台新增令牌限流卡片
+  （中英双语，可改 RPM/TPM）；冒烟新增 2 项断言（RPM 配置生效、第 6 次调用 429）。
+- 测试：ratelimit 单元测试（RPM 边界、窗口滑动、TPM 响应后记账、0 不限、Retry-After 递减、
+  200 并发恰好放行 100）+ 网关集成测试（RPM 429 + Retry-After + 审计事件、TPM 429、
+  限流按令牌隔离、等级默认 BYOA 20 RPM）+ API 端点测试（列表/修改/部分修改/负值 400/
+  未知令牌 404/员工 403、不暴露哈希）；`gofmt`/`go vet`/`go test ./...` 全绿，
+  `make smoke` 17 项断言 0 失败。
 
 ### F4 审计导出与合规归档 `todo`
 - 来源：幻城网安 new-api 分叉的日志合规归档（热存 + NDJSON 压缩归档 + 保留期）；LiteLLM Enterprise 审计保留策略。
