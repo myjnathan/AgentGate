@@ -80,6 +80,9 @@ func FromEvent(ev audit.Event) (Alert, bool) {
 	case ev.Kind == "channel" && ev.Action == "channel_cooldown":
 		a.Severity = "warning"
 		a.Title = "模型渠道进入熔断冷却"
+	case ev.Kind == "channel" && ev.Action == "channel_key_disabled":
+		a.Severity = "warning"
+		a.Title = "渠道密钥失效已自动摘除"
 	case ev.Kind == "auth" && ev.Action == "account_locked":
 		a.Severity = "critical"
 		a.Title = "账号因多次登录失败被锁定"

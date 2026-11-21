@@ -154,7 +154,7 @@ func TestResponseWithSensitiveContentNeverCached(t *testing.T) {
 	e.st.WithLock(func(s *store.State) {
 		s.Channels["ch_pii_test"] = &store.Channel{
 			ID: "ch_pii_test", Name: "pii-upstream (test)", BaseURL: piiUpstream.URL,
-			APIKeyEnc: enc, Models: []string{"mock-eco"}, MaxDataLevel: store.LevelPublic, Weight: 1,
+			Keys: []store.ChannelKey{{Enc: enc, Masked: "****-key"}}, Models: []string{"mock-eco"}, MaxDataLevel: store.LevelPublic, Weight: 1,
 		}
 	})
 	payload := cleanPayload("请问客服电话是多少")

@@ -2,6 +2,16 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-21 · F12 渠道多 Key 与轮换
+- 本轮按常规规程选条目：12:26 特别指令（F17 + 蓝图修订稿）早已在 F17 轮执行完毕、执行后作废；P0、P1 全部 done，P2 按清单顺序取 F12（首个剩余 P2 条目）。远端 main 已含管理台重写（PR #9，HEAD 8f9dbdb8），无在途分支需续传。另：本轮前 Nathan 在主对话新增「复用优先」指示（2026-11-21 22:38）：能直接复制开源代码就复制、不要都自己写，项目稳定最重要；仅限 AGPL-3.0 兼容许可证、保留原版权声明、DEVLOG 记录来源——已同步进 development-loop.md（替换了旧的「只记设计、不复制」表述）。
+- 借鉴 QuantumNous/new-api 源码（AGPL-3.0，与本项目许可证兼容）`model/channel.go` 的 `GetNextEnabledKey`：单渠道多密钥 + 按索引的状态列表（缺失即启用）+ 轮询游标，每渠道一把锁、环形扫描第一把启用密钥、游标推进、全部禁用时显式报错（不静默回落失效 key）；LiteLLM 多部署路由（同一模型名多部署、各配 key 与 rpm/tpm）与通用轮换 runbook（先加新 key、验证、再删旧 key）为辅。本轮按新指示直接复用了 new-api 的选取算法形态（逐字复制不适用：其函数绑定自家 DB 模型与错误类型，改写为本仓库的 store 类型），来源与许可证记于 `internal/gateway/keys.go` 文件头注释。
+- 实现：`store.ChannelKey` + `Channel.Keys []ChannelKey`（`APIKeyEnc`/`KeyMasked` 单 key 字段退役；旧快照本就不持久化 key，故无需迁移）；`internal/gateway/keys.go`（`nextKey` 轮询 + `disableKey` 摘除审计，锁顺序 keyMu → store 锁）；网关转发循环改为渠道内 key 循环：401 摘除该 key、同请求换下一 key 重试，全部 key 都 401 时原样返回上游 401，全部停用时报明确的 `channel_no_enabled_key`；`alert.FromEvent` 新增 `channel_key_disabled`（warning，联动 F5）；管理 API（创建接受 `api_keys`、增/删/启停四个端点，仅 admin，密钥永不回显）；管理台渠道表逐 key 显示 + 「管理渠道密钥」卡片（中英双语）；演示种子 `ch_cloud` 带两把 key。
+- 关键决策：只做轮询、不做随机模式（可预测、易审计）；密钥逐把 AES-GCM 加密（不用 new-api 的换行拼接单字符串，避免新 key 含换行时切分错乱）；游标与停用状态为运行态（与 F1 冷却一致，重启后失效 key 重新启用、由网关再次向上游证明）；401 只摘除该 key（不像 new-api 那样把整条渠道标不可用），429/5xx 仍走 F1 的渠道级故障转移；删除 key 后其后 key 索引前移（位置索引语义，与 new-api 一致）；上限 10 把 key/渠道。
+- 测试：gateway 白盒 2 项 + 网关端到端 3 项（401 摘除 + 同请求重试、两 key 轮询 a/b/a、全 key 失效 401 与 `channel_no_enabled_key`）+ API 端点 1 项 + alert 分类 1 项 + 冒烟新增 9 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（gateway/api）全绿；`make smoke` 114 项断言 0 失败（基线 105 + 新增 9）。
+- 已知注意点：key 停用状态与轮询游标是运行态，重启后失效 key 会重新启用、由网关再次向上游证明；429 不触发 key 内轮换（限流仍走 F1 的渠道级故障转移）。
+- 推送：按分支 + PR 机制走 `loop/f12` 分支，见本轮汇报。
+- 另记（工具管道脱敏坑）：本轮写冒烟脚本时，`muse.edit` 的入参里 `token=alogin["session"]` 会被管道当作会话凭证替换为字面量 `<redacted>` 写进文件，导致 smoke.py 语法错误；改用已有的 `admin_tok` 变量（`alogin.get("session")`）绕过。后续轮次写脚本时避免在 edit 入参里直写 `...["session"]` 取值表达式，优先复用已有变量。
+
 ## 2026-11-21 · 管理台重写（WebUI overhaul，对标 dsh-ee）
 - 本轮选题：不在 backlog 清单内，是 Nathan 2026-11-21 亲自运行管理台后的直接指示——旧控制台与 dsh-ee 差距很大，「完全没有任何使用逻辑和可使用性」，颜色也差得远，要求重做。重写代码此前已在独立 worktree（`/tmp/ag-ui`，分支 `ui/overhaul`）完成并本地提交，本轮的阻塞项逐一解除：F18 与 F11 均已合并进远端 main、浏览器截图验证已回传（`~/workspace/ui-shots/` 7 张），故本轮收尾该在途工作并推送；下一轮恢复常规规程，取 P2 首项 F12（渠道多 Key 与轮换）。
 - 重写内容（单文件 `internal/webui/assets/index.html` 全量重写，+687/−327）：浅色主题（对标 dsh-ee 的 #f6f9fc 背景、白面、靛蓝主色）；左侧分组侧边栏（运营 / 接入与身份 / 模型网关 / 能力中心 / 系统）；总览仪表盘（KPI 卡：调用 / Token / 拦截 / 审计链状态 + 按部门与处置分布条 + 最近审计 + 快捷入口）；每模块独立视图、带标签的内嵌表单卡、Toast 反馈、空状态；密级/等级/状态/健康按 pill 分色；中英 i18n 保留。API 与后端零改动，全部卡片沿用既有端点；F11 响应缓存卡片已移植进用量统计视图（`dc79637` 移植前为 `ca61856`，rebase 后重排）。
@@ -9,7 +19,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 关键决策：重写只动 `index.html` 一个文件（后端与 API 零改动，风险面最小）；rebase 到含 F11 的 main（3e67bca）时 `index.html` 冲突，取重写版解决——F11 缓存卡片已在重写分支内移植（截图实测有数据），不丢功能；分支沿用 `ui/overhaul`，远端推送分支按 Loop 惯例取 `loop/ui-overhaul`。
 - 测试：`gofmt`（无 Go 改动）/`go vet`/`go test ./...` 全绿；`make smoke` 105 项断言 0 失败（与 F11 基线一致，无新增断言——纯前端重写）。
 - 已知小瑕疵（不阻塞推送，留待后续轮次）：技能列表中种子技能 `reimbursement-helper` 的「更新」列显示 `0001-01-01`（种子数据未填 UpdatedAt，零值直接渲染）；修法是种子补 UpdatedAt 或渲染时零值显示「—」，属后端/种子小修，不在本轮纯前端重写范围内。
-- 推送：按分支 + PR 机制走 `loop/ui-overhaul` 分支，见本轮汇报。
+- 推送结果：整包快照推送一次成功（push-files，2 个文件一次提交 ff55a137，逐文件哈希核对 2/2 一致，未触发 contents API 回退；推送前核对同步基点：两文件与远端 main 一致、无分歧）；PR #9 文件清单与本轮一致，已合并进远端 main，远端 HEAD 8f9dbdb8（合并提交），读回验证 index.html 已在 main 上（blob 与本地快照一致）。
 
 ## 2026-11-21 · F11 精确匹配响应缓存
 - 本轮按常规规程选条目：特别指令（F17 + 蓝图修订稿）已在 F17 轮执行完毕、执行后作废；P0、P1 全部 done，P2 按清单顺序取 F11（首个剩余 P2 条目）。远端 main 已含 F18（PR #7，HEAD 73137e7f），无在途分支需续传。

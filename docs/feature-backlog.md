@@ -243,9 +243,17 @@
 - 测试：cache 包 7 项（键确定性/渠道与密级区分/参数区分、存取往返与返回体拷贝隔离、过期、停用不查不存、FIFO 淘汰与刷新不驱逐、超大与非 200 拒绝入库、统计与清空不重置计数）+ 网关缓存测试 5 项（命中返回与首份响应逐字节相同且审计恰为 1 次上游调用 + 1 次 cache_hit、变 temperature 不命中、PII 请求两次均走上游且无缓存头、机密请求不查缓存、流式无缓存头、干净请求但响应含 PII 时两次均走上游）+ API 端点 1 项（状态默认值/员工 403/匿名 401/开关往返/缺字段 400/清空）；另修顺带发现的测试精度问题：故障转移测试的相同请求会被缓存截住不再触及上游，`setupFailover` 改为停用缓存（该套测试测的是上游故障计数，与缓存无关）；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 105 项断言 0 失败（新增 13 项 F11 断言）。
 - 已知注意点：同一密级的公开/内部请求若首选渠道相同会共享缓存条目——响应本身无差别（无敏感内容、无脱敏），共享安全；缓存键是整份请求体的精确匹配，键顺序或空白不同即不命中（与 Cloudflare/Portkey 的精确匹配语义一致）；故障转移链中首选渠道故障时按实际服务渠道入库，首选恢复前命中率略降（正确性不受影响）；语义缓存（近似匹配）需要向量库，与零依赖定位冲突，本轮不做。
 
-### F12 渠道多 Key 与轮换 `todo`
+### F12 渠道多 Key 与轮换 `done`（2026-11-21）
 - 来源：New API 渠道多 key 轮询、LiteLLM key rotation。
 - 适配：key 仍加密托管；轮换不中断在途请求；失效 key 自动摘除并告警（联动 F1/F5）。
+- 验收：同一渠道配两把 key 时调用轮流走两把 key；一把 key 被上游 401 后自动摘除、同一请求用另一把 key 成功、后续请求不再用失效 key；管理台可增/停用/恢复/删除 key。
+- 借鉴点（QuantumNous/new-api 源码 model/channel.go `GetNextEnabledKey`，AGPL-3.0，2026-11-21 查阅；LiteLLM 多部署路由，2026-11-21 查阅；通用密钥轮换 runbook）：
+  new-api 的多密钥形态是单渠道多密钥 + 按索引的状态列表（`MultiKeyStatusList` / `MultiKeyDisabledReason` / `MultiKeyDisabledTime`，缺失即启用）+ 轮询游标 `MultiKeyPollingIndex`；选取时每渠道一把锁、从游标出发环形扫描第一把启用密钥、游标推进到下一位、全部禁用时显式报错（早期曾静默回落到第一把密钥导致继续打失效 key，后修复为报错）；轮换的通用 runbook 是先加新 key、验证可用、再删旧 key（重叠窗口，零停机）。
+  LiteLLM 则是同一逻辑模型名下挂多个部署、各配自己的 key 与 rpm/tpm，按 `simple-shuffle` 或 `usage-based-routing-v2` 分摊，`allowed_fails`/`cooldown_time` 按部署隔离。
+  我们照 new-api 的选取算法实现，但做四处改动：① 只做轮询、不做随机模式（轮询可预测、易审计）；② 密钥逐把 AES-GCM 加密存储、每把自带停用状态，不用换行拼接单字符串（避免新 key 含换行时切分错乱）；③ 游标与停用状态为运行态（与 F1 冷却一致，重启后重新向上游证明）；④ 401 只摘除该 key（不像 new-api 那样把整条渠道标不可用），429/5xx 仍走 F1 的渠道级故障转移（那是渠道/上游的问题，不是某把 key 的问题）。
+- 实现：`store.ChannelKey`（加密值 `json:"-"` + 脱敏显示 + 停用状态/原因/时间）+ `Channel.Keys []ChannelKey`（`APIKeyEnc`/`KeyMasked` 单 key 字段随之退役，旧快照本就不持久化 key 故无需迁移）+ `store.MaxChannelKeys = 10`；`internal/gateway/keys.go`（`nextKey` 轮询：每渠道游标 + 环形扫描跳过停用 key + 无可用 key 显式失败；`disableKey` 写停用状态 + `channel_key_disabled` 审计事件；锁顺序固定为 keyMu → store 锁，race 检测通过）；网关转发循环改为渠道内 key 循环：401 时摘除该 key、同请求换下一 key 重试，全部 key 都 401 时原样返回上游 401；全部 key 停用时返回明确的 `channel_no_enabled_key`（502）；`alert.FromEvent` 新增 `channel_key_disabled`（warning，联动 F5）；管理 API `GET /api/channels` 返回每把 key 的脱敏值与状态、`POST /api/channels` 接受 `api_keys`（去重、上限 10、空主 key 时首个附加 key 晋升主 key）、`POST /api/channels/{id}/keys` 增加、`DELETE .../keys/{index}` 删除（禁删最后一把）、`POST .../keys/{index}/enable|disable` 启停（均仅 admin，密钥永不回显）；管理台渠道表逐 key 显示脱敏值与停用 pill + 启用/停用/删除按钮，新增「管理渠道密钥」卡片（中英双语）；演示种子 `ch_cloud` 带两把 key，轮换开箱可见。
+- 测试：gateway 白盒 2 项（轮询顺序与环绕、停用后跳过、全停用无 key 可选、摘除审计字段齐全）+ 网关端到端 3 项（401 摘除 + 同请求重试 + 后续请求只走存活 key、两 key 轮询分摊 a/b/a、全 key 失效时返回上游 401、再请求报 `channel_no_enabled_key`）+ API 端点 1 项（创建 3 key、列表脱敏、加密存储、重复 400、增/停用/恢复/删除全链路、删最后一把 400、未知索引 404、员工 403、明文永不泄漏）+ alert 分类 1 项（`channel_key_disabled` 触发 warning 告警）+ 冒烟新增 9 项断言；`gofmt`/`go vet`/`go test ./...` 全绿，`go test -race`（gateway/api）全绿；`make smoke` 114 项断言 0 失败。
+- 已知注意点：key 停用状态与轮询游标是运行态（与 F1 冷却一致），重启后失效 key 会重新启用、由网关再次向上游证明（401 后重新摘除）；删除 key 后其后 key 的索引前移（与 new-api 的位置索引语义一致）；429 不触发 key 内轮换——限流仍走 F1 的渠道级故障转移。
 
 ### F13 成本计价与部门预算 `todo`
 - 来源：LiteLLM budgets（硬顶 429）、Portkey per-key budget。
