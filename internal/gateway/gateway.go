@@ -23,6 +23,7 @@ import (
 
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
+	"github.com/myjnathan/agentgate/internal/billing"
 	"github.com/myjnathan/agentgate/internal/cache"
 	"github.com/myjnathan/agentgate/internal/guard"
 	"github.com/myjnathan/agentgate/internal/ratelimit"
@@ -71,12 +72,18 @@ type Gateway struct {
 	// is always keyMu -> store and can never invert.
 	keyMu   sync.Mutex
 	keyNext map[string]int // channel ID -> next key index to try
+	// budgetMu guards budgetAlerted: one threshold warning per
+	// department per month (F13), so a busy department does not spam
+	// one alert per call once it crosses its threshold.
+	budgetMu      sync.Mutex
+	budgetAlerted map[string]string // department -> "2006-01" month warned
 }
 
 func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log, pol Policy) *Gateway {
 	return &Gateway{st: st, auth: au, box: box, audit: al, policy: pol,
 		client: &http.Client{Timeout: 10 * time.Minute}, limiter: ratelimit.New(),
-		cache: cache.New(pol.CacheTTL, 0), keyNext: map[string]int{}}
+		cache: cache.New(pol.CacheTTL, 0), keyNext: map[string]int{},
+		budgetAlerted: map[string]string{}}
 }
 
 // Cache exposes the exact-match response cache (F11) so the server
@@ -403,6 +410,21 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Department budget check (F13): a hard monthly USD cap per
+	// department. Like LiteLLM's max_budget, the call already in
+	// flight is never the one blocked — the check runs before the
+	// pipeline, against spend so far this calendar month (UTC).
+	if spent, cap, exceeded := g.departmentBudgetExceeded(user); exceeded {
+		g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
+			Kind: "violation", Action: "model_call_blocked", Model: req.Model, Decision: "block",
+			Detail: map[string]string{"reason": "department_budget_exceeded", "department": user.Department,
+				"spent_usd":       strconv.FormatFloat(spent, 'f', 6, 64),
+				"monthly_cap_usd": strconv.FormatFloat(cap, 'f', 6, 64)}})
+		writeErr(w, http.StatusTooManyRequests, "department_budget_exceeded",
+			fmt.Sprintf("department %q monthly budget of $%.2f exceeded (spent $%.2f)", user.Department, cap, spent))
+		return
+	}
+
 	// ---- Protection pipeline ----
 	det := g.detector()
 	var allFindings []guard.Finding
@@ -671,14 +693,14 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	var usedTokens int64
+	var used usage
 	if req.Stream {
 		// Streaming responses restore placeholders too (F10): the
 		// mapping is the same one redactBody built for this request.
-		usedTokens = g.streamCopy(w, resp, mapping)
+		used = g.streamCopy(w, resp, mapping)
 	} else {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
-		usedTokens = parseUsage(respBody)
+		used = parseUsage(respBody)
 		if mapping != nil {
 			respBody = []byte(guard.Restore(string(respBody), mapping))
 		}
@@ -700,6 +722,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(resp.StatusCode)
 		_, _ = w.Write(respBody)
 	}
+	usedTokens := used.Total
 	if usedTokens > 0 {
 		// Tokens are recorded only after the response completes, so
 		// requests already in flight are never blocked by tokens
@@ -712,22 +735,116 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		})
 		_ = g.st.Save()
 	}
+	// Cost (F13): priced at call time from the serving channel's
+	// per-model price, so the audit trail and the stats agree even
+	// if the price changes later. An unpriced model records 0 and
+	// is reported as unpriced in stats.
+	var cost float64
+	if channel != nil {
+		cost = billing.Cost(used.Prompt, used.Completion, channel.Pricing[req.Model])
+	}
 	if fallbackFrom != "" {
 		detail["fallback_from"] = fallbackFrom
 	}
 	g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 		Kind: "model_call", Action: "chat_completions", Model: req.Model, Channel: channel.Name,
-		DataLevel: level.String(), Decision: decision, Detail: detail, Tokens: usedTokens})
+		DataLevel: level.String(), Decision: decision, Detail: detail, Tokens: usedTokens, CostUSD: cost})
+	// Budget threshold warning (F13): one per department per month.
+	if cost > 0 {
+		g.maybeAlertBudgetThreshold(user)
+	}
 }
 
-func parseUsage(body []byte) int64 {
+func parseUsage(body []byte) usage {
 	var wrap struct {
 		Usage struct {
-			TotalTokens int64 `json:"total_tokens"`
+			PromptTokens     int64 `json:"prompt_tokens"`
+			CompletionTokens int64 `json:"completion_tokens"`
+			TotalTokens      int64 `json:"total_tokens"`
 		} `json:"usage"`
 	}
 	_ = json.Unmarshal(body, &wrap)
-	return wrap.Usage.TotalTokens
+	u := wrap.Usage
+	if u.TotalTokens == 0 {
+		u.TotalTokens = u.PromptTokens + u.CompletionTokens
+	}
+	return usage{Prompt: u.PromptTokens, Completion: u.CompletionTokens, Total: u.TotalTokens}
+}
+
+// deptOf resolves an audit actor ID to a department, for spend and
+// stats aggregation (same resolution as internal/api/stats.go).
+func (g *Gateway) deptOf(actorID string) string {
+	var dept string
+	g.st.Read(func(st *store.State) {
+		if u, ok := st.Users[actorID]; ok {
+			dept = u.Department
+		}
+	})
+	return dept
+}
+
+// departmentBudgetExceeded reports whether the caller's department
+// has spent its monthly budget. No budget configured (or no
+// department on the user) means unlimited.
+func (g *Gateway) departmentBudgetExceeded(user *store.User) (spent, cap float64, exceeded bool) {
+	if user.Department == "" {
+		return 0, 0, false
+	}
+	var budget *store.DepartmentBudget
+	g.st.Read(func(st *store.State) {
+		for _, b := range st.Budgets {
+			if b.Department == user.Department {
+				cp := *b
+				budget = &cp
+			}
+		}
+	})
+	if budget == nil || budget.MonthlyCapUSD <= 0 {
+		return 0, 0, false
+	}
+	start, end := billing.MonthWindow(time.Now())
+	spent = billing.DepartmentSpend(g.audit.All(), g.deptOf, user.Department, start, end)
+	return spent, budget.MonthlyCapUSD, spent >= budget.MonthlyCapUSD
+}
+
+// maybeAlertBudgetThreshold fires one warning per department per
+// month when spend crosses the budget's alert threshold (F13,
+// Portkey's alert-threshold convention). It runs after the call is
+// audited, so the spend figure includes the call that crossed it.
+func (g *Gateway) maybeAlertBudgetThreshold(user *store.User) {
+	if user.Department == "" {
+		return
+	}
+	var budget *store.DepartmentBudget
+	g.st.Read(func(st *store.State) {
+		for _, b := range st.Budgets {
+			if b.Department == user.Department {
+				cp := *b
+				budget = &cp
+			}
+		}
+	})
+	if budget == nil || budget.AlertThreshold <= 0 || budget.MonthlyCapUSD <= 0 {
+		return
+	}
+	start, end := billing.MonthWindow(time.Now())
+	spent := billing.DepartmentSpend(g.audit.All(), g.deptOf, user.Department, start, end)
+	if spent < budget.AlertThreshold*budget.MonthlyCapUSD {
+		return
+	}
+	month := start.Format("2006-01")
+	g.budgetMu.Lock()
+	if g.budgetAlerted[user.Department] == month {
+		g.budgetMu.Unlock()
+		return
+	}
+	g.budgetAlerted[user.Department] = month
+	g.budgetMu.Unlock()
+	g.audit.Append(audit.Event{Actor: "system", Kind: "budget", Action: "budget_threshold",
+		Detail: map[string]string{"department": user.Department,
+			"spent_usd":       strconv.FormatFloat(spent, 'f', 6, 64),
+			"monthly_cap_usd": strconv.FormatFloat(budget.MonthlyCapUSD, 'f', 6, 64),
+			"threshold":       strconv.FormatFloat(budget.AlertThreshold, 'f', 2, 64)}})
 }
 
 func redactBody(body []byte, det *guard.Detector) ([]byte, map[string]string) {

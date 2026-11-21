@@ -72,8 +72,8 @@ func TestStreamCopyRestoresSplitPlaceholder(t *testing.T) {
 		if !strings.HasSuffix(strings.TrimSpace(out), "data: [DONE]") {
 			t.Fatalf("step %d: stream must end with [DONE]: %q", step, out)
 		}
-		if used != 42 {
-			t.Fatalf("step %d: expected usage 42, got %d", step, used)
+		if used.Total != 42 {
+			t.Fatalf("step %d: expected usage 42, got %d", step, used.Total)
 		}
 	}
 }
@@ -106,8 +106,22 @@ func TestStreamCopyPassthroughWithoutMapping(t *testing.T) {
 	if rec.Body.String() != body {
 		t.Fatalf("passthrough must be byte-identical:\n got %q\nwant %q", rec.Body.String(), body)
 	}
-	if used != 7 {
-		t.Fatalf("expected usage 7, got %d", used)
+	if used.Total != 7 {
+		t.Fatalf("expected usage 7, got %d", used.Total)
+	}
+}
+
+func TestStreamCopyUsageSplit(t *testing.T) {
+	// F13: pricing needs the prompt/completion split, not just the
+	// total — a stream reporting both must keep them apart.
+	body := "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":30,\"completion_tokens\":12,\"total_tokens\":42}}\n\n" +
+		"data: [DONE]\n\n"
+	var g Gateway
+	rec := httptest.NewRecorder()
+	used := g.streamCopy(rec, fakeSSEResponse(t, body, 2), nil)
+	if used.Prompt != 30 || used.Completion != 12 || used.Total != 42 {
+		t.Fatalf("usage split = %+v, want prompt=30 completion=12 total=42", used)
 	}
 }
 

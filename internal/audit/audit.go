@@ -29,8 +29,13 @@ type Event struct {
 	Decision  string            `json:"decision,omitempty"` // allow | warn | redact | block | reroute
 	Detail    map[string]string `json:"detail,omitempty"`
 	Tokens    int64             `json:"tokens,omitempty"`
-	PrevHash  string            `json:"prev_hash"`
-	Hash      string            `json:"hash"`
+	// CostUSD is the cost of a model_call in USD, priced at call time
+	// from the serving channel's per-model price (backlog F13).
+	// Zero means unpriced (no price configured) or no usage; stats
+	// report such calls separately as unpriced_calls.
+	CostUSD  float64 `json:"cost_usd,omitempty"`
+	PrevHash string  `json:"prev_hash"`
+	Hash     string  `json:"hash"`
 }
 
 type Log struct {

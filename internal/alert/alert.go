@@ -83,6 +83,9 @@ func FromEvent(ev audit.Event) (Alert, bool) {
 	case ev.Kind == "channel" && ev.Action == "channel_key_disabled":
 		a.Severity = "warning"
 		a.Title = "渠道密钥失效已自动摘除"
+	case ev.Kind == "budget" && ev.Action == "budget_threshold":
+		a.Severity = "warning"
+		a.Title = "部门月度预算将达上限"
 	case ev.Kind == "auth" && ev.Action == "account_locked":
 		a.Severity = "critical"
 		a.Title = "账号因多次登录失败被锁定"

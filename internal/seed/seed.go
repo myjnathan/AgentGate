@@ -55,11 +55,17 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 		s.Users[chen.ID] = chen
 		// Public-cloud-like channel: may receive at most internal data.
 		// Trust: signed cloud (zero-retention / no-training contract).
+		// F13 demo pricing (USD per million tokens): the cheap model
+		// for routine work, the pro model for heavier calls.
 		s.Channels["ch_cloud"] = &store.Channel{
 			ID: "ch_cloud", Name: "cloud-contract (mock)", BaseURL: selfBaseURL + "/mock/v1",
 			Keys:   []store.ChannelKey{mkKey(keyEnc, "mock-upstream-key"), mkKey(keyEnc2, "mock-upstream-key-2")},
 			Models: []string{"mock-eco", "mock-pro"}, MaxDataLevel: store.LevelInternal, Weight: 1,
 			TrustType: store.TrustSignedCloud,
+			Pricing: map[string]store.ModelPrice{
+				"mock-eco": {InputPerMillion: 0.50, OutputPerMillion: 1.50},
+				"mock-pro": {InputPerMillion: 2.50, OutputPerMillion: 10.00},
+			},
 		}
 		// Signed-cloud channel for confidential data (F17 default):
 		// confidential requests route here and are desensitized by the
@@ -69,6 +75,9 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 			Keys:   []store.ChannelKey{mkKey(keyEnc, "mock-upstream-key")},
 			Models: []string{"mock-pro"}, MaxDataLevel: store.LevelConfidential, Weight: 1,
 			TrustType: store.TrustSignedCloud,
+			Pricing: map[string]store.ModelPrice{
+				"mock-pro": {InputPerMillion: 2.50, OutputPerMillion: 10.00},
+			},
 		}
 		// Dedicated-cloud / VPC channel (F17 optional upgrade): may
 		// receive up to secret data as-is — the data stays inside the
@@ -78,6 +87,9 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 			Keys:   []store.ChannelKey{mkKey(keyEnc, "mock-upstream-key")},
 			Models: []string{"mock-pro"}, MaxDataLevel: store.LevelSecret, Weight: 1,
 			TrustType: store.TrustDedicatedCloud,
+			Pricing: map[string]store.ModelPrice{
+				"mock-pro": {InputPerMillion: 5.00, OutputPerMillion: 15.00},
+			},
 		}
 		// Local small-model channel (F17): the only trust type that may
 		// receive top-secret data — the data never leaves the company.
@@ -86,6 +98,16 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 			Keys:   []store.ChannelKey{mkKey(keyEnc, "mock-upstream-key")},
 			Models: []string{"mock-pro"}, MaxDataLevel: store.LevelSecret, Weight: 1,
 			TrustType: store.TrustLocalModel,
+			Pricing: map[string]store.ModelPrice{
+				"mock-pro": {InputPerMillion: 0, OutputPerMillion: 0},
+			},
+		}
+		// Demo department budget (F13): R&D gets $50/month with an
+		// 80% warning; demo traffic costs a fraction of a cent, so
+		// the cap never bites in normal demo use.
+		s.Budgets["bud_demo_rd"] = &store.DepartmentBudget{
+			ID: "bud_demo_rd", Department: "研发部", MonthlyCapUSD: 50,
+			AlertThreshold: 0.8, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 		s.KBDocs["kb_reimburse"] = &store.KBDoc{
 			ID: "kb_reimburse", Title: "差旅报销制度（2026 版）", Department: "财务部",

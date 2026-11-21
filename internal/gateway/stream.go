@@ -8,6 +8,15 @@ import (
 	"github.com/myjnathan/agentgate/internal/guard"
 )
 
+// usage is the token usage an upstream response reports. The split
+// matters for pricing (backlog F13): input and output tokens can
+// cost differently, so the gateway needs both, not just the total.
+type usage struct {
+	Prompt     int64
+	Completion int64
+	Total      int64
+}
+
 // streamCopy proxies an upstream SSE stream to the client.
 //
 // When the request was desensitized (mapping non-empty), placeholders
@@ -26,7 +35,7 @@ import (
 //
 // When mapping is empty nothing was redacted, so chunks pass straight
 // through with no buffering and no added latency.
-func (g *Gateway) streamCopy(w http.ResponseWriter, resp *http.Response, mapping map[string]string) int64 {
+func (g *Gateway) streamCopy(w http.ResponseWriter, resp *http.Response, mapping map[string]string) usage {
 	for k, vs := range resp.Header {
 		for _, v := range vs {
 			w.Header().Add(k, v)
@@ -108,28 +117,29 @@ func (g *Gateway) streamCopy(w http.ResponseWriter, resp *http.Response, mapping
 	return usageFromTail(tail)
 }
 
-// usageFromTail extracts total_tokens from the final SSE chunk, if
-// present. Best effort: a stream without usage simply reports 0.
+// usageFromTail extracts the usage object (prompt/completion/total
+// tokens) from the final SSE chunk, if present. Best effort: a stream
+// without usage simply reports zero usage.
 //
 // The previous implementation sliced from one byte before "usage" and
 // took text up to the first '}' plus one byte, which produced invalid
 // JSON (a leading comma and a dangling brace) — streamed calls always
 // reported 0 tokens, so TPM accounting and usage stats silently missed
 // them. This version parses the usage object with brace matching.
-func usageFromTail(tail []byte) int64 {
+func usageFromTail(tail []byte) usage {
 	s := string(tail)
 	i := strings.LastIndex(s, "\"usage\"")
 	if i < 0 {
-		return 0
+		return usage{}
 	}
 	rest := s[i+len(`"usage"`):]
 	colon := strings.Index(rest, ":")
 	if colon < 0 {
-		return 0
+		return usage{}
 	}
 	rest = strings.TrimLeft(rest[colon+1:], " \t\r\n")
 	if !strings.HasPrefix(rest, "{") {
-		return 0
+		return usage{}
 	}
 	depth, end, inStr := 0, -1, false
 	for k := 0; k < len(rest); k++ {
@@ -158,15 +168,21 @@ func usageFromTail(tail []byte) int64 {
 		}
 	}
 	if end < 0 {
-		return 0
+		return usage{}
 	}
 	var wrap struct {
 		Usage struct {
-			TotalTokens int64 `json:"total_tokens"`
+			PromptTokens     int64 `json:"prompt_tokens"`
+			CompletionTokens int64 `json:"completion_tokens"`
+			TotalTokens      int64 `json:"total_tokens"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal([]byte(`{"usage":`+rest[:end+1]+`}`), &wrap); err != nil {
-		return 0
+		return usage{}
 	}
-	return wrap.Usage.TotalTokens
+	u := wrap.Usage
+	if u.TotalTokens == 0 {
+		u.TotalTokens = u.PromptTokens + u.CompletionTokens
+	}
+	return usage{Prompt: u.PromptTokens, Completion: u.CompletionTokens, Total: u.TotalTokens}
 }

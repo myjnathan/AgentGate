@@ -1,11 +1,61 @@
 package api
 
 import (
+	"math"
 	"testing"
 	"time"
 
 	"github.com/myjnathan/agentgate/internal/audit"
 )
+
+// TestAggregateStatsCost covers the F13 cost columns: priced calls
+// sum into cost_usd per bucket and totals, and calls on unpriced
+// models are counted separately as unpriced_calls.
+func TestAggregateStatsCost(t *testing.T) {
+	now := time.Now().UTC()
+	ev := func(kind, action, actorID, model, channel string, tokens int64, cost float64) audit.Event {
+		return audit.Event{Kind: kind, Action: action, Actor: actorID, ActorID: actorID,
+			Model: model, Channel: channel, DataLevel: "internal", Decision: "allow",
+			Tokens: tokens, CostUSD: cost, Time: now}
+	}
+	events := []audit.Event{
+		ev("model_call", "chat_completions", "u1", "mock-eco", "eco", 100, 0.0002),
+		ev("model_call", "chat_completions", "u1", "mock-pro", "pro", 200, 0.001),
+		ev("model_call", "chat_completions", "u1", "mock-local", "local", 300, 0), // unpriced: tokens but no cost
+		ev("violation", "model_call_blocked", "u1", "mock-pro", "", 0, 0),         // blocked: no cost, not unpriced
+	}
+	deptOf := func(id string) string { return "研发部" }
+
+	s := aggregateStats(events, deptOf, time.Time{}, time.Time{})
+	if s.Currency != "USD" {
+		t.Fatalf("currency = %q, want USD", s.Currency)
+	}
+	// Float sums are compared with tolerance: 0.0002 + 0.001 is
+	// 0.0012000000000000001 in binary floating point.
+	if math.Abs(s.Totals.CostUSD-0.0012) > 1e-12 {
+		t.Fatalf("totals cost = %v, want 0.0012", s.Totals.CostUSD)
+	}
+	if s.Totals.UnpricedCalls != 1 {
+		t.Fatalf("unpriced_calls = %d, want 1", s.Totals.UnpricedCalls)
+	}
+	find := func(bs []statsBucket, key string) *statsBucket {
+		for i := range bs {
+			if bs[i].Key == key {
+				return &bs[i]
+			}
+		}
+		return nil
+	}
+	if b := find(s.ByModel, "mock-eco"); b == nil || b.CostUSD != 0.0002 {
+		t.Fatalf("by_model[mock-eco] = %+v, want cost 0.0002", b)
+	}
+	if b := find(s.ByModel, "mock-local"); b == nil || b.CostUSD != 0 || b.Tokens != 300 {
+		t.Fatalf("by_model[mock-local] = %+v, want cost 0 tokens 300", b)
+	}
+	if b := find(s.ByDepartment, "研发部"); b == nil || math.Abs(b.CostUSD-0.0012) > 1e-12 || b.Calls != 4 {
+		t.Fatalf("by_department[研发部] = %+v, want cost 0.0012 calls 4", b)
+	}
+}
 
 // TestAggregateStats covers the pure aggregation: totals, every
 // dimension, blocked calls, out-of-scope events, and the time window.

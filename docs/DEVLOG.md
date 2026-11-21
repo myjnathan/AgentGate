@@ -2,6 +2,15 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-21 · F13 成本计价与部门预算
+- 本轮按常规规程选条目：12:26 特别指令（F17 + 蓝图修订稿）早已在 F17 轮执行完毕、执行后作废；P0、P1 全部 done，P2 按清单顺序取 F13（首个剩余 P2 条目）。远端 main 已含 F12（PR #10，HEAD 6c9faa4c），无在途分支需续传。
+- 借鉴 LiteLLM 官方文档（docs.litellm.ai/docs/tutorials/claude_code_cut_costs）：虚拟 key 预算 `max_budget`（USD）+ `budget_duration`（"24h"/"30d" 滚动窗口、可叠加），超限后下一调用直接拒绝，另有 `model_max_budget` + `budget_fallbacks` 静默降级链；Portkey 官方文档（预算上限与限额用例指南）：按虚拟 key/工作区设成本或 token 上限、告警阈值、按周（周日 0 点 UTC）/按月（每月 1 日 0 点 UTC）自动重置、上限设定后不可改。我们照此实现，但做三处改动：① 预算按**部门**设而非按 key（企业按部门分钱）；② 不做静默降级——超限直接 429 明确拒绝（降级会改变模型行为、且分级约束高于可用性）；③ 预算可随时 PATCH 改上限（改动本身记审计、可追溯）。计价形状沿用 LiteLLM 成本表的输入/输出分开计价（input/output 每百万 Token，USD）；其整张真实厂商价目表未复制——AgentGate 的渠道服务的是管理员配置的模型（含 mock 与本地模型），价目应由管理员按合同价配，抄表是错误的复用。
+- 实现：新包 `internal/billing`（`Cost` 输入/输出拆分计价、`MonthWindow` 自然月 UTC 窗口、`DepartmentSpend` 按审计日志汇总部门本月花费）；`store.ModelPrice` + `Channel.Pricing` + `store.DepartmentBudget`；`audit.Event` 增加 `CostUSD`（调用时按服务渠道单价写入、哈希链覆盖，0 表示未定价）；网关 `parseUsage`/`streamCopy` 返回 prompt/completion/total 拆分（流式用量同样拆分），调用完成即计价入审计；预算预检在流水线之前（限流与令牌配额之后）：本月花费 ≥ 上限时 429 `department_budget_exceeded` + `violation` 审计事件；花费首次达到告警阈值时记一条 `budget_threshold` 审计事件（每月每部门一次，`alert.FromEvent` 映射为 warning）；`GET /api/stats` 各维度与 totals 增加 `cost_usd`，totals 增加 `unpriced_calls`；管理 API `GET/POST /api/budgets` + `PATCH/DELETE /api/budgets/{id}`（仅 admin，部门唯一、重复 409）；管理台用量统计页三张表加成本列、总览 KPI 下显示累计成本与未定价调用数、新增部门月度预算卡片、渠道表加单价列、添加渠道表单可填单价 JSON（中英双语）；演示种子：四条渠道配演示单价，研发部演示预算 $50/月、阈值 0.8。
+- 关键决策：成本在调用时写入审计事件、事后单价再改不改写历史（F2 的对账原则：统计与审计永远一致）；未定价调用成本记 0 并单独计数——成本总数是下限、不是编出来的数，本地模型 $0 同样计入未定价（0 价与未定价在事件中无法区分，是有意的保守口径）；预算预检在缓存之前——被预算拦下的调用即使命中缓存也不放行（与 F11 的“命中仍计 RPM”同款门口语义）；阈值警告每月每部门只发一次（网关内运行态 map 记月，重启后当月若已跨阈值、下一调用会重发一次，可接受）。
+- 测试：billing 包 3 项 + 网关预算测试 4 项（调用成本入审计且数额与 mock usage 拆分一致、流式调用同样计价、超预算后下一调用 429 且审计为 violation、其他部门不受影响、阈值警告每月恰一次、未定价渠道成本为 0）+ API 端点 1 项（预算 CRUD 全链路、种子预算、400/403/404/409）+ stats 聚合 1 项 + alert 分类 1 项；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（gateway/api）全绿；`make smoke` 126 项断言 0 失败（新增 12 项 F13 断言）。
+- 冒烟实测抓到的真问题：初版冒烟用 mock-eco 做跨越预算的调用，第一次跑失败——F12 轮建的 mock-eco 渠道随机 ID 排在 ch_cloud 之前、且无单价，调用走了它、记了 $0 成本， spend 没动、第二次调用放行。产品行为本身符合既有选路规则（同级渠道按 ID 排序取首个），但它暴露了“未配单价的渠道会悄悄让调用记为未定价”这一运维坑：冒烟改用只由定价渠道服务的 mock-pro 钉住（ch_cloud 按密级最低必为首选）；backlog 已知注意点已记下此坑。另：网关预算测试初版用三次相同内容调用测阈值，F11 缓存把后两次截成 HIT、花费用没涨，改为每次不同内容——同一教训。
+- 推送结果：（待填，推送后补）
+
 ## 2026-11-21 · F12 渠道多 Key 与轮换
 - 本轮按常规规程选条目：12:26 特别指令（F17 + 蓝图修订稿）早已在 F17 轮执行完毕、执行后作废；P0、P1 全部 done，P2 按清单顺序取 F12（首个剩余 P2 条目）。远端 main 已含管理台重写（PR #9，HEAD 8f9dbdb8），无在途分支需续传。另：本轮前 Nathan 在主对话新增「复用优先」指示（2026-11-21 22:38）：能直接复制开源代码就复制、不要都自己写，项目稳定最重要；仅限 AGPL-3.0 兼容许可证、保留原版权声明、DEVLOG 记录来源——已同步进 development-loop.md（替换了旧的「只记设计、不复制」表述）。
 - 借鉴 QuantumNous/new-api 源码（AGPL-3.0，与本项目许可证兼容）`model/channel.go` 的 `GetNextEnabledKey`：单渠道多密钥 + 按索引的状态列表（缺失即启用）+ 轮询游标，每渠道一把锁、环形扫描第一把启用密钥、游标推进、全部禁用时显式报错（不静默回落失效 key）；LiteLLM 多部署路由（同一模型名多部署、各配 key 与 rpm/tpm）与通用轮换 runbook（先加新 key、验证、再删旧 key）为辅。本轮按新指示直接复用了 new-api 的选取算法形态（逐字复制不适用：其函数绑定自家 DB 模型与错误类型，改写为本仓库的 store 类型），来源与许可证记于 `internal/gateway/keys.go` 文件头注释。
@@ -9,7 +18,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 关键决策：只做轮询、不做随机模式（可预测、易审计）；密钥逐把 AES-GCM 加密（不用 new-api 的换行拼接单字符串，避免新 key 含换行时切分错乱）；游标与停用状态为运行态（与 F1 冷却一致，重启后失效 key 重新启用、由网关再次向上游证明）；401 只摘除该 key（不像 new-api 那样把整条渠道标不可用），429/5xx 仍走 F1 的渠道级故障转移；删除 key 后其后 key 索引前移（位置索引语义，与 new-api 一致）；上限 10 把 key/渠道。
 - 测试：gateway 白盒 2 项 + 网关端到端 3 项（401 摘除 + 同请求重试、两 key 轮询 a/b/a、全 key 失效 401 与 `channel_no_enabled_key`）+ API 端点 1 项 + alert 分类 1 项 + 冒烟新增 9 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（gateway/api）全绿；`make smoke` 114 项断言 0 失败（基线 105 + 新增 9）。
 - 已知注意点：key 停用状态与轮询游标是运行态，重启后失效 key 会重新启用、由网关再次向上游证明；429 不触发 key 内轮换（限流仍走 F1 的渠道级故障转移）。
-- 推送：按分支 + PR 机制走 `loop/f12` 分支，见本轮汇报。
+- 推送结果：整包快照推送一次成功（push-files，17 个文件一次提交 69984635，逐文件哈希核对 17/17 一致，未触发 contents API 回退；推送前核对同步基点：13 个旧文件与远端 main 一致、docs/DEVLOG.md 有一处预期差异（本地独有的 PR #9 记录段，随快照一并带上）、3 个新文件不存在）；PR #10 文件清单与本轮一致，已合并进远端 main，远端 HEAD 6c9faa4c（合并提交），读回验证 keys.go 已在 main 上（blob 与本地快照一致）。
 - 另记（工具管道脱敏坑）：本轮写冒烟脚本时，`muse.edit` 的入参里 `token=alogin["session"]` 会被管道当作会话凭证替换为字面量 `<redacted>` 写进文件，导致 smoke.py 语法错误；改用已有的 `admin_tok` 变量（`alogin.get("session")`）绕过。后续轮次写脚本时避免在 edit 入参里直写 `...["session"]` 取值表达式，优先复用已有变量。
 
 ## 2026-11-21 · 管理台重写（WebUI overhaul，对标 dsh-ee）
