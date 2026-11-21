@@ -192,13 +192,18 @@ func (g *Gateway) cooldown() time.Duration {
 // pickCandidates lists enabled channels serving model at a sufficient
 // data level, excluding channels currently in cooldown, ordered
 // least-privileged first (lowest MaxDataLevel). Ties break by ID so the
-// order is deterministic.
+// order is deterministic. F17: a channel is a candidate only if its
+// trust type is compliant for the data level — secret data only ever
+// reaches a local model, never a cloud of any kind.
 func (g *Gateway) pickCandidates(model string, level store.DataLevel) []*store.Channel {
 	now := time.Now()
 	var out []*store.Channel
 	g.st.Read(func(st *store.State) {
 		for _, ch := range st.Channels {
 			if ch.Disabled || ch.MaxDataLevel < level {
+				continue
+			}
+			if !trustAllowed(level, ch.TrustTypeOrDefault()) {
 				continue
 			}
 			if ch.Health(now) == "cooling_down" {
@@ -227,13 +232,18 @@ func (g *Gateway) pickCandidates(model string, level store.DataLevel) []*store.C
 }
 
 // channelsCoolingDown reports whether any channel serving model at a
-// sufficient data level exists but is currently cooling down.
+// sufficient data level exists but is currently cooling down. Only
+// trust-compliant channels count: a cooling cloud is not "eligible" for
+// secret data, so it must not turn a trust block into a 503.
 func (g *Gateway) channelsCoolingDown(model string, level store.DataLevel) bool {
 	cooling := false
 	now := time.Now()
 	g.st.Read(func(st *store.State) {
 		for _, ch := range st.Channels {
 			if ch.Disabled || ch.MaxDataLevel < level {
+				continue
+			}
+			if !trustAllowed(level, ch.TrustTypeOrDefault()) {
 				continue
 			}
 			serves := false
@@ -248,6 +258,32 @@ func (g *Gateway) channelsCoolingDown(model string, level store.DataLevel) bool 
 		}
 	})
 	return cooling
+}
+
+// channelsBlockedByTrust reports whether any enabled channel serves
+// model at a sufficient data level but is ruled out by its trust type
+// for that level (e.g. secret data and only cloud channels serve the
+// model). It distinguishes "no compliant channel" from "no channel at
+// all" so the gateway can block with an explicit reason.
+func (g *Gateway) channelsBlockedByTrust(model string, level store.DataLevel) bool {
+	blocked := false
+	g.st.Read(func(st *store.State) {
+		for _, ch := range st.Channels {
+			if ch.Disabled || ch.MaxDataLevel < level {
+				continue
+			}
+			serves := false
+			for _, m := range ch.Models {
+				if m == model {
+					serves = true
+				}
+			}
+			if serves && !trustAllowed(level, ch.TrustTypeOrDefault()) {
+				blocked = true
+			}
+		}
+	})
+	return blocked
 }
 
 // retryableStatus reports whether an upstream status is worth failing
@@ -386,6 +422,18 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 				"all eligible model channels are temporarily cooling down after repeated failures")
 			return
 		}
+		// F17: channels exist that could serve this model at this level,
+		// but none has a compliant trust type (e.g. secret data and no
+		// local-model channel). Block with an explicit reason instead of
+		// the generic no-channel error — the operator can see exactly
+		// which kind of channel is missing.
+		if g.channelsBlockedByTrust(req.Model, level) {
+			g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
+				Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
+				Detail: mergeDetail(detail, "reason", "no_compliant_channel")})
+			writeErr(w, http.StatusForbidden, "no_compliant_channel", noCompliantChannelMessage(level))
+			return
+		}
 		g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 			Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
 			Detail: mergeDetail(detail, "reason", "no_channel_for_data_level")})
@@ -405,11 +453,22 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Redaction: for tiers configured to redact, replace sensitive spans
 	// with placeholders before forwarding (mapping stays in the gateway;
 	// response restore happens for non-streaming responses).
+	// F17: a confidential request routed to a signed cloud is always
+	// desensitized, even when the caller's tier is not configured to
+	// redact — the trust type demands it. Dedicated-cloud and local-model
+	// channels receive the original text.
+	mustRedact := trustRequiresRedaction(level, candidates[0].TrustTypeOrDefault())
 	var mapping map[string]string
-	if len(allFindings) > 0 && g.policy.RedactForTier[tok.Tier] && !g.policy.DryRun {
+	if len(allFindings) > 0 && (g.policy.RedactForTier[tok.Tier] || mustRedact) && !g.policy.DryRun {
 		body, mapping = redactBody(body, det)
 		if decision == "allow" {
 			decision = "redact"
+		}
+		if mustRedact {
+			// The decision stays "reroute" (the existing convention for
+			// confidential calls); the desensitized hop itself is
+			// recorded here so operators can see it in the audit log.
+			detail["desensitized"] = "signed_cloud"
 		}
 	} else if len(allFindings) > 0 && decision == "allow" {
 		decision = "warn"

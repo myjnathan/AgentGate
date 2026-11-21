@@ -42,16 +42,38 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 		s.Users[li.ID] = li
 		s.Users[chen.ID] = chen
 		// Public-cloud-like channel: may receive at most internal data.
+		// Trust: signed cloud (zero-retention / no-training contract).
 		s.Channels["ch_cloud"] = &store.Channel{
 			ID: "ch_cloud", Name: "cloud-contract (mock)", BaseURL: selfBaseURL + "/mock/v1",
 			APIKeyEnc: keyEnc, KeyMasked: secretbox.Mask("mock-upstream-key"),
 			Models: []string{"mock-eco", "mock-pro"}, MaxDataLevel: store.LevelInternal, Weight: 1,
+			TrustType: store.TrustSignedCloud,
 		}
-		// Private channel: may receive up to secret data.
+		// Signed-cloud channel for confidential data (F17 default):
+		// confidential requests route here and are desensitized by the
+		// gateway first — the cloud only ever sees placeholders.
+		s.Channels["ch_cloud_conf"] = &store.Channel{
+			ID: "ch_cloud_conf", Name: "cloud-contract-desensitized (mock)", BaseURL: selfBaseURL + "/mock/v1",
+			APIKeyEnc: keyEnc, KeyMasked: secretbox.Mask("mock-upstream-key"),
+			Models: []string{"mock-pro"}, MaxDataLevel: store.LevelConfidential, Weight: 1,
+			TrustType: store.TrustSignedCloud,
+		}
+		// Dedicated-cloud / VPC channel (F17 optional upgrade): may
+		// receive up to secret data as-is — the data stays inside the
+		// contracted deployment instead of a shared public cloud.
 		s.Channels["ch_private"] = &store.Channel{
 			ID: "ch_private", Name: "private-onprem (mock)", BaseURL: selfBaseURL + "/mock/v1",
 			APIKeyEnc: keyEnc, KeyMasked: secretbox.Mask("mock-upstream-key"),
 			Models: []string{"mock-pro"}, MaxDataLevel: store.LevelSecret, Weight: 1,
+			TrustType: store.TrustDedicatedCloud,
+		}
+		// Local small-model channel (F17): the only trust type that may
+		// receive top-secret data — the data never leaves the company.
+		s.Channels["ch_local"] = &store.Channel{
+			ID: "ch_local", Name: "local-model (mock)", BaseURL: selfBaseURL + "/mock/v1",
+			APIKeyEnc: keyEnc, KeyMasked: secretbox.Mask("mock-upstream-key"),
+			Models: []string{"mock-pro"}, MaxDataLevel: store.LevelSecret, Weight: 1,
+			TrustType: store.TrustLocalModel,
 		}
 		s.KBDocs["kb_reimburse"] = &store.KBDoc{
 			ID: "kb_reimburse", Title: "差旅报销制度（2026 版）", Department: "财务部",

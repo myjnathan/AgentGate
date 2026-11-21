@@ -25,6 +25,63 @@ const (
 	TierBYOA    Tier = "byoa"    // 自带级: employee's own agent, general capabilities only
 )
 
+// TrustType is the trust tier of a model channel's deployment: where the
+// data physically goes and what the provider promises. Routing binds to
+// the trust type, not to whether the enterprise owns a model (F17):
+// most companies have no model of their own, no GPU and no ops team, so
+// "private model" cannot be the default. Gradient:
+//   - signed_cloud: contracted cloud model (zero-retention / no-training
+//     commitment) — public/internal data, and confidential data only
+//     after gateway desensitization.
+//   - dedicated_cloud: vendor dedicated cloud / VPC deployment —
+//     confidential data as-is (optional upgrade path).
+//   - local_model: small on-device model — the only trust type that may
+//     receive top-secret data; otherwise the request is blocked with an
+//     explicit "no compliant channel" reason.
+type TrustType string
+
+const (
+	TrustSignedCloud    TrustType = "signed_cloud"    // 签约云
+	TrustDedicatedCloud TrustType = "dedicated_cloud" // 专有云 / VPC
+	TrustLocalModel     TrustType = "local_model"     // 本地小模型
+)
+
+func (t TrustType) String() string { return string(t) }
+
+func (t TrustType) MarshalJSON() ([]byte, error) {
+	return json.Marshal(string(t))
+}
+
+func (t *TrustType) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	if s == "" {
+		*t = TrustSignedCloud
+		return nil
+	}
+	v, ok := ParseTrustType(s)
+	if !ok {
+		return fmt.Errorf("invalid trust type %q", s)
+	}
+	*t = v
+	return nil
+}
+
+// ParseTrustType parses "signed_cloud|dedicated_cloud|local_model".
+func ParseTrustType(s string) (TrustType, bool) {
+	switch s {
+	case "signed_cloud":
+		return TrustSignedCloud, true
+	case "dedicated_cloud":
+		return TrustDedicatedCloud, true
+	case "local_model":
+		return TrustLocalModel, true
+	}
+	return "", false
+}
+
 // DataLevel is the classification of content flowing through the gateway.
 type DataLevel int
 
@@ -211,9 +268,13 @@ type Channel struct {
 	// Public-cloud channels are typically LevelInternal; private
 	// deployments may be LevelSecret.
 	MaxDataLevel DataLevel `json:"max_data_level"`
-	Weight       int       `json:"weight"`
-	Disabled     bool      `json:"disabled"`
-	Failures     int       `json:"-"`
+	// TrustType is where the data goes and what the deployment promises
+	// (signed_cloud | dedicated_cloud | local_model, F17). Empty in
+	// snapshots written before F17 means signed_cloud.
+	TrustType TrustType `json:"trust_type"`
+	Weight    int       `json:"weight"`
+	Disabled  bool      `json:"disabled"`
+	Failures  int       `json:"-"`
 	// ConsecutiveFailures counts retryable failures since the last
 	// success; reaching the gateway's fail threshold cools the channel
 	// down (see internal/gateway). Runtime-only, never persisted.
@@ -221,6 +282,16 @@ type Channel struct {
 	// CooldownUntil is set when the channel enters cooldown; while
 	// time.Now() is before it, the gateway never picks this channel.
 	CooldownUntil time.Time `json:"-"`
+}
+
+// TrustTypeOrDefault returns the channel's trust type; channels stored
+// before F17 have none and are treated as signed cloud (the previous
+// default: a public-cloud channel capped at internal data).
+func (c *Channel) TrustTypeOrDefault() TrustType {
+	if c.TrustType == "" {
+		return TrustSignedCloud
+	}
+	return c.TrustType
 }
 
 // Health reports the runtime health of the channel:

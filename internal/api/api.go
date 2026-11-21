@@ -233,6 +233,7 @@ type channelView struct {
 	KeyMasked           string          `json:"key_masked"`
 	Models              []string        `json:"models"`
 	MaxDataLevel        store.DataLevel `json:"max_data_level"`
+	TrustType           store.TrustType `json:"trust_type"`
 	Weight              int             `json:"weight"`
 	Disabled            bool            `json:"disabled"`
 	Health              string          `json:"health"`
@@ -247,7 +248,8 @@ func (a *API) listChannels(w http.ResponseWriter, r *http.Request, u *store.User
 		for _, ch := range st.Channels {
 			v := channelView{ID: ch.ID, Name: ch.Name, BaseURL: ch.BaseURL,
 				KeyMasked: ch.KeyMasked, Models: ch.Models, MaxDataLevel: ch.MaxDataLevel,
-				Weight: ch.Weight, Disabled: ch.Disabled, Health: ch.Health(now),
+				TrustType: ch.TrustTypeOrDefault(),
+				Weight:    ch.Weight, Disabled: ch.Disabled, Health: ch.Health(now),
 				ConsecutiveFailures: ch.ConsecutiveFailures}
 			if ch.Health(now) == "cooling_down" {
 				t := ch.CooldownUntil
@@ -266,6 +268,7 @@ func (a *API) createChannel(w http.ResponseWriter, r *http.Request, u *store.Use
 		APIKey       string   `json:"api_key"`
 		Models       []string `json:"models"`
 		MaxDataLevel string   `json:"max_data_level"`
+		TrustType    string   `json:"trust_type"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Name == "" || in.BaseURL == "" {
 		writeErr(w, http.StatusBadRequest, "name and base_url required")
@@ -279,17 +282,29 @@ func (a *API) createChannel(w http.ResponseWriter, r *http.Request, u *store.Use
 	if !ok {
 		lvl = store.LevelInternal
 	}
+	// F17: trust type is explicit at creation; empty means signed cloud
+	// (the previous default). An unknown value is rejected — a channel
+	// must never silently fall back to a weaker trust assumption.
+	tt := store.TrustSignedCloud
+	if in.TrustType != "" {
+		v, ok := store.ParseTrustType(in.TrustType)
+		if !ok {
+			writeErr(w, http.StatusBadRequest, "invalid trust_type (signed_cloud|dedicated_cloud|local_model)")
+			return
+		}
+		tt = v
+	}
 	enc, err := a.box.Encrypt(in.APIKey)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "encrypt failed")
 		return
 	}
 	ch := &store.Channel{ID: store.NewID("ch"), Name: in.Name, BaseURL: in.BaseURL,
-		APIKeyEnc: enc, KeyMasked: secretbox.Mask(in.APIKey), Models: in.Models, MaxDataLevel: lvl, Weight: 1}
+		APIKeyEnc: enc, KeyMasked: secretbox.Mask(in.APIKey), Models: in.Models, MaxDataLevel: lvl, TrustType: tt, Weight: 1}
 	a.st.WithLock(func(st *store.State) { st.Channels[ch.ID] = ch })
 	_ = a.st.Save()
 	a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, Kind: "admin", Action: "channel_created",
-		Detail: map[string]string{"channel": ch.Name, "max_data_level": lvl.String()}})
+		Detail: map[string]string{"channel": ch.Name, "max_data_level": lvl.String(), "trust_type": string(tt)}})
 	writeJSON(w, http.StatusCreated, map[string]any{"id": ch.ID, "key_masked": ch.KeyMasked})
 }
 

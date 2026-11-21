@@ -69,7 +69,7 @@ func (s *scriptedUpstream) hitCount(name string) int {
 
 // setupFailover builds the standard env, then re-points the seeded
 // channels at a scripted upstream: cloud -> a, a same-level backup
-// cloud2 -> b, private -> p.
+// cloud2 -> b, desensitized cloud -> c, private -> p, local model -> l.
 func setupFailover(t *testing.T, pol gateway.Policy, script map[string][]int) (*testEnv, *scriptedUpstream) {
 	t.Helper()
 	e := setupWithPolicy(t, pol)
@@ -85,8 +85,14 @@ func setupFailover(t *testing.T, pol gateway.Policy, script map[string][]int) (*
 			cp.BaseURL = srv.URL + "/b/v1"
 			s.Channels["ch_cloud2"] = &cp
 		}
+		if ch, ok := s.Channels["ch_cloud_conf"]; ok {
+			ch.BaseURL = srv.URL + "/c/v1"
+		}
 		if ch, ok := s.Channels["ch_private"]; ok {
 			ch.BaseURL = srv.URL + "/p/v1"
+		}
+		if ch, ok := s.Channels["ch_local"]; ok {
+			ch.BaseURL = srv.URL + "/l/v1"
 		}
 	})
 	return e, up
@@ -179,15 +185,21 @@ func TestNoFallbackToHigherPrivilegeChannel(t *testing.T) {
 
 func TestConfidentialNeverFallsBackToLowerLevel(t *testing.T) {
 	e, up := setupFailover(t, failoverPolicy(time.Minute),
-		map[string][]int{"a": {200}, "b": {200}, "p": {500}})
-	// Confidential content must stay on the private channel; when it
-	// fails, the request fails instead of dropping to a cloud channel.
+		map[string][]int{"a": {200}, "b": {200}, "c": {500}, "p": {200}, "l": {200}})
+	// Confidential content defaults to the desensitized cloud (c); when
+	// it fails, the request fails instead of dropping to the lower-level
+	// plain cloud channels (a/b) — and it must not "upgrade" to the
+	// dedicated-cloud (p) or local-model (l) channels either: failover
+	// stays inside the first pick's level.
 	code, _ := e.chat(t, e.mgdTok, "mock-pro", "请分析 XH-200 项目的进展")
 	if code != 502 {
 		t.Fatalf("expected 502, got %d", code)
 	}
 	if got := up.hitCount("a") + up.hitCount("b"); got != 0 {
 		t.Fatalf("must not fall back to lower-level cloud channels, got %d hits", got)
+	}
+	if got := up.hitCount("p") + up.hitCount("l"); got != 0 {
+		t.Fatalf("must not upgrade to dedicated/local channels on failure, got %d hits", got)
 	}
 }
 
