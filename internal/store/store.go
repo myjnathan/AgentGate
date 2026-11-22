@@ -18,6 +18,7 @@ import (
 
 	"github.com/myjnathan/agentgate/internal/attest"
 	"github.com/myjnathan/agentgate/internal/distrib"
+	"github.com/myjnathan/agentgate/internal/report"
 	"github.com/myjnathan/agentgate/internal/terminal"
 )
 
@@ -517,6 +518,10 @@ type State struct {
 	// (backlog F24), keyed by exception ID; an approved record
 	// carries the hash of its one-time grant token.
 	Exceptions map[string]*Exception `json:"exceptions"`
+	// Reports holds the generated periodic compliance reports
+	// (backlog F25), keyed by report ID; at most
+	// report.MaxStoredReports are retained.
+	Reports map[string]*report.Report `json:"reports"`
 }
 
 // OrgProvider is one third-party directory (org sync) configuration
@@ -582,6 +587,7 @@ func newState() *State {
 		KnowledgePackages:   map[string]*KnowledgePackage{},
 		Terminals:           map[string]*terminal.Terminal{},
 		Exceptions:          map[string]*Exception{},
+		Reports:             map[string]*report.Report{},
 	}
 }
 
@@ -659,6 +665,9 @@ func New(dir string) (*Store, error) {
 		}
 		if st.Exceptions == nil {
 			st.Exceptions = map[string]*Exception{}
+		}
+		if st.Reports == nil {
+			st.Reports = map[string]*report.Report{}
 		}
 		s.st = &st
 	} else if !os.IsNotExist(err) {

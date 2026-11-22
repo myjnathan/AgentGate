@@ -2,6 +2,17 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-22 · F25 合规周期报表
+
+- 本轮先执行待办登记 6（Nathan 2026-11-22 批准，仅执行一次）：把 F28 语义复核层写入 docs/feature-backlog.md（排 F26 之后、F27 之前），随本轮同一分支、同一 PR 提交；登记完成后本轮按常规规程选条目。体内的 12:26 特别指令与待办登记 1–5 均已在先前轮次执行完毕、作废。
+- 本轮按常规规程选条目：P0、P1 全部 done，P2 按清单顺序取 F25（首个剩余 P2 条目）。远端 main 已含 F24（PR #20，HEAD c7390375），无在途分支需续传；本地另有一条 docs 提交 2e2fa1c（F24 推送结果记录）随本轮整包快照一并带上。
+- 借鉴 Wazuh 合规报表形态（cenovacyber.com 的 Wazuh 审计证据文章与 Wazuh 官方文档综述，2026-11-22 查阅）：规则映射到框架（PCI DSS / HIPAA / GDPR / NIST 800-53 / TSC），按框架出仪表盘与报表供审计师取证；其文档明确说明映射只是证据导航、不是合规认证。社区另有定时任务出 JSON/HTML/CSV 三种格式报表的做法。
+- 复用检查（Nathan 复用优先指示）：未复制 Wazuh 代码——Wazuh 是 GPLv2 的整套 SIEM/XDR（Python/Elasticsearch/Kibana），与本仓库的单二进制 + 审计日志架构不匹配；报表聚合与导出约 500 行纯标准库自研；用量口径复用 F2 的事件分类，与 /api/stats 同口径可对账。
+- 实现：新包 `internal/report`（`Report` + `Generate`：窗口内审计事件聚合 + 生成时刻快照（渠道健康/令牌/终端概况/链完整性）；`PeriodWindow`：周报表 ISO 周一至下周一、月报表自然月（UTC）；`WriteCSV` 扁平表导出）；`store.State` 增加 `Reports`（最多保留 52 份，超了删最旧）；管理 API（`internal/api/reports.go`）：`POST /api/reports`（生成，period 必填 weekly|monthly、date 可选 YYYY-MM-DD 缺省今天 UTC）、`GET /api/reports`（列表摘要）、`GET /api/reports/{id}`（预览）、`GET /api/reports/{id}/export`（CSV 下载）、`DELETE /api/reports/{id}`（均仅 admin/security，生成/导出/删除记审计，只含报表 ID 与周期）；管理台新增「合规报表」页（生成表单 + 列表 + 预览 + 导出 CSV + 删除，中英双语）；详见 docs/compliance-reports.md。
+- 关键决策：① 报表是冻结快照不是实时仪表盘——评审要的是某一周期盖了章的数字，生成后数字不再变化，事后归档也不改写已生成的报表；② 不做框架条款映射与「通过/不通过」结论——我们没有等保条款对照表，报表只给事实，是否合规由审计师判定，映射留待后续轮次评估；③ Top 风险事件按 (kind, action) 分组、原因是组内最常见的那一个——拦截按原因拆行会把主形态打散，而原因明细另有拦截原因分组；④ 令牌与终端概况取生成时刻的点状态，不是周期内的变化历史（与渠道健康同款快照语义）；⑤ 同一周期可重复生成、每次生成都是独立的一份，不覆盖旧报表，保留上限 52 份（一年周报量）。
+- 测试：report 包 4 项 + API 端点 2 项（生成→列表→预览→导出 CSV→删除全链路、401/403、400 校验、未知 ID 404、保留 52 份上限）+ 冒烟新增 10 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（report/api/store）全绿；`make smoke` 237 项断言 0 失败（基线 227 + 新增 10）。
+- 本轮实测抓到的真问题：冒烟初版照抄工具输出的脱敏显示、把 `token=<redacted>` 直接写进 F25 段，`make smoke` 报 SyntaxError——与 F24 轮 DEVLOG 记的同款坑（真实变量是 `sess` 与 `admin_tok`）；已逐行改回真名并加 `python3 -c compile` 自检。另记：冒烟里报表日期缺省走服务端今天（UTC），不传本地日期——本地日期（CST）与服务端 UTC 日期跨周时会让窗口错开整整一周，API 测试已覆盖 date 参数本身。
+
 ## 2026-11-22 · F24 高密级调用例外审批流
 
 - 本轮按常规规程选条目：P0、P1 全部 done，P2 按清单顺序取 F24（首个剩余 P2 条目）。体内的 12:26 特别指令与待办登记 1–5 均已在先前轮次执行完毕、作废。
@@ -10,6 +21,9 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 实现：新包 `internal/exception`（`ValidateRequest`：仅机密以上可申请、理由/范围必填、有效期 1–72 小时、绝密须 opt-in；`NewGrant`/`HashGrant`：随机凭证 + SHA-256；`FindValidGrant`：哈希 + 申请人 + 密级覆盖 + 未过期 + 未使用五项核验；`RefreshStatus`：过期 lazily 置 expired）；`store.Exception` + `State.Exceptions` 持久化；网关（`internal/gateway/exception.go` + `gateway.go` 三处拦截点）：违禁词拦截之后才查凭证（凭证永不豁免违禁词），豁免两处分级拦截——自带级禁发机密以上、与无合规通道（无本地模型时绝密可走专有云/VPC 一次），合规路由优先、仅在策略否则拦截时才动用凭证；消费点在选路完成即将转发时、存储锁内二次校验（并发复用只放行一次，败者 403 `exception_grant_invalid`），无效凭证在需要豁免时才 403，不需要豁免的调用不受影响、凭证也不消耗；放行仍按信任梯度脱敏（签约云强制脱敏），`model_call` 审计带 `exception_id`；管理 API（`internal/api/exceptions.go`）：申请/列表（管理员看全部、员工只看自己的）/详情/批准（返回凭证一次）/驳回/撤销（已批准未使用），审计只含元数据不含理由与范围原文；`alert.FromEvent` 新增 `exception_requested`/`exception_approved`（warning）；管理台新增「例外审批」页（申请表单 + 列表 + 批准/驳回/撤销，批准后凭证只显示一次，中英双语）；`AGENTGATE_ALLOW_TOPSECRET_EXCEPTIONS=1` 开启绝密例外（默认关闭）；详见 docs/exception-approval.md。
 - 关键决策：① 凭证原文服务端永不存储、只存 SHA-256，批准响应里只返回一次——丢了只能重新申请，这是故意设计（凭证泄露后无法从服务端找回原文、只能作废重发）；② 消费点选在「确认转发」而非「查到凭证」或「收到上游响应」：既保证一次性不被并发复用，又保证不需要豁免的调用不烧凭证；转发后上游故障不退还（须重新申请），已写入文档；③ `scope` 是给审批人看的说明文字，网关不做机器匹配——强制绑定是申请人 + 密级 + 有效期 + 一次性，文档中明说；④ 审计 Detail 不含理由与范围原文（理由本身可能描述敏感工作）；⑤ 绝密例外默认关闭，须运维显式 opt-in，且已批的绝密凭证可撤销。
 - 测试：exception 包 4 项 + API 端点 1 项 + 网关集成 5 项 + alert 分类 1 项 + 冒烟新增 9 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（exception/api/gateway/alert/store）全绿；`make smoke` 227 项断言 0 失败（基线 218 + 新增 9）。
+- 推送结果：本地提交 c96033a；远端建分支 loop/f24（基点远端 main 5fe7d467）；整包快照 19 文件一次推送（提交 49328981），PR #20 文件清单与本轮清单一致（19 文件，新增文件行数与本地逐一吻合），合并进 main，远端 main 提交 c7390375（2026-11-22 20:50 前后核实）；读回 main 上 internal/gateway/exception.go（blob SHA 与快照一致）验证无误。快照目录 ~/workspace/agentgate-f24-snap，同步记录存于其旁。
+- 本轮实测抓到的真问题：① 冒烟初版把全程共用的 BYOA 令牌 `tok` 直接用于 F24 凭证调用，整轮累计已超自带级 20 RPM，被限流 429 而非放行——凭证逻辑本身无错；已改为 F24 段内新 mint 一枚 BYOA 令牌（沿用 F23 的做法），并在冒烟注释中写明原因。② 推送后用 `get_file_contents` / `list_commits` 按分支 loop/f24 逐文件核对时，读回的仍是旧内容（11 个改动文件 SHA 全是推送前版本、8 个新文件查无），与 push-files 返回的成功提交矛盾；改以 PR #20 的文件清单核对（19 文件、新增文件行数与本地逐一吻合），确认推送已落地，随后合并成功、读回 main 验证一致。结论：这两个读工具对刚推送的分支不可靠（疑似忽略 branch 参数回落到 main），以后各轮以 PR 文件清单为准做推送核对，`get_file_contents` 只用于读 main。③ 另记：冒烟脚本里 `token=<redacted>` 是工具输出脱敏后的显示，真实变量是 `sess`（员工会话）与 `admin_tok`（管理员会话），写冒烟代码时须用真名——初版照抄脱敏显示导致 SyntaxError。
+- 待办登记 6（MEMORY 2026-11-22 新增，Nathan 批准，本轮体未携带、下轮执行）：F28 语义复核层立项，排 F26 之后、F27 之前——规则 DLP 之上加可选语义复核层，复核通道本身走分级路由、绝密不送模型、能脱敏先脱敏、默认保守超时策略。下一轮仍为 P2 的 F25（合规周期报表）。
 
 ## 2026-11-22 · F23 终端持续盘点与断网策略缓存
 

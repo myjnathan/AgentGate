@@ -27,10 +27,11 @@ AgentGate 是一个**不绑定任何单一桌面 Agent** 的企业级平台（�
 | 能力中枢 | 技能（SKILL.md）提交 → 审核 → 签名校验和 → 按部门范围下发；Prompt 模板同样走提交 → 审核 → 发布，版本不可变，Agent 经 `/mcp` `prompts/get` 只读已发布版（参数与渲染结果均过 DLP）；专题知识包同样走起草 → 审核 → 发布，版本不可变，Agent 经 `/mcp` `kb_pack_list` / `kb_pack_get` 只读已发布版（综合与引用综合均过 DLP） |
 | 审计 | 哈希链防篡改审计日志，可验证完整性；原文与敏感值不落日志；`GET /api/audit/export` 按时间段导出 NDJSON（响应头附链校验结果），`POST /api/audit/archive` 把超保留期的事件归档为 gzip + 清单（默认保留 180 天，见 [docs/audit-retention.md](docs/audit-retention.md)） |
 | 用量统计 | `GET /api/stats` 按用户/部门/渠道/模型/Agent 类型/数据密级/处置聚合调用数与 tokens（被拦截调用计入 blocked）；直接聚合审计日志，数字与审计天然对账；支持 `since`/`until` 时间范围；每次调用按渠道配置的模型单价（输入/输出每百万 Token，USD）折算成本记进审计，统计含 `cost_usd` 与未定价调用数（见 [docs/cost-budgets.md](docs/cost-budgets.md)） |
+| 合规报表 | 按周 / 月生成周期报表：调用量与 Token、拦截与脱敏统计、Top 风险事件、渠道健康、令牌与终端概况；管理台可预览、导出 CSV 表格；与告警构成「审计有人看」闭环。报表只含统计与元数据，不含敏感原文；报表是审计证据，不是合规认证。最多保留 52 份（一年周报量），见 [docs/compliance-reports.md](docs/compliance-reports.md) |
 | 部门预算 | 部门月度预算硬上限（自然月 UTC）：本月花费达到上限后网关以 `429 department_budget_exceeded` 拒绝后续调用；花费达告警阈值时每月发一次提醒（见 [docs/cost-budgets.md](docs/cost-budgets.md)） |
 | 告警 Webhook | 拦截、密级越权、渠道熔断、账号锁定、Agent 证明降级触发结构化告警，可推送到企业微信/钉钉/飞书机器人与通用 Webhook；签名可选（通用：`X-AgentGate-Signature` HMAC 头；企微/钉钉/飞书：`timestamp` + `sign` 查询参数）；投递失败最多重试 3 次后放弃并记审计；管理台可配、可测 |
 | 可观测性 | 网关与 MCP 调用产生脱敏的 trace 与指标（OTLP/HTTP JSON），默认关闭；设置 `OTEL_EXPORTER_OTLP_ENDPOINT`（如 `http://localhost:4318`）后导出到 Jaeger / Tempo / Phoenix 等后端；Span 只含模型、渠道、密级、处置、Token 数等元数据，绝不含提示词、工具参数或模型回复；管理台可查看导出状态并一键测试连通性（见 [docs/opentelemetry.md](docs/opentelemetry.md)） |
-| 管理台 `/` | 内嵌 Web UI（中英双语），渠道/健康状态/用量统计/审计/设备批准/终端清单/例外审批/令牌限流/告警 Webhook/MCP 联邦上游/REST → MCP 工具/文件夹知识库/专题知识包/安装包分发/组织同步配置 |
+| 管理台 `/` | 内嵌 Web UI（中英双语），渠道/健康状态/用量统计/审计/合规报表/设备批准/终端清单/例外审批/令牌限流/告警 Webhook/MCP 联邦上游/REST → MCP 工具/文件夹知识库/专题知识包/安装包分发/组织同步配置 |
 
 ## 快速开始（PoC 演示模式）
 
