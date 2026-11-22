@@ -1347,6 +1347,41 @@ def main():
             time.sleep(0.5)
         check("F23 sidecar enforces current server policy", ver23 == pol23.get("version") and src23 in ("gateway", "cached"))
 
+    # F24: exception approval flow — apply as employee, approve as
+    # admin, spend the one-time grant on the blocked call; reuse and
+    # bogus grants fail closed, and the grant is never returned twice.
+    # A fresh BYOA token: the run-wide tok already spent its 20 RPM
+    # window on the earlier MCP checks, and a rate-limited grant call
+    # would fail for the wrong reason.
+    s, start24 = call("/api/setup/device/start", {"agent_type": "claude-code", "tier": "byoa"})
+    s, _ = call("/api/device/approve", {"code": start24["code"], "device_name": "ci-smoke-f24"}, token=sess)
+    s, poll24 = call("/api/setup/device/poll", {"code": start24["code"], "secret": start24["secret"]})
+    tok24 = poll24.get("token", "")
+    check("F24 BYOA token issued", s == 200 and tok24.startswith("ag_at_"))
+    s, exc = call("/api/exceptions", {"data_level": "confidential",
+        "reason": "XH-200 季度汇总需走自带 Agent",
+        "scope": "mock-pro 调用，汇总星河精密 XH-200 进度", "hours": 4}, token=sess)
+    exc24 = exc.get("id", "")
+    check("F24 employee applies for exception", s == 201 and exc.get("status") == "pending" and exc24.startswith("exc_"))
+    s, _ = call("/api/exceptions", {"data_level": "secret",
+        "reason": "need", "scope": "mock-pro", "hours": 4}, token=sess)
+    check("F24 top-secret exception closed by default", s == 400)
+    s, appr = call("/api/exceptions/" + exc24 + "/approve", {"note": "同意，仅此一次"}, token=admin_tok, method="POST")
+    grant24 = appr.get("grant", "")
+    check("F24 admin approves, grant issued once", s == 200 and grant24.startswith("exc_") and appr.get("exception", {}).get("status") == "approved")
+    s, got24 = call("/api/exceptions/" + exc24, token=sess, method="GET")
+    check("F24 grant never returned again", s == 200 and "grant" not in got24)
+    conf_q = {"model": "mock-pro", "messages": [{"role": "user", "content": "XH-200 的进度如何"}]}
+    s, _, b = chat_raw(tok24, conf_q, headers={"X-AgentGate-Exception-Grant": grant24})
+    check("F24 grant waives BYOA confidential block", s == 200 and "choices" in b)
+    s, _, b = chat_raw(tok24, conf_q, headers={"X-AgentGate-Exception-Grant": grant24})
+    check("F24 grant is one-time", s == 403 and b.get("error", {}).get("code") == "exception_grant_invalid")
+    s, _, b = chat_raw(tok24, conf_q, headers={"X-AgentGate-Exception-Grant": "exc_bogus"})
+    check("F24 bogus grant fails closed", s == 403 and b.get("error", {}).get("code") == "exception_grant_invalid")
+    s, audit24 = call("/api/audit?kind=exception", token=admin_tok)
+    acts24 = [e.get("action") for e in audit24.get("events", [])]
+    check("F24 exception audit trail", s == 200 and "exception_requested" in acts24 and "exception_approved" in acts24 and "exception_grant_used" in acts24)
+
     httpd.shutdown()
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)

@@ -513,6 +513,10 @@ type State struct {
 	// F23), keyed by terminal ID; one record per (user, agent
 	// type), maintained by sidecar heartbeats.
 	Terminals map[string]*terminal.Terminal `json:"terminals"`
+	// Exceptions holds the high-data-level call exception requests
+	// (backlog F24), keyed by exception ID; an approved record
+	// carries the hash of its one-time grant token.
+	Exceptions map[string]*Exception `json:"exceptions"`
 }
 
 // OrgProvider is one third-party directory (org sync) configuration
@@ -577,6 +581,7 @@ func newState() *State {
 		OrgProviders:        map[string]*OrgProvider{},
 		KnowledgePackages:   map[string]*KnowledgePackage{},
 		Terminals:           map[string]*terminal.Terminal{},
+		Exceptions:          map[string]*Exception{},
 	}
 }
 
@@ -651,6 +656,9 @@ func New(dir string) (*Store, error) {
 		}
 		if st.Terminals == nil {
 			st.Terminals = map[string]*terminal.Terminal{}
+		}
+		if st.Exceptions == nil {
+			st.Exceptions = map[string]*Exception{}
 		}
 		s.st = &st
 	} else if !os.IsNotExist(err) {

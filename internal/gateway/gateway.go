@@ -357,7 +357,9 @@ func (g *Gateway) cooldown() time.Duration {
 // order is deterministic. F17: a channel is a candidate only if its
 // trust type is compliant for the data level — secret data only ever
 // reaches a local model, never a cloud of any kind.
-func (g *Gateway) pickCandidates(model string, level store.DataLevel) []*store.Channel {
+// F24: ignoreTrust drops the trust filter — used only when a valid
+// exception grant waives the trust rule for this one call.
+func (g *Gateway) pickCandidates(model string, level store.DataLevel, ignoreTrust bool) []*store.Channel {
 	now := time.Now()
 	var out []*store.Channel
 	g.st.Read(func(st *store.State) {
@@ -365,7 +367,7 @@ func (g *Gateway) pickCandidates(model string, level store.DataLevel) []*store.C
 			if ch.Disabled || ch.MaxDataLevel < level {
 				continue
 			}
-			if !trustAllowed(level, ch.TrustTypeOrDefault()) {
+			if !ignoreTrust && !trustAllowed(level, ch.TrustTypeOrDefault()) {
 				continue
 			}
 			if ch.Health(now) == "cooling_down" {
@@ -395,9 +397,11 @@ func (g *Gateway) pickCandidates(model string, level store.DataLevel) []*store.C
 
 // channelsCoolingDown reports whether any channel serving model at a
 // sufficient data level exists but is currently cooling down. Only
-// trust-compliant channels count: a cooling cloud is not "eligible" for
-// secret data, so it must not turn a trust block into a 503.
-func (g *Gateway) channelsCoolingDown(model string, level store.DataLevel) bool {
+// trust-compliant channels count, unless ignoreTrust is set (an
+// exception grant waives the trust rule for this call): a cooling
+// cloud is not "eligible" for secret data, so it must not turn a
+// trust block into a 503.
+func (g *Gateway) channelsCoolingDown(model string, level store.DataLevel, ignoreTrust bool) bool {
 	cooling := false
 	now := time.Now()
 	g.st.Read(func(st *store.State) {
@@ -405,7 +409,7 @@ func (g *Gateway) channelsCoolingDown(model string, level store.DataLevel) bool 
 			if ch.Disabled || ch.MaxDataLevel < level {
 				continue
 			}
-			if !trustAllowed(level, ch.TrustTypeOrDefault()) {
+			if !ignoreTrust && !trustAllowed(level, ch.TrustTypeOrDefault()) {
 				continue
 			}
 			serves := false
@@ -426,8 +430,10 @@ func (g *Gateway) channelsCoolingDown(model string, level store.DataLevel) bool 
 // model at a sufficient data level but is ruled out by its trust type
 // for that level (e.g. secret data and only cloud channels serve the
 // model). It distinguishes "no compliant channel" from "no channel at
-// all" so the gateway can block with an explicit reason.
-func (g *Gateway) channelsBlockedByTrust(model string, level store.DataLevel) bool {
+// all" so the gateway can block with an explicit reason. With
+// ignoreTrust the trust rule is waived for this call, so nothing is
+// trust-blocked by definition.
+func (g *Gateway) channelsBlockedByTrust(model string, level store.DataLevel, ignoreTrust bool) bool {
 	blocked := false
 	g.st.Read(func(st *store.State) {
 		for _, ch := range st.Channels {
@@ -440,7 +446,7 @@ func (g *Gateway) channelsBlockedByTrust(model string, level store.DataLevel) bo
 					serves = true
 				}
 			}
-			if serves && !trustAllowed(level, ch.TrustTypeOrDefault()) {
+			if serves && !ignoreTrust && !trustAllowed(level, ch.TrustTypeOrDefault()) {
 				blocked = true
 			}
 		}
@@ -605,15 +611,35 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Exception grant (F24): validated after the banned-word block
+	// on purpose — a grant never waives banned content. It is only
+	// consulted (and only consumed) where the policy below would
+	// otherwise block this call.
+	grant, grantPresented := g.findGrant(r, user.ID, level)
+	grantWaived := false
+
 	// BYOA tier may never send confidential+ data anywhere.
 	if tok.Tier == store.TierBYOA && level >= store.LevelConfidential && !g.policy.DryRun {
-		ts.decision, ts.level = "block", level.String()
-		g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
-			Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
-			Detail: mergeDetail(detail, "reason", "byoa_tier_cannot_send_confidential")})
-		writeErr(w, http.StatusForbidden, "data_level_forbidden",
-			"self-provided agents may not send confidential data; use a managed agent or remove the sensitive content")
-		return
+		if grant != nil {
+			// A valid grant waives the tier block for this one call;
+			// the call is still desensitized when the channel
+			// demands it (below), and the grant is spent before
+			// forwarding.
+			grantWaived = true
+		} else {
+			if grantPresented {
+				ts.decision, ts.level = "block", level.String()
+				g.rejectInvalidGrant(w, user, tok, req.Model, level, detail)
+				return
+			}
+			ts.decision, ts.level = "block", level.String()
+			g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
+				Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
+				Detail: mergeDetail(detail, "reason", "byoa_tier_cannot_send_confidential")})
+			writeErr(w, http.StatusForbidden, "data_level_forbidden",
+				"self-provided agents may not send confidential data; use a managed agent or remove the sensitive content")
+			return
+		}
 	}
 
 	if !g.anyChannelForModel(req.Model) {
@@ -621,11 +647,31 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "model_not_available", "model is not available on this gateway")
 		return
 	}
-	candidates := g.pickCandidates(req.Model, level)
+	candidates := g.pickCandidates(req.Model, level, false)
+	if len(candidates) == 0 && grant != nil {
+		// No compliant channel for this level, but a valid grant
+		// waives the trust rule for this one call: fall back to the
+		// least-privileged channel that may receive the level at
+		// all. Compliant routing is always preferred — the waiver
+		// only fires when the policy would otherwise block.
+		if repicked := g.pickCandidates(req.Model, level, true); len(repicked) > 0 {
+			candidates = repicked
+			grantWaived = true
+		}
+	}
 	if len(candidates) == 0 {
 		// Model exists but no channel is allowed to receive this data
 		// level — or every eligible channel is cooling down.
-		if g.channelsCoolingDown(req.Model, level) {
+		if grantPresented {
+			// The caller presented a grant that does not cover this
+			// call (unknown, expired, used, another employee's, or
+			// for a lower level): fail closed with an explicit
+			// reason instead of a misleading policy block.
+			ts.decision, ts.level = "block", level.String()
+			g.rejectInvalidGrant(w, user, tok, req.Model, level, detail)
+			return
+		}
+		if g.channelsCoolingDown(req.Model, level, false) {
 			writeErr(w, http.StatusServiceUnavailable, "channels_in_cooldown",
 				"all eligible model channels are temporarily cooling down after repeated failures")
 			return
@@ -635,7 +681,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		// local-model channel). Block with an explicit reason instead of
 		// the generic no-channel error — the operator can see exactly
 		// which kind of channel is missing.
-		if g.channelsBlockedByTrust(req.Model, level) {
+		if g.channelsBlockedByTrust(req.Model, level, false) {
 			ts.decision, ts.level = "block", level.String()
 			g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 				Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
@@ -714,6 +760,18 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)
 			_, _ = w.Write(cachedBody)
+			return
+		}
+	}
+
+	// Exception grant (F24): spend it now that the gateway has
+	// committed to forwarding the waived call. If another request
+	// spent the same token first, block instead of double-spending;
+	// a grant is never consumed for a call that needed no waiver.
+	if grantWaived {
+		if !g.consumeGrant(grant, user, tok, req.Model, level, detail) {
+			ts.decision, ts.level = "block", level.String()
+			g.rejectInvalidGrant(w, user, tok, req.Model, level, detail)
 			return
 		}
 	}

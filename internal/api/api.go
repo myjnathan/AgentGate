@@ -48,6 +48,9 @@ type API struct {
 	// sidecarPolicy returns the policy snapshot a sidecar caches
 	// (backlog F23); nil when the server was started without one.
 	sidecarPolicyFn func() terminal.PolicySnapshot
+	// allowTopSecretExceptions is the operator opt-in for
+	// top-secret exceptions (backlog F24); default false.
+	allowTopSecretExceptions bool
 }
 
 func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log) *API {
@@ -166,6 +169,12 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/terminals", a.requireAdmin(a.listTerminals))
 	mux.HandleFunc("GET /api/terminals/{id}", a.requireAdmin(a.getTerminal))
 	mux.HandleFunc("GET /api/sidecar/policy", a.requireTokenOrSession(a.getSidecarPolicy))
+	mux.HandleFunc("POST /api/exceptions", a.requireSession(a.createException))
+	mux.HandleFunc("GET /api/exceptions", a.requireSession(a.listExceptions))
+	mux.HandleFunc("GET /api/exceptions/{id}", a.requireSession(a.getException))
+	mux.HandleFunc("POST /api/exceptions/{id}/approve", a.requireAdmin(a.approveException))
+	mux.HandleFunc("POST /api/exceptions/{id}/reject", a.requireAdmin(a.rejectException))
+	mux.HandleFunc("POST /api/exceptions/{id}/revoke", a.requireAdmin(a.revokeException))
 }
 
 // ---- helpers ----
