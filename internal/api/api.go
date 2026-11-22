@@ -104,6 +104,11 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/kb/folders/{id}/rescan", a.requireAdmin(a.rescanFolderSource))
 	mux.HandleFunc("POST /api/setup/device/start", a.deviceStart)
 	mux.HandleFunc("POST /api/setup/device/poll", a.devicePoll)
+	mux.HandleFunc("POST /api/setup/device/attest", a.deviceAttest)
+	mux.HandleFunc("GET /api/attestation/policies", a.requireAdmin(a.listAttestationPolicies))
+	mux.HandleFunc("POST /api/attestation/policies", a.requireAdmin(a.upsertAttestationPolicy))
+	mux.HandleFunc("DELETE /api/attestation/policies/{agent}", a.requireAdmin(a.deleteAttestationPolicy))
+	mux.HandleFunc("GET /api/attestation/reports", a.requireAdmin(a.listAttestationReports))
 }
 
 // ---- helpers ----
@@ -247,13 +252,43 @@ func (a *API) deviceApprove(w http.ResponseWriter, r *http.Request, u *store.Use
 	if in.DeviceName == "" {
 		in.DeviceName = "agent device"
 	}
-	if _, err := a.auth.ApproveDeviceCode(in.Code, u, in.DeviceName); err != nil {
+	// Approval issues the token; a managed request that fails
+	// attestation is downgraded to BYOA (backlog F14) rather than
+	// refused. The downgrade is its own audit event so the F5 alert
+	// pipeline can warn on it.
+	var requestedTier store.Tier
+	a.st.Read(func(st *store.State) {
+		if dc, ok := st.DeviceCodes[in.Code]; ok {
+			requestedTier = dc.Tier
+		}
+	})
+	_, issuedTier, err := a.auth.ApproveDeviceCode(in.Code, u, in.DeviceName)
+	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	verdict := ""
+	a.st.Read(func(st *store.State) {
+		if dc, ok := st.DeviceCodes[in.Code]; ok {
+			verdict = dc.AttestVerdict
+		}
+	})
 	a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, Kind: "auth", Action: "device_approved", Decision: "allow",
-		Detail: map[string]string{"code": in.Code}})
-	writeJSON(w, http.StatusOK, map[string]any{"status": "approved"})
+		Detail: map[string]string{"code": in.Code, "requested_tier": string(requestedTier),
+			"issued_tier": string(issuedTier), "attest_verdict": verdict}})
+	if issuedTier != requestedTier {
+		reasons := ""
+		a.st.Read(func(st *store.State) {
+			if dc, ok := st.DeviceCodes[in.Code]; ok {
+				reasons = strings.Join(dc.AttestReasons, ",")
+			}
+		})
+		a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, Kind: "attestation", Action: "attest_downgrade", Decision: "allow",
+			Detail: map[string]string{"code": in.Code, "requested_tier": string(requestedTier),
+				"issued_tier": string(issuedTier), "reasons": reasons}})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "approved",
+		"issued_tier": string(issuedTier), "attest_verdict": verdict})
 }
 
 // channelView is the admin-facing channel shape: the stored fields

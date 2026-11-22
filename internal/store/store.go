@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/myjnathan/agentgate/internal/attest"
 )
 
 // Tier is the trust tier of an agent installation / token.
@@ -184,6 +186,15 @@ type APIToken struct {
 	// (backlog F3). 0 = fall back to the tier default.
 	RPM int `json:"rpm_limit"`
 	TPM int `json:"tpm_limit"`
+	// Attested records whether this token was issued after a passing
+	// agent attestation (backlog F14); AttestVerdict is the
+	// attestation result at issuance ("pass" | "downgraded" |
+	// "unverified"). A managed-tier token with Attested=false was
+	// issued without an applicable policy or without a required
+	// report (unverified), never after a failed attestation — a
+	// failed attestation is downgraded to BYOA instead.
+	Attested      bool   `json:"attested"`
+	AttestVerdict string `json:"attest_verdict,omitempty"`
 }
 
 // Webhook is an alert delivery target (backlog F5). SecretEnc holds
@@ -258,6 +269,14 @@ type DeviceCode struct {
 	TokenID   string    `json:"token_id,omitempty"`
 	Token     string    `json:"-"` // plaintext token, delivered once on poll after approval
 	ExpiresAt time.Time `json:"expires_at"`
+	// Attestation is the evidence the agent submitted with this code
+	// (backlog F14); AttestVerdict/AttestReasons are the evaluation
+	// result at submission time (re-evaluated against the current
+	// policy at approval). Empty verdict means no report was ever
+	// submitted for this code.
+	Attestation   *attest.Report `json:"attestation,omitempty"`
+	AttestVerdict string         `json:"attest_verdict,omitempty"`
+	AttestReasons []string       `json:"attest_reasons,omitempty"`
 }
 
 // ChannelKey is one upstream API key held by a channel (backlog F12).
@@ -447,23 +466,28 @@ type State struct {
 	// KBFolderSources registers shared folders as knowledge-base
 	// sources (backlog F18); the file index is rebuilt in memory.
 	KBFolderSources map[string]*KBFolderSource `json:"kb_folder_sources"`
+	// AttestationPolicies holds the appraisal policy per agent type
+	// (backlog F14), keyed by agent type; an agent type with no entry
+	// has no attestation requirement.
+	AttestationPolicies map[string]*attest.Policy `json:"attestation_policies"`
 }
 
 func newState() *State {
 	return &State{
-		Users:           map[string]*User{},
-		Devices:         map[string]*Device{},
-		Tokens:          map[string]*APIToken{},
-		DeviceCodes:     map[string]*DeviceCode{},
-		Channels:        map[string]*Channel{},
-		Skills:          map[string]*Skill{},
-		KBDocs:          map[string]*KBDoc{},
-		Webhooks:        map[string]*Webhook{},
-		Upstreams:       map[string]*UpstreamServer{},
-		RESTTools:       map[string]*RESTTool{},
-		Prompts:         map[string]*PromptTemplate{},
-		Budgets:         map[string]*DepartmentBudget{},
-		KBFolderSources: map[string]*KBFolderSource{},
+		Users:               map[string]*User{},
+		Devices:             map[string]*Device{},
+		Tokens:              map[string]*APIToken{},
+		DeviceCodes:         map[string]*DeviceCode{},
+		Channels:            map[string]*Channel{},
+		Skills:              map[string]*Skill{},
+		KBDocs:              map[string]*KBDoc{},
+		Webhooks:            map[string]*Webhook{},
+		Upstreams:           map[string]*UpstreamServer{},
+		RESTTools:           map[string]*RESTTool{},
+		Prompts:             map[string]*PromptTemplate{},
+		Budgets:             map[string]*DepartmentBudget{},
+		KBFolderSources:     map[string]*KBFolderSource{},
+		AttestationPolicies: map[string]*attest.Policy{},
 	}
 }
 

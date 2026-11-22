@@ -17,20 +17,23 @@ import (
 )
 
 // tokenView is the admin-facing token shape: metadata and limits,
-// never the token hash or plaintext.
+// never the token hash or plaintext. Attested/AttestVerdict report
+// the attestation result at issuance (backlog F14).
 type tokenView struct {
-	ID         string     `json:"id"`
-	UserID     string     `json:"user_id"`
-	Username   string     `json:"username"`
-	AgentType  string     `json:"agent_type"`
-	Tier       store.Tier `json:"tier"`
-	RPMLimit   int        `json:"rpm_limit"`
-	TPMLimit   int        `json:"tpm_limit"`
-	MonthlyCap int64      `json:"monthly_cap_tokens"`
-	UsedTokens int64      `json:"used_tokens"`
-	ExpiresAt  time.Time  `json:"expires_at"`
-	Revoked    bool       `json:"revoked"`
-	CreatedAt  time.Time  `json:"created_at"`
+	ID            string     `json:"id"`
+	UserID        string     `json:"user_id"`
+	Username      string     `json:"username"`
+	AgentType     string     `json:"agent_type"`
+	Tier          store.Tier `json:"tier"`
+	Attested      bool       `json:"attested"`
+	AttestVerdict string     `json:"attest_verdict,omitempty"`
+	RPMLimit      int        `json:"rpm_limit"`
+	TPMLimit      int        `json:"tpm_limit"`
+	MonthlyCap    int64      `json:"monthly_cap_tokens"`
+	UsedTokens    int64      `json:"used_tokens"`
+	ExpiresAt     time.Time  `json:"expires_at"`
+	Revoked       bool       `json:"revoked"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 func (a *API) listTokens(w http.ResponseWriter, r *http.Request, u *store.User) {
@@ -42,7 +45,8 @@ func (a *API) listTokens(w http.ResponseWriter, r *http.Request, u *store.User) 
 		}
 		for _, tk := range st.Tokens {
 			out = append(out, tokenView{ID: tk.ID, UserID: tk.UserID, Username: users[tk.UserID],
-				AgentType: tk.AgentType, Tier: tk.Tier, RPMLimit: tk.RPM, TPMLimit: tk.TPM,
+				AgentType: tk.AgentType, Tier: tk.Tier, Attested: tk.Attested, AttestVerdict: tk.AttestVerdict,
+				RPMLimit: tk.RPM, TPMLimit: tk.TPM,
 				MonthlyCap: tk.MonthlyCap, UsedTokens: tk.UsedTokens,
 				ExpiresAt: tk.ExpiresAt, Revoked: tk.Revoked, CreatedAt: tk.CreatedAt})
 		}

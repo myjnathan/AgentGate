@@ -72,7 +72,7 @@ func setupTokensAPI(t *testing.T) (*httptest.Server, *store.Store, string, strin
 		}
 	})
 	dc := au.StartDeviceCode("claude-code", store.TierBYOA)
-	if _, err := au.ApproveDeviceCode(dc.Code, li, "test device"); err != nil {
+	if _, _, err := au.ApproveDeviceCode(dc.Code, li, "test device"); err != nil {
 		t.Fatal(err)
 	}
 	return srv, st, login("admin", "agentgate-admin"), login("lixiaofeng", "demo12345")

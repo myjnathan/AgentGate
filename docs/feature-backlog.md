@@ -268,9 +268,16 @@
 - 测试：billing 包 3 项（计价拆分/未定价为 0、自然月窗口含闰年二月、部门花费聚合：跨部门/跨月/拦截与缓存命中不计/未知部门不计）+ 网关预算测试 4 项（调用成本入审计且数额与 mock usage 拆分一致、流式调用同样计价、超预算后下一调用 429 `department_budget_exceeded` 且审计为 violation、其他部门不受影响、阈值警告每月恰一次、未定价渠道成本为 0）+ API 端点 1 项（预算 CRUD 全链路、种子预算、400/403/404/409）+ stats 聚合 1 项（cost_usd 汇总、unpriced_calls、currency USD）+ alert 分类 1 项（`budget_threshold` 为 warning）；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（gateway/api）全绿；`make smoke` 126 项断言 0 失败（新增 12 项 F13 断言）。
 - 已知注意点：同一模型、同一密级有多个渠道时按 ID 排序取首个——未配单价的渠道会使调用记为未定价（冒烟初版即因此失败：F12 轮建的 mock-eco 渠道随机 ID 排在 ch_cloud 之前、无单价，跨越预算的调用记了 $0；冒烟改用只由定价渠道服务的 mock-pro 钉住，产品行为本身不变）；成本是调用完成时才知道的精确数，一次调用本身可能把花费推过上限，拦的是下一次调用；审计归档（F4）把事件移出热日志后，归档段的花费不再计入当月预算（归档只对已过保留期的旧事件做，默认 180 天，不会动当月数据）；本地模型单价为 0，在统计中计入 `unpriced_calls`（0 价与未定价在事件中无法区分，是有意的保守口径）；单价是静态配置，上游调价后需管理员同步改。
 
-### F14 Agent 证明（Attestation） `todo`
+### F14 Agent 证明（Attestation） `done`（2026-11-22）
 - 来源：蓝图既有设计；WorkBuddy 企业版的终端管控（iOA 类）思想。
 - 适配：受管 Agent 登录时上报版本/配置哈希/插件清单，平台校验后才发受管级令牌；不符自动降级自带级 + 告警。
+- 借鉴点（IETF RATS RFC 9334，rfc9334；SPIFFE/SPIRE 官方文档 spiffe.io，2026-11-22 查阅）：
+  RATS 的角色模型：Attester 上报 Evidence，Verifier 按 Appraisal Policy 对照 Reference Values 与 Endorsements 评估、产出 Attestation Results，Relying Party 据此决策；Verifier 与 Relying Party 分离；新鲜度靠 nonce（或可信时钟/epoch）。SPIFFE/SPIRE 的做法是先证明、后发身份：节点证明与工作负载证明都通过才发 SVID，身份即证明链的结论，SVID 短期有效。
+  我们照此实现，但做三处改动：① 新鲜度不用单独 nonce——证明绑定到一次设备码（code + polling secret，单次使用、10 分钟过期），一份证明不能重放到下一次登录；② 失败不拒绝登录、而是降级为自带级（员工仍可用通用能力，敏感能力不落到不合规 Agent 手里），降级本身记审计并触发 F5 告警；③ 本轮只做软件自报证据的一致性校验，不做密码学绑定（硬件根信任留待后续，见 docs/attestation.md 已知限制）。
+  复用检查（Nathan 复用优先指示）：无可直接复制的代码——RATS 是架构文档、无参考实现；SPIRE/Veraison 是整套证明系统（Apache-2.0），与本功能体量不匹配；评估逻辑（版本比较 + 哈希白名单 + 插件白名单）约 150 行纯标准库，自研并在包注释与 DEVLOG 记录来源。
+- 实现：新包 `internal/attest`（`Report` 证据 + `Policy` 评估策略与参考值 + `Evaluate` 裁决 + `CompareVersion` semver 式比较，原因只记类别码、不记哈希值）；`store` 增加 `AttestationPolicies`（按 Agent 类型）与设备码上的证明记录、令牌上的 `Attested`/`AttestVerdict`；`auth.SubmitAttestation`（凭 code+secret 提交、绑定设备码，Agent 类型以设备码为准）+ `ApproveDeviceCode` 改为返回实发等级（通过才发受管级、失败或缺失且策略要求时降级自带级、无策略时按申请发并标记未验证）；`POST /api/setup/device/attest`（无会话，凭 code+secret）+ 管理 API `GET/POST /api/attestation/policies`、`DELETE /api/attestation/policies/{agent}`、`GET /api/attestation/reports`（读审计日志）；`alert.FromEvent` 新增 `attest_downgrade`（warning）；`ag-setup` 增加 `-version`/`-plugins`/`-guard` 并在登录时提交证明（配置哈希取待写网关配置骨架的 SHA-256、不含令牌，二进制哈希取自身可执行文件；提交失败只警告、不阻塞登录）；管理台新增「Agent 证明」页（策略增删 + 最近证明记录，中英双语）与令牌表证明列；演示种子 `dsh` 策略为最低版本 0.1.0 且要求提交证明；详见 docs/attestation.md。
+- 测试：attest 包 3 项（版本比较 12 组、评估 10 类分支含多原因并报、报告与策略校验）+ auth 包 1 项（通过→受管已验证、失败→自带级、未提交→自带级、无策略→受管未验证、错 secret/批准后提交拒绝）+ API 端点 1 项（种子策略、证明通过/失败/未提交全链路、降级审计事件、策略 CRUD、400/403/404）+ alert 分类 1 项（`attest_downgrade` 为 warning，`attest_submit` 本身不告警）+ 冒烟新增 9 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 136 项断言 0 失败。
+- 已知注意点：本轮证明为软件自报证据，不防有意伪造（见 docs/attestation.md）；证明只在登录时做一次，令牌 30 天有效期内不重评；网关/MCP 的旧测试里 dsh 受管令牌现改为先提交证明再批准（与真实 Agent 同款流程）。冒烟调试中发现并修复一个与 F14 无关的冒烟脚本旧缺陷：F5 段末尾 `httpd.shutdown()` 提前关闭了 Webhook 接收器，但 webhook 仍注册在服务端，F6 `tool_call_denied` 与 F14 `attest_downgrade` 继续向已死监听投递，请求躺在 socket 缓冲区无人读，Go 客户端等满 10 秒超时、重试积压致队列满后丢弃后续告警；已改为 main() 末尾再关闭接收器。另记后续改进：单个失效 webhook 会以 10 秒超时 + 退避重试阻塞分发队列（队头阻塞），可考虑单 webhook 超时隔离或并行投递。
 
 ### F15 本地隐私网关 sidecar `todo`
 - 来源：AstrLink 本地隐私网关（端侧检测与可逆脱敏、映射不出端）。
@@ -279,6 +286,12 @@
 ### F16 OpenTelemetry 导出 `todo`
 - 来源：ContextForge 的 OTel 可观测（Phoenix/Jaeger 等）。
 - 适配：网关与 MCP 调用产生 trace/metric，字段脱敏后导出。
+
+### F19 知识库语义索引层 `todo`
+- 来源：Nathan 2026-11-22 批准立项（AOCI-CODE 调研结论）：aoci-spec/aoci-code 是给编码 Agent 用的代码库认知索引（Go 本地 MCP，模型逐文件写 FRAS 语义条目）。
+- 适配：把「每对象一行语义条目（职责/关联/契约/约束）+ 标签坐标 + 索引治理（校验/漂移/覆盖率）」方法用于优化 F18 文件夹知识库的弱摘要（现为章节首句抽取式）；语义条目须模型生成，必须走网关分级路由/脱敏，绝密只给标题。
+- 借鉴策略（只借方法不抄代码）：AOCI-CODE 许可证为 FSL-1.1-MIT（Fair Source，非 OSI 开源、有竞品限制），与本项目 AGPL-3.0 不兼容，代码禁止复制；只借鉴其方法设计，自研实现，并在条目与 DEVLOG 写明来源与许可证不兼容原因。
+- 验收：待立项细化（本条目登记时仅定方向与借鉴策略）。
 
 ## 调研来源（持续更新）
 - LiteLLM / Portkey / Kong / Cloudflare AI Gateway 对比（genaimaturity.net、devopsness.com，2026-11 查阅）

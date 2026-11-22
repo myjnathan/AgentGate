@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/myjnathan/agentgate/internal/attest"
 	"github.com/myjnathan/agentgate/internal/auth"
 	"github.com/myjnathan/agentgate/internal/store"
 )
@@ -69,7 +70,7 @@ func TestDeviceCodeFlowDeliversTokenOnce(t *testing.T) {
 		t.Fatalf("wrong secret: got status=%q token=%q, want expired and empty token", status, token)
 	}
 
-	if _, err := svc.ApproveDeviceCode(dc.Code, user, "test laptop"); err != nil {
+	if _, _, err := svc.ApproveDeviceCode(dc.Code, user, "test laptop"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -102,7 +103,7 @@ func TestDeviceCodeFlowDeliversTokenOnce(t *testing.T) {
 
 func TestApproveUnknownDeviceCodeFails(t *testing.T) {
 	svc, _, user := newServiceWithUser(t, "alice", "demo12345")
-	if _, err := svc.ApproveDeviceCode("AG-NOPE", user, "x"); err == nil {
+	if _, _, err := svc.ApproveDeviceCode("AG-NOPE", user, "x"); err == nil {
 		t.Fatal("approving an unknown device code must fail")
 	}
 }
@@ -232,5 +233,85 @@ func TestOIDCUsernameSanitization(t *testing.T) {
 	}
 	if !strings.HasPrefix(user.Username, "oidc-") {
 		t.Fatalf("username = %q, want oidc- prefix", user.Username)
+	}
+}
+
+// TestAttestationDowngradesManagedTokens (backlog F14): a managed-tier
+// request is honoured only when attestation passes; a failed or
+// missing-required attestation issues a BYOA token instead.
+func TestAttestationDowngradesManagedTokens(t *testing.T) {
+	svc, st, user := newServiceWithUser(t, "alice", "demo12345")
+	st.WithLock(func(s *store.State) {
+		s.AttestationPolicies["dsh"] = &attest.Policy{
+			AgentType: "dsh", MinVersion: "1.2.0", RequireReport: true,
+		}
+	})
+	good := attest.Report{Version: "1.2.0", GuardApplied: true}
+	bad := attest.Report{Version: "1.1.9", GuardApplied: true}
+
+	// Passing report -> managed, attested.
+	dc := svc.StartDeviceCode("dsh", store.TierManaged)
+	if v, err := svc.SubmitAttestation(dc.Code, dc.Secret, good); err != nil || v.Status != attest.VerdictPass {
+		t.Fatalf("submit good report: verdict=%+v err=%v", v, err)
+	}
+	plain, issued, err := svc.ApproveDeviceCode(dc.Code, user, "good laptop")
+	if err != nil || issued != store.TierManaged {
+		t.Fatalf("approve good: issued=%v err=%v", issued, err)
+	}
+	tok, _, ok := svc.ResolveToken(plain)
+	if !ok || !tok.Attested || tok.AttestVerdict != attest.VerdictPass {
+		t.Fatalf("good token: attested=%v verdict=%q ok=%v", tok.Attested, tok.AttestVerdict, ok)
+	}
+
+	// Failing report -> BYOA, not attested, verdict downgraded.
+	dc = svc.StartDeviceCode("dsh", store.TierManaged)
+	if v, err := svc.SubmitAttestation(dc.Code, dc.Secret, bad); err != nil || v.Status != attest.VerdictDowngraded {
+		t.Fatalf("submit bad report: verdict=%+v err=%v", v, err)
+	}
+	plain, issued, err = svc.ApproveDeviceCode(dc.Code, user, "old laptop")
+	if err != nil || issued != store.TierBYOA {
+		t.Fatalf("approve bad: issued=%v err=%v", issued, err)
+	}
+	tok, _, ok = svc.ResolveToken(plain)
+	if !ok || tok.Attested || tok.AttestVerdict != attest.VerdictDowngraded {
+		t.Fatalf("bad token: attested=%v verdict=%q ok=%v", tok.Attested, tok.AttestVerdict, ok)
+	}
+
+	// No report at all while one is required -> BYOA.
+	dc = svc.StartDeviceCode("dsh", store.TierManaged)
+	plain, issued, err = svc.ApproveDeviceCode(dc.Code, user, "silent laptop")
+	if err != nil || issued != store.TierBYOA {
+		t.Fatalf("approve without report: issued=%v err=%v", issued, err)
+	}
+	tok, _, ok = svc.ResolveToken(plain)
+	if !ok || tok.AttestVerdict != attest.VerdictDowngraded {
+		t.Fatalf("silent token: verdict=%q ok=%v", tok.AttestVerdict, ok)
+	}
+
+	// No policy for the agent type -> requested tier, unverified.
+	dc = svc.StartDeviceCode("claude-code", store.TierManaged)
+	plain, issued, err = svc.ApproveDeviceCode(dc.Code, user, "other laptop")
+	if err != nil || issued != store.TierManaged {
+		t.Fatalf("approve without policy: issued=%v err=%v", issued, err)
+	}
+	tok, _, ok = svc.ResolveToken(plain)
+	if !ok || tok.Attested || tok.AttestVerdict != attest.VerdictUnverified {
+		t.Fatalf("unverified token: attested=%v verdict=%q ok=%v", tok.Attested, tok.AttestVerdict, ok)
+	}
+
+	// Wrong polling secret cannot submit a report.
+	dc = svc.StartDeviceCode("dsh", store.TierManaged)
+	if _, err := svc.SubmitAttestation(dc.Code, "poll_wrongsecret", good); err == nil {
+		t.Fatal("attestation with the wrong secret must fail")
+	}
+	// A report submitted after approval is too late.
+	if _, err := svc.SubmitAttestation(dc.Code, dc.Secret, good); err != nil {
+		t.Fatalf("submit before approval: %v", err)
+	}
+	if _, _, err := svc.ApproveDeviceCode(dc.Code, user, "late laptop"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if _, err := svc.SubmitAttestation(dc.Code, dc.Secret, good); err == nil {
+		t.Fatal("attestation after approval must fail")
 	}
 }
