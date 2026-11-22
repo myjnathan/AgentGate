@@ -382,6 +382,29 @@
       </div>
     </section>
 
+    <!-- knowledge packages -->
+    <section class="page" id="page-knowpack">
+      <div class="pageHead"><div><h1 data-i18n="knowpackTitle">专题知识包</h1><p class="desc" data-i18n="knowpackDesc">围绕一个具体工作问题，把若干文件精选成一个知识包：来源清单（配方）+ 综合说明；审批发布后 Agent 经 MCP 按包取用，综合中每条结论必须带原文回指。</p></div>
+      <div class="pageActions"><button class="btn ghost" onclick="loadKnowpacks()" data-i18n="refresh">刷新</button></div></div>
+      <div class="card"><h3 data-i18n="addKnowpack">新建知识包</h3>
+        <div class="formGrid">
+          <div><label class="f" data-i18n="name">名称</label><input id="kpName" placeholder="e.g. onboarding_essentials"></div>
+          <div><label class="f" data-i18n="desc2">描述</label><input id="kpDesc" placeholder="description"></div>
+          <div><label class="f" data-i18n="scope">范围</label><input id="kpScope" placeholder="* or 研发部,注册部"></div>
+          <div><label class="f" data-i18n="kpRefsL">引用其他包（ID，逗号分隔）</label><input id="kpRefs" placeholder="kp_other"></div>
+        </div>
+        <div style="margin-bottom:10px"><label class="f" data-i18n="kpSourcesL">来源（JSON 数组：doc_id + 可选 node_id）</label><textarea id="kpSources" style="min-height:52px">[{"doc_id":"folder:kbf_demo_folders:考勤与请假制度.md"}]</textarea></div>
+        <div style="margin-bottom:10px"><label class="f" data-i18n="kpContentL">综合正文（用途 / 证据用法 / 边界 + 结论）</label><textarea id="kpContent">综合：新员工入职须知——请假须提前提交申请，加班每月不得超过 36 小时。</textarea></div>
+        <div style="margin-bottom:10px"><label class="f" data-i18n="kpCitesL">引用回指（JSON 数组：doc_id + node_id）</label><textarea id="kpCites" style="min-height:52px">[{"doc_id":"folder:kbf_demo_folders:考勤与请假制度.md","node_id":"n1"}]</textarea></div>
+        <div style="margin-bottom:12px"><label class="f" data-i18n="kpChangeNoteL">变更说明</label><input id="kpNote" placeholder="初版"></div>
+        <div class="row"><button class="btn" onclick="addKnowpack()" data-i18n="addBtn">添加</button><span id="kpMsg" class="msg"></span></div>
+        <p class="hint" style="margin-top:10px" data-i18n="knowpackHint">包的密级取来源与引用包的最高密级；引用只能向下（低密级包不得嵌入高密级内容）；引用回指由索引树填入（文件 + 章节 + 页码），不接受手写回指；每次创建 / 加版 / 审核 / 发布 / 删除都记入审计（变更回执）。</p>
+      </div>
+      <div class="card"><h3 data-i18n="knowpackList">知识包列表</h3>
+        <table id="knowpacks"><thead><tr><th data-i18n="name">名称</th><th data-i18n="status">状态</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="versions">版本</th><th data-i18n="scope">范围</th><th></th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
     <!-- skills -->
     <section class="page" id="page-skills">
       <div class="pageHead"><div><h1 data-i18n="skillsTitle">技能（Skills）</h1><p class="desc" data-i18n="skillsDesc">SKILL.md 技能包的提交、审核与发布；发布后员工的 Agent 可按部门范围取用。</p></div>
@@ -560,6 +583,10 @@ const I18N = {
     skillsTitle:"技能（Skills）",skillsDesc:"SKILL.md 技能包的提交、审核与发布；发布后员工的 Agent 可按部门范围取用。",submitSkill:"提交技能",skillList:"技能列表",version:"版本",status:"状态",scope:"范围",updated:"更新",submitBtn:"提交审核",
     promptsTitle:"Prompt 模板库",promptsDesc:"模板走提交 → 审核 → 发布：新版本只追加不改旧版，发布后才对 Agent 可见；回滚即重新发布旧版本。",addPrompt:"新建模板",promptList:"模板列表",desc2:"描述",minTier:"最低等级",versions:"版本",
     ptContentL:"模板正文（{{name}} 为占位符）",ptArgsL:"参数定义（JSON 数组）",promptsHint:"Agent 经 /mcp prompts/get 读取已发布版本；参数先过 DLP，渲染结果再过 DLP + 自带级脱敏。",
+    knowpackTitle:"专题知识包",knowpackDesc:"围绕一个具体工作问题，把若干文件精选成一个知识包：来源清单（配方）+ 综合说明；审批发布后 Agent 经 MCP 按包取用，综合中每条结论必须带原文回指。",addKnowpack:"新建知识包",knowpackList:"知识包列表",
+    kpSourcesL:"来源（JSON 数组：doc_id + 可选 node_id）",kpRefsL:"引用其他包（ID，逗号分隔）",kpContentL:"综合正文（用途 / 证据用法 / 边界 + 结论）",kpCitesL:"引用回指（JSON 数组：doc_id + node_id）",kpChangeNoteL:"变更说明",
+    kpStale:"配方过期",kpNewVersion:"＋版本",kpSources:"来源",kpRefs:"引用",
+    knowpackHint:"包的密级取来源与引用包的最高密级；引用只能向下（低密级包不得嵌入高密级内容）；引用回指由索引树填入（文件 + 章节 + 页码），不接受手写回指；每次创建 / 加版 / 审核 / 发布 / 删除都记入审计（变更回执）。",
     fedTitle:"MCP 联邦上游",fedDesc:"把外部 MCP 服务器联邦进网关：工具以「命名空间.工具名」出现，调用同样过授权、DLP 与审计。",addUpstream:"添加上游",upstreamList:"上游列表",namespace:"命名空间",
     fedHint:"凭据加密存储、永不回显；调用前按上游的最高密级与最低等级做授权与 DLP。",
     restTitle:"REST → MCP 工具",restDesc:"把公司存量 REST 接口注册成 MCP 工具，任何 Agent 都能以统一方式调用。",addRest:"注册接口",restList:"已注册接口",rtSchemaL:"参数 Schema（JSON）",
@@ -602,6 +629,10 @@ const I18N = {
     skillsTitle:"Skills",skillsDesc:"Submit, review and publish SKILL.md packages; published skills are available to agents within their department scope.",submitSkill:"Submit a skill",skillList:"Skills",version:"Version",status:"Status",scope:"Scope",updated:"Updated",submitBtn:"Submit for review",
     promptsTitle:"Prompt templates",promptsDesc:"Templates follow submit → review → publish: new versions only append; a version serves agents only after publishing, and rolling back means re-publishing an older version.",addPrompt:"New template",promptList:"Templates",desc2:"Description",minTier:"Min tier",versions:"Versions",
     ptContentL:"Template body ({{name}} placeholders)",ptArgsL:"Arguments (JSON array)",promptsHint:"Agents read the published version via /mcp prompts/get; arguments pass DLP first, and the rendered text passes DLP + BYOA redaction.",
+    knowpackTitle:"Knowledge packages",knowpackDesc:"Curate several files around one work problem into a package: source list (recipe) + synthesis; after review and publication agents read it via MCP, every conclusion backed by a citation.",addKnowpack:"New knowledge package",knowpackList:"Knowledge packages",
+    kpSourcesL:"Sources (JSON array: doc_id + optional node_id)",kpRefsL:"Reference other packages (IDs, comma-separated)",kpContentL:"Synthesis (purpose / evidence usage / boundaries + conclusions)",kpCitesL:"Citations (JSON array: doc_id + node_id)",kpChangeNoteL:"Change note",
+    kpStale:"recipe stale",kpNewVersion:"+ version",kpSources:"Sources",kpRefs:"References",
+    knowpackHint:"A package's level is the highest of its sources and referenced packages; references are downward-only (a low-level package cannot embed high-level content); citations are filled in from the index tree (file + section + pages), never hand-written; every create / version / review / publish / delete is audited (change receipt).",
     fedTitle:"Federated MCP upstreams",fedDesc:"Federate external MCP servers through the gateway: tools appear as namespace.tool and calls pass the same authorization, DLP and audit.",addUpstream:"Add upstream",upstreamList:"Upstreams",namespace:"Namespace",
     fedHint:"Credentials are encrypted at rest and never echoed; calls are authorized by the upstream's max data level and minimum tier, with DLP applied.",
     restTitle:"REST → MCP tools",restDesc:"Register existing REST endpoints as MCP tools any agent can call in a uniform way.",addRest:"Register endpoint",restList:"Registered endpoints",rtSchemaL:"Input schema (JSON)",
@@ -646,7 +677,7 @@ const NAV = [
   {group:"navOps", items:[["dashboard","◈","dashTitle"],["stats","▦","statsTitle"],["audit","☰","auditTitle"]]},
   {group:"navAccess", items:[["device","▣","deviceTitle"],["tokens","⚿","tokensTitle"],["attest","✓","attestTitle"],["orgsync","⚭","orgsyncTitle"]]},
   {group:"navModel", items:[["channels","⇄","channelsTitle"]]},
-  {group:"navCap", items:[["kb","🗀","foldersTitle"],["skills","✦","skillsTitle"],["prompts","✎","promptsTitle"],["upstreams","⛓","fedTitle"],["resttools","⇢","restTitle"]]},
+  {group:"navCap", items:[["kb","🗀","foldersTitle"],["skills","✦","skillsTitle"],["prompts","✎","promptsTitle"],["knowpack","🗂","knowpackTitle"],["upstreams","⛓","fedTitle"],["resttools","⇢","restTitle"]]},
   {group:"navSys", items:[["alerts","⚠","alertsTitle"],["packages","▤","packagesTitle"]]}
 ];
 let current = "dashboard";
@@ -661,7 +692,7 @@ function showPage(id){
   document.querySelectorAll(".page").forEach(p=>p.classList.toggle("active", p.id==="page-"+id));
   document.querySelectorAll(".navItem").forEach(n=>n.classList.toggle("active", n.getAttribute("data-nav")===id));
   const loaders = {dashboard:loadDashboard, stats:()=>{loadStats(); loadCache(); loadBudgets(); loadOtel();}, audit:loadAudit, device:loadSidecar, tokens:loadTokens, attest:loadAttest, channels:loadChannels,
-    kb:loadFolders, skills:loadSkills, prompts:loadPrompts, upstreams:loadUpstreams, resttools:loadRESTTools, alerts:loadAlerts, packages:loadPackages, orgsync:loadOrgProviders};
+    kb:loadFolders, skills:loadSkills, prompts:loadPrompts, knowpack:loadKnowpacks, upstreams:loadUpstreams, resttools:loadRESTTools, alerts:loadAlerts, packages:loadPackages, orgsync:loadOrgProviders};
   if(loaders[id]) loaders[id]();
 }
 
@@ -1002,6 +1033,59 @@ async function publishPrompt(id, currentVer){
 }
 async function deletePrompt(id){
   try{ await api("/api/prompts/"+id,{method:"DELETE"}); toast(T("deleted")); loadPrompts();
+  }catch(e){ toast(e.message, false); }
+}
+
+/* ---------- knowledge packages ---------- */
+async function loadKnowpacks(){
+  try{ const d = await api("/api/kb/packages");
+    document.querySelector("#knowpacks tbody").innerHTML = (d.packages||[]).map(p=>{
+      const v = p.versions[p.versions.length-1]||{};
+      const verForm = `<tr id="kpv-${p.id}" style="display:none"><td colspan="6"><div style="display:grid;gap:8px;padding:6px 0">
+        <textarea id="kpv-content-${p.id}" placeholder="synthesis">${esc(v.content||"")}</textarea>
+        <textarea id="kpv-sources-${p.id}" style="min-height:44px" placeholder='[{"doc_id":"..."}]'>${esc(JSON.stringify(v.sources||[]))}</textarea>
+        <textarea id="kpv-cites-${p.id}" style="min-height:44px" placeholder='[{"doc_id":"...","node_id":"n1"}]'>${esc(JSON.stringify((v.citations||[]).map(c=>({doc_id:c.doc_id,node_id:c.node_id}))))}</textarea>
+        <div class="row"><input id="kpv-refs-${p.id}" placeholder="references (comma-separated ids)" value="${esc((v.references||[]).join(","))}" style="flex:1"><input id="kpv-note-${p.id}" placeholder="change note" style="flex:1"></div>
+        <div class="row"><button class="btn small" onclick="submitKnowpackVersion('${p.id}')">${T("save")}</button></div>
+      </div></td></tr>`;
+      return `<tr><td style="font-weight:600;color:var(--ink)">${esc(p.name)}${p.stale?` <span class="pill" title="stale">⚠ ${T("kpStale")}</span>`:""}</td><td><span class="pill ${esc(p.status)}">${esc(p.status)}</span></td><td>${pill(p.level||"—")}</td><td>v${p.current_version} / published v${p.published_version||"—"}</td><td class="muted">${esc(p.scope||"")}</td>`+
+      `<td style="white-space:nowrap">${p.status==="in_review"?`<button class="btn ghost small" onclick="reviewKnowpack('${p.id}',true)">${T("approve")}</button> <button class="btn ghost small danger" onclick="reviewKnowpack('${p.id}',false)">${T("reject")}</button> `:""}<button class="btn ghost small" onclick="toggleKnowpackVersion('${p.id}')">${T("kpNewVersion")}</button> <button class="btn ghost small" onclick="publishKnowpack('${p.id}', ${p.current_version})">${T("publish")}</button> <button class="btn ghost small danger" onclick="deleteKnowpack('${p.id}')">✕</button></td></tr>`+verForm;
+    }).join("") || `<tr><td colspan="6" class="empty">${T("empty")}</td></tr>`;
+  }catch(e){ toast(e.message, false); }
+}
+async function addKnowpack(){
+  try{ const sources = JSON.parse(kpSources.value||"[]"); const cites = JSON.parse(kpCites.value||"[]");
+    const refs = kpRefs.value.split(",").map(s=>s.trim()).filter(Boolean);
+    await api("/api/kb/packages",{method:"POST",body:JSON.stringify({name:kpName.value.trim(),description:kpDesc.value.trim(),scope:kpScope.value.trim(),content:kpContent.value,sources:sources,citations:cites,references:refs,change_note:kpNote.value.trim()})});
+    setMsg("kpMsg", "✓ saved (in_review)"); kpName.value=""; kpDesc.value=""; kpScope.value=""; kpRefs.value=""; kpNote.value=""; loadKnowpacks();
+  }catch(e){ setMsg("kpMsg", e.message, false); }
+}
+function toggleKnowpackVersion(id){
+  const row = document.getElementById("kpv-"+id);
+  if(row) row.style.display = row.style.display==="none" ? "" : "none";
+}
+async function submitKnowpackVersion(id){
+  try{ const sources = JSON.parse(document.getElementById("kpv-sources-"+id).value||"[]");
+    const cites = JSON.parse(document.getElementById("kpv-cites-"+id).value||"[]");
+    const refs = document.getElementById("kpv-refs-"+id).value.split(",").map(s=>s.trim()).filter(Boolean);
+    const d = await api("/api/kb/packages/"+id+"/versions",{method:"POST",body:JSON.stringify({content:document.getElementById("kpv-content-"+id).value,sources:sources,citations:cites,references:refs,change_note:document.getElementById("kpv-note-"+id).value.trim()})});
+    toast("✓ v"+d.version); loadKnowpacks();
+  }catch(e){ toast(e.message, false); }
+}
+async function reviewKnowpack(id, approveIt){
+  try{ await api("/api/kb/packages/"+id+"/review",{method:"POST",body:JSON.stringify({approve:approveIt})});
+    toast(T("saved")); loadKnowpacks();
+  }catch(e){ toast(e.message, false); }
+}
+async function publishKnowpack(id, currentVer){
+  try{ const raw = prompt("publish version", String(currentVer));
+    if(raw===null) return;
+    const d = await api("/api/kb/packages/"+id+"/publish",{method:"POST",body:JSON.stringify({version:parseInt(raw,10)})});
+    toast("✓ published v"+d.published_version); loadKnowpacks();
+  }catch(e){ toast(e.message, false); }
+}
+async function deleteKnowpack(id){
+  try{ await api("/api/kb/packages/"+id,{method:"DELETE"}); toast(T("deleted")); loadKnowpacks();
   }catch(e){ toast(e.message, false); }
 }
 

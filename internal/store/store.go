@@ -504,6 +504,10 @@ type State struct {
 	// ID; the app secret is encrypted with the master key and
 	// never echoed back.
 	OrgProviders map[string]*OrgProvider `json:"org_providers"`
+	// KnowledgePackages holds the curated knowledge packages
+	// (backlog F22), keyed by package ID; each package is a
+	// recipe (sources + references) plus versioned synthesis.
+	KnowledgePackages map[string]*KnowledgePackage `json:"knowledge_packages"`
 }
 
 // OrgProvider is one third-party directory (org sync) configuration
@@ -566,6 +570,7 @@ func newState() *State {
 		Packages:            map[string]*distrib.Package{},
 		PackageUploads:      map[string]*distrib.Upload{},
 		OrgProviders:        map[string]*OrgProvider{},
+		KnowledgePackages:   map[string]*KnowledgePackage{},
 	}
 }
 
@@ -634,6 +639,9 @@ func New(dir string) (*Store, error) {
 		}
 		if st.OrgProviders == nil {
 			st.OrgProviders = map[string]*OrgProvider{}
+		}
+		if st.KnowledgePackages == nil {
+			st.KnowledgePackages = map[string]*KnowledgePackage{}
 		}
 		s.st = &st
 	} else if !os.IsNotExist(err) {

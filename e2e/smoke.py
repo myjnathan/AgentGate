@@ -1207,6 +1207,80 @@ def main():
     s, _ = call("/api/orgsync/providers", token=sess, method="GET")
     check("orgsync employee cannot list providers", s == 403)
 
+    # F22: curated knowledge packages. The demo seed ships a published
+    # internal package (onboarding_essentials); the flow below creates
+    # a confidential package and exercises the governance rules.
+    s, pkgs = call("/api/kb/packages", token=admin_tok, method="GET")
+    seed_pkg = next((p for p in pkgs.get("packages", []) if p.get("name") == "onboarding_essentials"), None)
+    check("seeded knowledge package published", s == 200 and seed_pkg is not None
+          and seed_pkg.get("status") == "published" and seed_pkg.get("level") == "internal"
+          and len(seed_pkg.get("versions", [{}])[0].get("citations", [])) == 3)
+    text, is_err = mcp_text(tok, "kb_pack_get", {"name": "onboarding_essentials"})
+    pack = json.loads(text) if not is_err else {}
+    check("MCP kb_pack_get serves seeded package to BYOA", not is_err
+          and "请假须提前在系统提交申请" in pack.get("synthesis", "")
+          and len(pack.get("citations", [])) == 3
+          and pack.get("citations", [{}])[0].get("chapter") == "请假流程")
+    text, _ = mcp_text(tok, "kb_pack_list", {})
+    listed = json.loads(text).get("packages", [])
+    check("MCP kb_pack_list lists seeded package for BYOA",
+          any(p.get("name") == "onboarding_essentials" for p in listed))
+    # Create a confidential package over the confidential doc; an
+    # internal package may not reference it (upward reference), and a
+    # citation naming an unknown section is refused.
+    s, conf_pkg = call("/api/kb/packages",
+                       {"name": "vendor_onboarding", "description": "供应商准入", "scope": "*",
+                        "content": "综合：供应商准入要求见机密资料。",
+                        "sources": [{"doc_id": conf_doc["doc_id"]}],
+                        "citations": [{"doc_id": conf_doc["doc_id"], "node_id": "n0"}],
+                        "change_note": "初版"}, token=admin_tok)
+    check("knowledge package created at confidential level",
+          s == 201 and conf_pkg.get("level") == "confidential")
+    conf_id = conf_pkg.get("id", "")
+    s, _ = call("/api/kb/packages",
+                {"name": "bad_ref", "content": "综合。",
+                 "sources": [{"doc_id": int_doc["doc_id"]}],
+                 "citations": [{"doc_id": int_doc["doc_id"], "node_id": "n1"}],
+                 "references": [conf_id]}, token=admin_tok)
+    check("upward package reference refused", s == 400)
+    s, _ = call("/api/kb/packages",
+                {"name": "bad_cite", "content": "综合。",
+                 "sources": [{"doc_id": int_doc["doc_id"]}],
+                 "citations": [{"doc_id": int_doc["doc_id"], "node_id": "n9"}]}, token=admin_tok)
+    check("citation naming unknown section refused", s == 400)
+    s, _ = call("/api/kb/packages/" + conf_id, token=sess, method="DELETE")
+    check("employee cannot delete package", s == 403)
+    s, rev = call("/api/kb/packages/" + conf_id + "/review", {"approve": True}, token=admin_tok)
+    check("confidential package published", s == 200 and rev.get("status") == "published")
+    text, is_err = mcp_text(tok, "kb_pack_get", {"name": "vendor_onboarding"})
+    check("MCP kb_pack_get hides confidential package from BYOA", is_err)
+    text, _ = mcp_text(tok2, "kb_pack_get", {"name": "vendor_onboarding"})
+    pack = json.loads(text)
+    check("MCP kb_pack_get serves confidential package to managed",
+          pack.get("level") == "confidential" and pack.get("sources", [{}])[0].get("file", "").endswith(".pdf"))
+    text, _ = mcp_text(tok, "kb_pack_list", {})
+    listed = json.loads(text).get("packages", [])
+    check("MCP kb_pack_list hides confidential package from BYOA",
+          not any(p.get("name") == "vendor_onboarding" for p in listed))
+    # Downward reference: the confidential package v2 references the
+    # published internal package; managed readers get the referenced
+    # synthesis inline.
+    s, added = call("/api/kb/packages/" + conf_id + "/versions",
+                    {"content": "综合 v2：供应商准入要求见机密资料，并引用入职必读的请假流程。",
+                     "sources": [{"doc_id": conf_doc["doc_id"]}],
+                     "citations": [{"doc_id": conf_doc["doc_id"], "node_id": "n0"}],
+                     "references": [seed_pkg["id"]], "change_note": "引用内部包"}, token=admin_tok)
+    check("downward package reference accepted", s == 201 and added.get("level") == "confidential")
+    s, pub = call("/api/kb/packages/" + conf_id + "/publish", {"version": 2}, token=admin_tok)
+    check("confidential package v2 published", s == 200 and pub.get("published_version") == 2)
+    text, _ = mcp_text(tok2, "kb_pack_get", {"name": "vendor_onboarding"})
+    pack = json.loads(text)
+    check("MCP kb_pack_get inlines referenced synthesis",
+          len(pack.get("references", [])) == 1
+          and pack["references"][0].get("name") == "onboarding_essentials"
+          and "请假须提前在系统提交申请" in pack["references"][0].get("synthesis", "")
+          and not pack.get("withheld_references"))
+
     httpd.shutdown()
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)

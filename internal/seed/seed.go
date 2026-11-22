@@ -183,6 +183,30 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 				Level: store.LevelConfidential, Department: "采购部",
 				Enabled: true, CreatedAt: time.Now()}
 		}
+		// Demo knowledge package (backlog F22): a curated package
+		// over the demo internal folder, published v1. The citations
+		// are filled from the known demo file — its tree is n0 root,
+		// n1 请假流程, n2 加班管理, n3 考勤打卡, all on page 1 (the
+		// file is 13 lines; see docs/knowledge-packages.md).
+		if _, ok := demoFolderPath("公司制度"); ok {
+			docID := "folder:kbf_demo_folders:考勤与请假制度.md"
+			s.KnowledgePackages["kp_onboarding"] = &store.KnowledgePackage{
+				ID: "kp_onboarding", Name: "onboarding_essentials",
+				Description: "新员工入职必读：请假、加班与考勤打卡的要点综合",
+				Scope:       "*", Status: "published", CurrentVersion: 1, PublishedVersion: 1,
+				Versions: []store.PackageVersion{{Version: 1,
+					Content: "综合：新员工入职须知——请假须提前在系统提交申请，经部门负责人审批后生效，年假每年 5 天起、满 10 年为 10 天，病假须附医院证明，事假每年不得超过 10 天；加班须提前报备，调休优先于加班费，每月加班不得超过 36 小时；考勤标准时间为 9:00–18:00、午休 12:00–13:00，迟到超过 3 次记旷工半日。",
+					Citations: []store.PackageCitation{
+						{DocID: docID, NodeID: "n1", File: "考勤与请假制度.md", Chapter: "请假流程", Pages: "1"},
+						{DocID: docID, NodeID: "n2", File: "考勤与请假制度.md", Chapter: "加班管理", Pages: "1"},
+						{DocID: docID, NodeID: "n3", File: "考勤与请假制度.md", Chapter: "考勤打卡", Pages: "1"},
+					},
+					Sources:   []store.PackageSource{{DocID: docID}},
+					Level:     "internal",
+					CreatedAt: time.Now(), CreatedBy: admin.ID}},
+				AuthorID: admin.ID, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+			}
+		}
 	})
 	return st.Save()
 }
