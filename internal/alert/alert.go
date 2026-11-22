@@ -92,6 +92,12 @@ func FromEvent(ev audit.Event) (Alert, bool) {
 	case ev.Kind == "terminal" && ev.Action == "terminal_drift":
 		a.Severity = "warning"
 		a.Title = "终端配置漂移（版本/配置/插件不符合证明策略）"
+	case ev.Kind == "exception" && ev.Action == "exception_requested":
+		a.Severity = "warning"
+		a.Title = "收到高密级调用例外申请"
+	case ev.Kind == "exception" && ev.Action == "exception_approved":
+		a.Severity = "warning"
+		a.Title = "高密级调用例外申请已批准（一次性放行凭证已发）"
 	case ev.Kind == "auth" && ev.Action == "account_locked":
 		a.Severity = "critical"
 		a.Title = "账号因多次登录失败被锁定"

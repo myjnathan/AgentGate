@@ -46,6 +46,10 @@
 //	                     with {"model": true} asks this chat-completions
 //	                     endpoint to write FRAS entries; unset = model
 //	                     generation unavailable (extractive only).
+//	AGENTGATE_ALLOW_TOPSECRET_EXCEPTIONS
+//	                     exception approval flow (backlog F24): set
+//	                     to "1" to let top-secret calls be excepted;
+//	                     unset/anything else keeps them closed.
 package main
 
 import (
@@ -247,6 +251,13 @@ func main() {
 	rest.SetSidecarPolicy(func() terminal.PolicySnapshot {
 		return terminal.NewPolicySnapshot(banned, custom, false, offlineMax)
 	})
+	// Exception approval flow (backlog F24): top-secret exceptions
+	// stay closed unless the operator explicitly opts in — the
+	// default posture is that secret data can never be excepted.
+	if os.Getenv("AGENTGATE_ALLOW_TOPSECRET_EXCEPTIONS") == "1" {
+		rest.SetAllowTopSecretExceptions(true)
+		log.Printf("top-secret exceptions enabled (AGENTGATE_ALLOW_TOPSECRET_EXCEPTIONS=1)")
+	}
 	// Package distribution (backlog F20): install packages are
 	// hosted under <data>/packages, employees download them, and
 	// their hashes feed the F14 attestation baseline.
