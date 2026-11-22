@@ -125,6 +125,50 @@ func TestEvaluate(t *testing.T) {
 	}
 }
 
+// F20: a registered distribution baseline pins the binary hash.
+// A report carrying the distributed binary passes; anything else
+// (missing hash, or a hash the platform never distributed) is
+// downgraded, and an empty list keeps the old "any binary" behaviour.
+func TestEvaluateBinaryHashBaseline(t *testing.T) {
+	const baseline = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	policy := Policy{
+		AgentType:           "dsh",
+		AllowedBinaryHashes: []string{baseline},
+		RequireReport:       true,
+	}
+	good := &Report{AgentType: "dsh", Version: "1.0.0", BinaryHash: baseline}
+	if v := Evaluate(good, policy); v.Status != VerdictPass {
+		t.Fatalf("distributed binary: got %+v, want pass", v)
+	}
+	// Case-insensitive match (hex digests compare folded).
+	upper := *good
+	upper.BinaryHash = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"
+	if v := Evaluate(&upper, policy); v.Status != VerdictPass {
+		t.Errorf("uppercase binary hash: got %+v, want pass", v)
+	}
+	bad := *good
+	bad.BinaryHash = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	if v := Evaluate(&bad, policy); v.Status != VerdictDowngraded || !hasReason(v, ReasonBinaryHashNotAllow) {
+		t.Errorf("unknown binary: got %+v, want downgraded/binary_hash_not_allowed", v)
+	}
+	bad = *good
+	bad.BinaryHash = ""
+	if v := Evaluate(&bad, policy); v.Status != VerdictDowngraded || !hasReason(v, ReasonBinaryHashMissing) {
+		t.Errorf("missing binary hash: got %+v, want downgraded/binary_hash_missing", v)
+	}
+	// No baseline registered: any binary passes (old behaviour).
+	open := Policy{AgentType: "other", RequireReport: true}
+	if v := Evaluate(good, open); v.Status != VerdictPass {
+		t.Errorf("no baseline: got %+v, want pass", v)
+	}
+	if err := (Policy{AgentType: "dsh", AllowedBinaryHashes: []string{"not-hex"}}).Validate(); err == nil {
+		t.Error("non-hex binary hash must fail policy validation")
+	}
+	if err := (Policy{AgentType: "dsh", AllowedBinaryHashes: []string{baseline}}).Validate(); err != nil {
+		t.Errorf("hex binary hash must validate: %v", err)
+	}
+}
+
 func TestReportAndPolicyValidate(t *testing.T) {
 	if err := (Report{AgentType: "dsh", Version: "1.0.0"}).Validate(); err != nil {
 		t.Errorf("minimal report must validate: %v", err)

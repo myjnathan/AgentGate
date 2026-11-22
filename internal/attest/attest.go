@@ -67,10 +67,16 @@ type Report struct {
 // type, configured by an admin. Empty allow-lists mean "any value
 // accepted"; a non-empty list is fail-closed (an absent or
 // unlisted value fails).
+//
+// AllowedBinaryHashes is the F20 reference value: the SHA-256 of a
+// package the platform itself distributed (backlog F20). An agent
+// whose binary hash is not on this list fails attestation, so a
+// tampered or side-loaded binary cannot pass as the distributed one.
 type Policy struct {
 	AgentType           string   `json:"agent_type"`
 	MinVersion          string   `json:"min_version,omitempty"`
 	AllowedConfigHashes []string `json:"allowed_config_hashes,omitempty"`
+	AllowedBinaryHashes []string `json:"allowed_binary_hashes,omitempty"`
 	AllowedPlugins      []string `json:"allowed_plugins,omitempty"`
 	BlockedPlugins      []string `json:"blocked_plugins,omitempty"`
 	RequireGuard        bool     `json:"require_guard"`
@@ -91,6 +97,8 @@ const (
 	ReasonVersionBelowMinimum = "version_below_minimum"
 	ReasonConfigHashMissing   = "config_hash_missing"
 	ReasonConfigHashNotAllow  = "config_hash_not_allowed"
+	ReasonBinaryHashMissing   = "binary_hash_missing"
+	ReasonBinaryHashNotAllow  = "binary_hash_not_allowed"
 	ReasonBlockedPlugin       = "blocked_plugin"
 	ReasonPluginNotAllowed    = "plugin_not_allowed"
 	ReasonGuardNotApplied     = "guard_not_applied"
@@ -147,6 +155,16 @@ func (p Policy) Validate() error {
 			return fmt.Errorf("allowed config hash must be 1-128 characters")
 		}
 	}
+	for _, h := range p.AllowedBinaryHashes {
+		if h == "" || len(h) > 128 {
+			return fmt.Errorf("allowed binary hash must be 1-128 characters")
+		}
+		for _, c := range h {
+			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+				return fmt.Errorf("allowed binary hash must be hex")
+			}
+		}
+	}
 	for _, name := range append(append([]string{}, p.AllowedPlugins...), p.BlockedPlugins...) {
 		if name == "" || len(name) > 128 {
 			return fmt.Errorf("plugin name must be 1-128 characters")
@@ -173,6 +191,17 @@ func Evaluate(report *Report, policy Policy) Verdict {
 			reasons = append(reasons, ReasonConfigHashMissing)
 		} else if !containsFold(policy.AllowedConfigHashes, report.ConfigHash) {
 			reasons = append(reasons, ReasonConfigHashNotAllow)
+		}
+	}
+	// F20: a distributed package's hash is the binary reference
+	// value. Like the config hash list, an empty list means "any
+	// binary accepted" — the check only bites once a baseline is
+	// registered, so existing policies keep their old behaviour.
+	if len(policy.AllowedBinaryHashes) > 0 {
+		if report.BinaryHash == "" {
+			reasons = append(reasons, ReasonBinaryHashMissing)
+		} else if !containsFold(policy.AllowedBinaryHashes, report.BinaryHash) {
+			reasons = append(reasons, ReasonBinaryHashNotAllow)
 		}
 	}
 	for _, p := range report.Plugins {

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/myjnathan/agentgate/internal/attest"
+	"github.com/myjnathan/agentgate/internal/distrib"
 )
 
 // Tier is the trust tier of an agent installation / token.
@@ -471,6 +472,14 @@ type State struct {
 	// (backlog F14), keyed by agent type; an agent type with no entry
 	// has no attestation requirement.
 	AttestationPolicies map[string]*attest.Policy `json:"attestation_policies"`
+	// Packages holds the hosted install packages (backlog F20),
+	// keyed by package ID; the files live under the distrib registry
+	// root (<data>/packages/<id>/<filename>).
+	Packages map[string]*distrib.Package `json:"packages"`
+	// PackageUploads holds in-progress resumable uploads (backlog
+	// F20), keyed by upload ID; the partial bytes live on disk, so
+	// a session survives a restart.
+	PackageUploads map[string]*distrib.Upload `json:"package_uploads"`
 }
 
 func newState() *State {
@@ -489,6 +498,8 @@ func newState() *State {
 		Budgets:             map[string]*DepartmentBudget{},
 		KBFolderSources:     map[string]*KBFolderSource{},
 		AttestationPolicies: map[string]*attest.Policy{},
+		Packages:            map[string]*distrib.Package{},
+		PackageUploads:      map[string]*distrib.Upload{},
 	}
 }
 
@@ -545,6 +556,15 @@ func New(dir string) (*Store, error) {
 		}
 		if st.KBFolderSources == nil {
 			st.KBFolderSources = map[string]*KBFolderSource{}
+		}
+		if st.AttestationPolicies == nil {
+			st.AttestationPolicies = map[string]*attest.Policy{}
+		}
+		if st.Packages == nil {
+			st.Packages = map[string]*distrib.Package{}
+		}
+		if st.PackageUploads == nil {
+			st.PackageUploads = map[string]*distrib.Upload{}
 		}
 		s.st = &st
 	} else if !os.IsNotExist(err) {

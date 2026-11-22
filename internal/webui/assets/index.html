@@ -446,6 +446,44 @@
         <table id="webhooks"><thead><tr><th data-i18n="name">名称</th><th data-i18n="kind">类型</th><th>URL</th><th data-i18n="lastStatus">最近投递</th><th></th></tr></thead><tbody></tbody></table>
       </div>
     </section>
+
+    <!-- packages -->
+    <section class="page" id="page-packages">
+      <div class="pageHead"><div><h1 data-i18n="packagesTitle">安装包分发</h1><p class="desc" data-i18n="packagesDesc">受管 Agent 安装包的托管与分发：管理员上传或离线导入，员工自助下载；分发包的哈希可登记为 Agent 证明的基准值。</p></div>
+      <div class="pageActions"><button class="btn ghost" onclick="loadPackages()" data-i18n="refresh">刷新</button></div></div>
+      <div class="card"><h3 data-i18n="uploadPackage">上传 / 离线导入安装包</h3>
+        <div class="formGrid">
+          <div><label class="f" data-i18n="name">名称</label><input id="pkName" placeholder="e.g. ag-user-xinghe"></div>
+          <div><label class="f" data-i18n="pkgKind">包类型</label><select id="pkKind"><option value="user">user</option><option value="management">management</option></select></div>
+          <div><label class="f" data-i18n="version">版本</label><input id="pkVersion" placeholder="1.0.0"></div>
+          <div><label class="f" data-i18n="pkgAgentType">Agent 类型</label><input id="pkAgent" placeholder="dsh"></div>
+          <div><label class="f" data-i18n="pkgSource">来源</label><select id="pkSource"><option value="upload">upload</option><option value="offline-import">offline-import</option></select></div>
+          <div><label class="f">SHA-256（期望校验和，可空）</label><input id="pkSha" placeholder="64 hex chars"></div>
+          <div><label class="f" data-i18n="expiresAt">过期时间（可选，RFC3339）</label><input id="pkExpires" placeholder="2027-01-01T00:00:00Z"></div>
+          <div><label class="f" data-i18n="pkgFile">文件</label><input id="pkFile" type="file"></div>
+        </div>
+        <div class="row"><button class="btn" onclick="uploadPackage()" data-i18n="uploadBtn">上传</button><span id="pkMsg" class="msg"></span></div>
+        <p class="hint" style="margin-top:10px" data-i18n="packagesHint">管理包给 IT（agentgate 服务端，现有 Docker / 离线 bundle / systemd 形态，走现有离线部署通道）；用户包给员工（ag-guard + ag-setup，按策略生成：内置网关地址、密级与脱敏策略、出口白名单，员工装一次即常驻、零配置）。只有已校验的包才能登记为 F14 证明基准值——未校验的包即使哈希一致也不予登记。过期包可一键清理；导入中断的上传可断点续传（见接口文档）。</p>
+      </div>
+      <div class="card"><h3 data-i18n="genUserBundle">生成用户包（ag-guard + ag-setup）</h3>
+        <div class="formGrid">
+          <div><label class="f" data-i18n="name">名称</label><input id="ubName" placeholder="e.g. ag-user-xinghe"></div>
+          <div><label class="f" data-i18n="version">版本</label><input id="ubVersion" placeholder="1.0.0"></div>
+          <div><label class="f" data-i18n="pkgAgentType">Agent 类型</label><input id="ubAgent" placeholder="dsh"></div>
+          <div class="wide"><label class="f" data-i18n="gatewayUrl">网关地址</label><input id="ubGateway" placeholder="https://gw.example"></div>
+          <div><label class="f" data-i18n="maxLevel">最高数据等级</label><select id="ubLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select></div>
+          <div><label class="f">ag-guard 组件包</label><select id="ubGuard"></select></div>
+          <div><label class="f">ag-setup 组件包</label><select id="ubSetup"></select></div>
+          <div class="wide"><label class="f" data-i18n="egressAllowlist">出口白名单（逗号分隔主机名）</label><input id="ubEgress" placeholder="gw.example"></div>
+          <div><label class="f" data-i18n="registerBaseline">登记为证明基准值</label><select id="ubBaseline"><option value="true" selected>yes</option><option value="false">no</option></select></div>
+        </div>
+        <div class="row"><button class="btn" onclick="generateUserBundle()" data-i18n="genBundleBtn">生成用户包</button><span id="ubMsg" class="msg"></span></div>
+      </div>
+      <div class="card"><h3 data-i18n="packageList">已托管安装包</h3>
+        <table id="packages"><thead><tr><th data-i18n="name">名称</th><th data-i18n="pkgKind">包类型</th><th data-i18n="version">版本</th><th data-i18n="pkgFile">文件</th><th data-i18n="pkgSize">大小</th><th data-i18n="pkgSha">SHA-256</th><th data-i18n="pkgStatus">校验状态</th><th data-i18n="baselineRegistered">已登记基准值</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="row" style="margin-top:12px"><button class="btn ghost small danger" onclick="cleanupPackages()" data-i18n="cleanupExpired">清理过期包</button><span id="pkCleanMsg" class="msg"></span></div>
+      </div>
+    </section>
   </main>
 </div>
 <div id="toast"></div>
@@ -491,6 +529,7 @@ const I18N = {
     restHint:"以 rest.工具名 出现在 /mcp 的 tools/list 中；路径 {{参数}} 会被替换转义，其余参数走 query（GET/DELETE）或 JSON body（POST/PUT/PATCH）；调用前做 schema 校验、等级授权与 DLP，凭据加密存储、永不回显。",
     alertsTitle:"告警 Webhook",alertsDesc:"拦截、密级越权、渠道熔断、账号锁定等事件主动推送到企业微信 / 钉钉 / 飞书或通用 Webhook。",addWebhook:"添加 Webhook",webhookList:"Webhook 列表",kind:"类型",lastStatus:"最近投递",
     alertsHint:"告警只含事件类别与处置，不带请求原文；投递失败最多重试 3 次。",
+    packagesTitle:"安装包分发",packagesDesc:"受管 Agent 安装包的托管与分发：管理员上传或离线导入，员工自助下载；分发包的哈希可登记为 Agent 证明的基准值。",uploadPackage:"上传 / 离线导入安装包",packageList:"已托管安装包",pkgKind:"包类型",pkgManagement:"管理包（服务端）",pkgUser:"用户包（员工）",pkgFile:"文件",pkgSize:"大小",pkgSha:"SHA-256",pkgStatus:"校验状态",verified:"已校验",unverified:"未校验",pkgSource:"来源",pkgOfflineImport:"离线导入",pkgGenerated:"平台生成",pkgAgentType:"Agent 类型",registerBaseline:"登记为证明基准值",baselineRegistered:"已登记基准值",genUserBundle:"生成用户包（ag-guard + ag-setup）",gatewayUrl:"网关地址",egressAllowlist:"出口白名单（逗号分隔主机名）",expiresAt:"过期时间（可选，RFC3339）",cleanupExpired:"清理过期包",uploadBtn:"上传",genBundleBtn:"生成用户包",packagesHint:"管理包给 IT（agentgate 服务端，现有 Docker / 离线 bundle / systemd 形态，走现有离线部署通道）；用户包给员工（ag-guard + ag-setup，按策略生成：内置网关地址、密级与脱敏策略、出口白名单，员工装一次即常驻、零配置）。只有已校验的包才能登记为 F14 证明基准值——未校验的包即使哈希一致也不予登记。过期包可一键清理；导入中断的上传可断点续传（见接口文档）。",
     saved:"✓ 已保存",deleted:"✓ 已删除",empty:"暂无数据",chainValid:"哈希链完整",chainInvalid:"哈希链校验失败",approve:"通过",reject:"驳回",download:"下载",publish:"发布/回滚",test:"测试",rescan:"重扫",save:"保存"},
   en: {loginTitle:"Sign in",loginSub:"Enterprise agent governance gateway · Admin console",loginBtn:"Sign in",logout:"Sign out",ssoBtn:"Sign in with enterprise SSO",username:"Username",password:"Password",
     loginHint:"Demo: admin / agentgate-admin, employee: lixiaofeng / demo12345",
@@ -531,6 +570,7 @@ const I18N = {
     restHint:"Tools appear in /mcp tools/list as rest.<name>. {{param}} placeholders in the path are substituted and escaped; remaining arguments go to the query string (GET/DELETE) or a JSON body (POST/PUT/PATCH). Calls are schema-validated, tier-authorized and DLP-checked; credentials are encrypted at rest and never echoed.",
     alertsTitle:"Alert webhooks",alertsDesc:"Blocks, level violations, channel cooldowns and account lockouts are pushed to WeCom / DingTalk / Feishu or a generic webhook.",addWebhook:"Add webhook",webhookList:"Webhooks",kind:"Type",lastStatus:"Last delivery",
     alertsHint:"Alerts carry only event categories and decisions, never request content. Failed deliveries retry up to 3 times.",
+    packagesTitle:"Package distribution",packagesDesc:"Hosted distribution of managed-agent install packages: admins upload or import offline, employees download them; a distributed package's hash can be registered as the attestation baseline.",uploadPackage:"Upload / import a package offline",packageList:"Hosted packages",pkgKind:"Package kind",pkgManagement:"Management package (server)",pkgUser:"User package (employee)",pkgFile:"File",pkgSize:"Size",pkgSha:"SHA-256",pkgStatus:"Checksum status",verified:"verified",unverified:"unverified",pkgSource:"Source",pkgOfflineImport:"offline import",pkgGenerated:"generated",pkgAgentType:"Agent type",registerBaseline:"Register as attestation baseline",baselineRegistered:"baseline registered",genUserBundle:"Generate user package (ag-guard + ag-setup)",gatewayUrl:"Gateway URL",egressAllowlist:"Egress allowlist (comma-separated hostnames)",expiresAt:"Expires at (optional, RFC3339)",cleanupExpired:"Clean up expired packages",uploadBtn:"Upload",genBundleBtn:"Generate user package",packagesHint:"The management package is for IT (the agentgate server: Docker image / offline bundle / systemd, via the existing offline deployment channel); the user package is for employees (ag-guard + ag-setup, generated per policy with the gateway URL, data level and egress allowlist baked in — install once, zero-config, resident). Only a verified package can be registered as the F14 attestation baseline. Expired packages can be cleaned up in one click; an interrupted upload can be resumed (see docs).",
     saved:"✓ Saved",deleted:"✓ Deleted",empty:"No data yet",chainValid:"Hash chain intact",chainInvalid:"Hash chain verification FAILED",approve:"Approve",reject:"Reject",download:"Download",publish:"Publish / roll back",test:"Test",rescan:"Rescan",save:"Save"}
 };
 let lang = localStorage.getItem("ag_lang") || "zh";
@@ -568,7 +608,7 @@ const NAV = [
   {group:"navAccess", items:[["device","▣","deviceTitle"],["tokens","⚿","tokensTitle"],["attest","✓","attestTitle"]]},
   {group:"navModel", items:[["channels","⇄","channelsTitle"]]},
   {group:"navCap", items:[["kb","🗀","foldersTitle"],["skills","✦","skillsTitle"],["prompts","✎","promptsTitle"],["upstreams","⛓","fedTitle"],["resttools","⇢","restTitle"]]},
-  {group:"navSys", items:[["alerts","⚠","alertsTitle"]]}
+  {group:"navSys", items:[["alerts","⚠","alertsTitle"],["packages","▤","packagesTitle"]]}
 ];
 let current = "dashboard";
 function buildNav(){
@@ -582,7 +622,7 @@ function showPage(id){
   document.querySelectorAll(".page").forEach(p=>p.classList.toggle("active", p.id==="page-"+id));
   document.querySelectorAll(".navItem").forEach(n=>n.classList.toggle("active", n.getAttribute("data-nav")===id));
   const loaders = {dashboard:loadDashboard, stats:()=>{loadStats(); loadCache(); loadBudgets(); loadOtel();}, audit:loadAudit, device:loadSidecar, tokens:loadTokens, attest:loadAttest, channels:loadChannels,
-    kb:loadFolders, skills:loadSkills, prompts:loadPrompts, upstreams:loadUpstreams, resttools:loadRESTTools, alerts:loadAlerts};
+    kb:loadFolders, skills:loadSkills, prompts:loadPrompts, upstreams:loadUpstreams, resttools:loadRESTTools, alerts:loadAlerts, packages:loadPackages};
   if(loaders[id]) loaders[id]();
 }
 
@@ -997,6 +1037,78 @@ async function testWebhook(id){
 async function deleteWebhook(id){
   try{ await api("/api/alerts/webhooks/"+id,{method:"DELETE"}); toast(T("deleted")); loadAlerts();
   }catch(e){ toast(e.message, false); }
+}
+
+/* ---------- packages (F20) ---------- */
+let pkgList = [];
+async function loadPackages(){
+  try{ const d = await api("/api/packages");
+    pkgList = d.packages||[];
+    document.querySelector("#packages tbody").innerHTML = pkgList.map(p=>
+      `<tr><td style="font-weight:600;color:var(--ink)">${esc(p.name)}</td><td>${esc(p.kind)}</td><td>${esc(p.version)}</td><td class="muted">${esc(p.filename)}</td><td>${fmtNum(p.size_bytes)}</td>`+
+      `<td class="muted" title="${esc(p.sha256)}">${esc((p.sha256||"").slice(0,12))}…</td><td>${p.status==="verified"?`<span class="pill verified">${T("verified")}</span>`:`<span class="pill unverified">${T("unverified")}</span>`}</td><td>${p.baseline_registered?"✓":"—"}</td>`+
+      `<td style="white-space:nowrap"><button class="btn ghost small" onclick="downloadPackage('${p.id}','${esc(p.filename)}')">${T("download")}</button> `+
+      `${p.status==="verified"&&!p.baseline_registered?`<button class="btn ghost small" onclick="registerBaseline('${p.id}')">${T("registerBaseline")}</button> `:""}`+
+      `<button class="btn ghost small danger" onclick="deletePackage('${p.id}')">✕</button></td></tr>`).join("") || `<tr><td colspan="9" class="empty">${T("empty")}</td></tr>`;
+    const opts = pkgList.map(p=>`<option value="${p.id}">${esc(p.name)} ${esc(p.version)} (${esc(p.kind)})</option>`).join("");
+    document.getElementById("ubGuard").innerHTML = opts;
+    document.getElementById("ubSetup").innerHTML = opts;
+  }catch(e){ toast(e.message, false); }
+}
+async function uploadPackage(){
+  const file = document.getElementById("pkFile").files[0];
+  if(!file){ setMsg("pkMsg", "file required", false); return; }
+  try{
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("name", pkName.value.trim());
+    fd.append("kind", pkKind.value);
+    fd.append("version", pkVersion.value.trim());
+    fd.append("agent_type", pkAgent.value.trim());
+    fd.append("source", pkSource.value);
+    fd.append("expected_sha256", pkSha.value.trim());
+    if(pkExpires.value.trim()) fd.append("expires_at", pkExpires.value.trim());
+    const res = await fetch("/api/packages", {method:"POST", headers:{Authorization:"Bearer "+session}, body:fd});
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(data.error || ("HTTP "+res.status));
+    setMsg("pkMsg", T("saved")+" ("+data.package.status+")");
+    pkName.value=""; pkVersion.value=""; pkAgent.value=""; pkSha.value=""; pkExpires.value=""; document.getElementById("pkFile").value="";
+    loadPackages();
+  }catch(e){ setMsg("pkMsg", e.message, false); }
+}
+async function downloadPackage(id, filename){
+  try{ const res = await fetch("/api/packages/"+id+"/download", {headers:{Authorization:"Bearer "+session}});
+    if(!res.ok) throw new Error("HTTP "+res.status);
+    const blob = await res.blob(); const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+  }catch(e){ toast(e.message, false); }
+}
+async function registerBaseline(id){
+  try{ await api("/api/packages/"+id+"/baseline",{method:"POST",body:JSON.stringify({})});
+    toast(T("saved")); loadPackages();
+  }catch(e){ toast(e.message, false); }
+}
+async function deletePackage(id){
+  try{ await api("/api/packages/"+id,{method:"DELETE"}); toast(T("deleted")); loadPackages();
+  }catch(e){ toast(e.message, false); }
+}
+async function cleanupPackages(){
+  try{ const d = await api("/api/packages/cleanup",{method:"POST",body:"{}"});
+    setMsg("pkCleanMsg", T("deleted")+": "+d.count); loadPackages();
+  }catch(e){ setMsg("pkCleanMsg", e.message, false); }
+}
+async function generateUserBundle(){
+  try{
+    const egress = ubEgress.value.split(",").map(s=>s.trim()).filter(Boolean);
+    const d = await api("/api/packages/user-bundle",{method:"POST",body:JSON.stringify({
+      name:ubName.value.trim(), version:ubVersion.value.trim(), agent_type:ubAgent.value.trim(),
+      gateway_url:ubGateway.value.trim(), max_data_level:ubLevel.value, egress_allowlist:egress,
+      components:[{package_id:ubGuard.value,role:"ag-guard"},{package_id:ubSetup.value,role:"ag-setup"}],
+      register_baseline:ubBaseline.value==="true"})});
+    setMsg("ubMsg", T("saved")+" ("+d.package.sha256.slice(0,12)+"…)");
+    ubName.value=""; ubVersion.value=""; ubAgent.value=""; ubGateway.value=""; ubEgress.value="";
+    loadPackages();
+  }catch(e){ setMsg("ubMsg", e.message, false); }
 }
 
 /* ---------- boot ---------- */

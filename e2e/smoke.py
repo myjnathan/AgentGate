@@ -6,6 +6,7 @@ or run locally: AGENTGATE_DEMO=1 AGENTGATE_MASTER_KEY=... ./agentgate).
 Covers the blueprint acceptance path: login -> device-code onboarding ->
 model gateway allow/block by tier -> MCP knowledge search -> audit chain.
 """
+import hashlib
 import json
 import os
 import sys
@@ -980,6 +981,123 @@ def main():
     s, tst = call("/api/otel/test", {}, token=admin_tok, method="POST")
     check("otel test endpoint exports a span", s == 200 and tst.get("ok") is True)
     otel_httpd.shutdown()
+
+    # F20: package distribution. Resumable upload (init -> chunks ->
+    # complete), checksum verification, user-bundle generation from
+    # two component packages, employee download, baseline loop.
+    import io as _io
+    import zipfile as _zipfile
+
+    def put_bytes(path, data, tok):
+        req = urllib.request.Request(BASE + path, data=data, method="PUT")
+        req.add_header("Authorization", "Bearer " + tok)
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"{}")
+
+    def get_bytes(path, tok):
+        req = urllib.request.Request(BASE + path, method="GET")
+        if tok:
+            req.add_header("Authorization", "Bearer " + tok)
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, r.read(), {k.lower(): v for k, v in r.headers.items()}
+        except urllib.error.HTTPError as e:
+            return e.code, e.read(), {k.lower(): v for k, v in e.headers.items()}
+
+    def upload_resumable(name, data, expected_sha, agent_type):
+        s, up = call("/api/packages/uploads",
+                     {"name": name, "kind": "user", "version": "1.0.0",
+                      "filename": name + ".bin", "expected_size": len(data),
+                      "expected_sha256": expected_sha, "source": "upload",
+                      "agent_type": agent_type}, token=admin_tok)
+        assert s == 201, up
+        uid = up["upload_id"]
+        off = 0
+        while off < len(data):
+            step = data[off:off + 5]
+            s, st = put_bytes("/api/packages/uploads/" + uid + "?offset=" + str(off), step, admin_tok)
+            assert s == 200, st
+            off = int(st["received_bytes"])
+        s, done = call("/api/packages/uploads/" + uid + "/complete", {}, token=admin_tok, method="POST")
+        assert s == 201, done
+        return done["package"]
+
+    s, pkgs = call("/api/packages", token=admin_tok, method="GET")
+    check("packages list starts empty", s == 200 and pkgs.get("packages") == [])
+    s, _ = call("/api/packages", token=sess, method="GET")
+    check("packages list forbidden for employee", s == 403)
+
+    # Resumable flow: wrong offset is refused, resume completes.
+    guard_data = b"smoke-ag-guard-binary"
+    s, up = call("/api/packages/uploads",
+                 {"name": "smoke-resume", "kind": "user", "version": "1.0.0",
+                  "filename": "resume.bin", "expected_size": len(guard_data),
+                  "expected_sha256": hashlib.sha256(guard_data).hexdigest(),
+                  "source": "offline-import", "agent_type": "codex"}, token=admin_tok)
+    check("resumable upload init", s == 201 and up.get("upload_id", "").startswith("up_"))
+    uid = up.get("upload_id", "")
+    s, st = put_bytes("/api/packages/uploads/" + uid + "?offset=0", guard_data[:5], admin_tok)
+    check("first chunk accepted", s == 200 and st.get("received_bytes") == 5)
+    s, _ = put_bytes("/api/packages/uploads/" + uid + "?offset=0", guard_data[:5], admin_tok)
+    check("overlapping chunk refused", s == 400)
+    s, st = put_bytes("/api/packages/uploads/" + uid + "?offset=5", guard_data[5:], admin_tok)
+    check("resume chunk accepted", s == 200 and st.get("received_bytes") == len(guard_data))
+    s, done = call("/api/packages/uploads/" + uid + "/complete", {}, token=admin_tok, method="POST")
+    check("resumed upload completes verified",
+          s == 201 and done.get("package", {}).get("status") == "verified"
+          and done.get("package", {}).get("source") == "offline-import")
+    resume_pkg = done.get("package", {})
+
+    # Two component packages, then a generated user bundle.
+    comp_guard = upload_resumable("smoke-comp-guard", b"guard-binary",
+                                  hashlib.sha256(b"guard-binary").hexdigest(), "codex")
+    comp_setup = upload_resumable("smoke-comp-setup", b"setup-binary",
+                                  hashlib.sha256(b"setup-binary").hexdigest(), "codex")
+    check("component packages verified",
+          comp_guard.get("status") == "verified" and comp_setup.get("status") == "verified")
+    s, bundle = call("/api/packages/user-bundle",
+                     {"name": "smoke-user", "version": "1.0.0", "agent_type": "codex",
+                      "gateway_url": "https://gw.xinghe.example", "max_data_level": "internal",
+                      "egress_allowlist": ["gw.xinghe.example"],
+                      "components": [{"package_id": comp_guard["id"], "role": "ag-guard"},
+                                     {"package_id": comp_setup["id"], "role": "ag-setup"}],
+                      "register_baseline": True}, token=admin_tok)
+    check("user bundle generated verified",
+          s == 201 and bundle.get("package", {}).get("kind") == "user"
+          and bundle.get("package", {}).get("source") == "generated"
+          and bundle.get("package", {}).get("status") == "verified"
+          and bundle.get("package", {}).get("baseline_registered") is True)
+    bundle_pkg = bundle.get("package", {})
+    s, zb, headers = get_bytes("/api/packages/" + bundle_pkg.get("id", "") + "/download", sess)
+    zf = _zipfile.ZipFile(_io.BytesIO(zb)) if s == 200 else None
+    check("employee downloads user bundle",
+          s == 200 and zf is not None
+          and zf.namelist() == ["ag-guard", "ag-setup", "guard.json", "MANIFEST.json"]
+          and json.loads(zf.read("guard.json"))["gateway_url"] == "https://gw.xinghe.example"
+          and headers.get("x-package-sha256") == bundle_pkg.get("sha256"))
+    s, _, _ = get_bytes("/api/packages/" + bundle_pkg.get("id", "") + "/download", None)
+    check("anonymous download refused", s == 401)
+    # The bundle hash is now the codex attestation baseline.
+    s, pols = call("/api/attestation/policies", token=admin_tok, method="GET")
+    codex_hashes = []
+    for p in pols.get("policies", []):
+        if p.get("agent_type") == "codex":
+            codex_hashes = p.get("allowed_binary_hashes", [])
+    check("bundle hash registered as codex baseline",
+          s == 200 and bundle_pkg.get("sha256") in codex_hashes)
+    # An unverified package can never become a baseline.
+    nocheck = upload_resumable("smoke-nocheck", b"no-check-bytes", "", "codex")
+    check("package without checksum is unverified", nocheck.get("status") == "unverified")
+    s, _ = call("/api/packages/" + nocheck.get("id", "") + "/baseline",
+                {"agent_type": "codex"}, token=admin_tok, method="POST")
+    check("unverified package cannot be a baseline", s == 400)
+    s, _ = call("/api/packages/" + resume_pkg.get("id", ""), token=admin_tok, method="DELETE")
+    check("package deleted", s == 200)
+    s, _, _ = get_bytes("/api/packages/" + resume_pkg.get("id", "") + "/download", sess)
+    check("download after delete is 404", s == 404)
 
     httpd.shutdown()
     print(f"\n{len(failures)} failure(s)")

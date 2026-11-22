@@ -2,6 +2,17 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-22 · F20 受管 Agent 安装包分发与离线导入
+
+- 本轮按常规规程选条目：体内的 12:26 特别指令（F17 + 蓝图修订稿）早已在 F17 轮执行完毕、执行后作废；待办登记 2–5 均已在 F16/F19 轮执行完毕、作废；P0、P1 全部 done，P2 按清单顺序取 F20（首个剩余 P2 条目）。远端 main 已含 F19（PR #15，HEAD 97de9e2a），无在途分支需续传。
+- 借鉴 dsh-ee PR #309「feat: DSH 分发支持导入内网离线安装包」（hikariming/dsh-ee，Apache-2.0，与 AGPL-3.0 兼容）：离线导入、平台托管、员工下载、SHA-256 校验并区分已校验 / 未校验、导入中断可恢复、过期包清理。本轮查阅：PR 页标题已取到，api.github.com 取 PR 正文返回 403，设计点沿用 2026-11-22 当轮的调研结论（已记入 backlog F20 条目）。
+- 复用检查（Nathan 复用优先指示）：未复制 dsh-ee 代码——其实现与 DSH 插件绑定较深，与本项目架构不匹配；分发与断点续传约 600 行纯标准库自研（archive/zip、crypto/sha256 均为标准库）；校验与分级复用本仓已有逻辑（F14 证明评估、F5 审计事件口径、sidecar 的 guard.json 字段）。
+- 实现：新包 `internal/distrib`（包与上传会话记录 + Registry 文件管理：单次上传、断点续传、分片 offset 校验、完成时验算 SHA-256、过期筛选、用户包 zip 生成）；`store.State` 增加 `Packages`/`PackageUploads`；`attest.Policy` 增加 `AllowedBinaryHashes` + `Evaluate` 校验（原因码 `binary_hash_missing`/`binary_hash_not_allowed`，空列表保持旧行为）；管理 API `POST /api/packages`（multipart 单次上传）、断点续传五端点（建会话/分片/状态/完成/中止）、`GET /api/packages/{id}/download`（任意登录用户）、`DELETE /api/packages/{id}`、`POST /api/packages/{id}/baseline`（仅已校验包，幂等）、`POST /api/packages/cleanup`、`POST /api/packages/user-bundle`（两组件 + 策略，可一步登记基准值）；`make bundle-user`（`deploy/make-user-bundle.py`，离线组装同布局 zip）；管理台新增「安装包分发」页（上传/生成用户包/列表/下载/登记/删除/清理，中英双语）；详见 docs/package-distribution.md。
+- 关键决策：① 未校验包永远不可登记基准值——「未校验」是门禁而不只是展示，避免管理员误把未验文件当作信任锚；② 断点续传的会话与分片都落盘（会话进 state.json，分片进 `<data>/packages/.uploads`），服务端重启后仍可从已收字节数续传；③ 审计事件不记校验和原文（只记包名/类型/状态），与 F14「原因码只记类别、不记哈希值」同款口径，校验和只出现在 API 返回与下载响应头里（那是员工核对下载用的公开值）；④ 生成用户包的 guard.json 是 sidecar 配置的超集（网关地址 + 策略字段），ag-guard 只读 `gateway_url`，其余字段由 Go JSON 解析忽略；⑤ 双包结构落地：管理包仍走现有 `make bundle` 离线通道（本轮只把它登记进同一注册表、统一查看），用户包新增 `make bundle-user` 与管理台生成两条路。
+- 测试：distrib 包 7 项 + attest 1 项 + API 端点 4 项 + 冒烟新增 16 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（distrib/attest/api/store）全绿；`make smoke` 178 项断言 0 失败（基线 162 + 新增 16）。
+- 本轮实测抓到的真问题：① Go ServeMux 拒绝 `GET /api/packages/{id}/download` 与 `GET /api/packages/uploads/{id}` 并存（`/api/packages/uploads/download` 同时匹配两者）——上传状态查询改为 `GET /api/packages/uploads/{id}/status` 子路径；② 冒烟下载断言取 `X-Package-SHA256` 响应头失败——Go 发出的头是规范大小写 `X-Package-Sha256`，Python 字典查找区分大小写，已改为小写化后再取；③ 同段冒烟的匿名下载调用把三元组 `get_bytes` 的返回值只解了两个，已补齐。
+- 推送结果：（待合并后补记）
+
 ## 2026-11-22 · F19 知识库语义索引层
 
 - 本轮按常规规程选条目：体内的 12:26 特别指令（F17 + 蓝图修订稿）早已在 F17 轮执行完毕、执行后作废；F19 登记随 F14 轮进 backlog；P0、P1 全部 done，P2 按清单顺序取 F19（首个剩余 P2 条目）。远端 main 已含 F16（PR #14，HEAD 9b272691），无在途分支需续传。
@@ -12,6 +23,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 关键决策：条目按章节树节点生成（含根节点），不是按文档一行——目录层要的是「哪一节讲什么」，按文档一行无法定位章节；抽取式是默认生成方式（与 F18 摘要同一条安全线：不经过模型、不产生泄漏通道），模型生成是可选动作、只在管理员显式触发时发生；回指由树填入而非模型返回——模型即使编造来源也会被丢弃，这是「不许只保留模型生成的文字」的结构保证；漂移定义为「文件夹索引已更新、语义索引未跟进」（哈希比对），重扫经 API 时自动刷新、直接调 Registry.Rescan 的路径会在覆盖率里报 stale；部门标签优先取文件夹配置的部门、未配时取文件夹名（集合名是最可用的归属标签）。
 - 测试：semidx 包 8 项（校验 12 类拒绝 + title-only 豁免、抽取式条目字段与标签、绝密 title-only、生成器失败回落、模型部分覆盖 mixed、增量再生与漂移、覆盖率、等级门禁、按源删除）+ 模型生成器 5 项（提示词只含索引不含正文、解析：回指由树填入/未知节点/重复节点/非法标签/围栏 JSON、假服务端：请求头含密级与令牌、回显提示词不解析、绝密零请求、上游 502 不回显响应体）+ API 端点 2 项（覆盖率与条目全链路、绝密 title-only、漂移出现与重扫清除、403/404/400、模型生成：真 JSON 成 model、回显回落 extractive + model_error、未配模型 503、令牌不回显）+ MCP 集成 3 项（BYOA 读内部文档条目、机密条目自带级不可见/受管级可见、tools/list 含 kb_entries）+ 冒烟新增 9 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 162 项断言 0 失败（基线 153 + 新增 9）。
 - 本轮实测抓到的真问题：冒烟初版在 URL 查询串里直放含中文的 doc_id，urllib 按 ASCII 编码 URL 抛 UnicodeEncodeError——已改用 `urllib.parse.quote` 编码 doc_id（与 F12 轮的 edit 入参脱敏坑同类：工具管道对非 ASCII 内容的隐式处理，写脚本时留意）。
+- 推送结果：整包快照推送一次成功（push-files，21 个文件一次提交 265b1744，未触发 contents API 回退；推送前核对同步基点：README / feature-backlog / mcp.go / smoke.py 四文件远端 blob 与本地父提交一致，DEVLOG.md 仅差本地独有的 F16 推送记录行、8 个新文件在 F16 提交树中不存在——以上由本地证明链 + 抽查核对确认，另一次逐文件核对调用（main.go）因连接器 30 分钟无响应而超时，未重复发起；推送后提交文件清单 21 个与本轮一致，抽查 semidx.go / semantic.go / mcp.go 三文件 blob 一致）；PR #15 文件清单与本轮一致，已合并进远端 main，远端 HEAD 97de9e2a（合并提交），读回验证 semidx.go 已在 main 上（blob 与本地快照一致）。待删分支新增 loop/f19；另核实：远端现存 loop 分支共 8 个（loop/f11–f16、loop/f18、loop/ui-overhaul），更早的 7 个（loop/f6、loop/f7、loop/f17、loop/license-agpl、loop/f8、loop/f9、loop/f10）已不在远端——待删清单实为 9 个（含 loop/f19），需 Nathan 网页端手动删除。
 
 ## 2026-11-22 · F16 OpenTelemetry 导出
 
