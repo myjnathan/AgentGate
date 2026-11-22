@@ -23,6 +23,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/folderkb"
 	"github.com/myjnathan/agentgate/internal/guard"
 	"github.com/myjnathan/agentgate/internal/kb"
+	"github.com/myjnathan/agentgate/internal/knowpack"
 	"github.com/myjnathan/agentgate/internal/otel"
 	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/semidx"
@@ -124,6 +125,18 @@ var tools = []toolDef{
 			"doc_id":  map[string]any{"type": "string"},
 			"node_id": map[string]any{"type": "string"},
 		}, "required": []string{"doc_id", "node_id"}},
+	},
+	{
+		Name:        "kb_pack_list",
+		Description: "List the published curated knowledge packages visible at your tier: one package per work problem (onboarding, vendor qualification, …), each with its purpose, level, source count and version. A package is the curated entry point — read it with kb_pack_get, then drill down to the source sections with kb_structure and kb_section.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
+		Name:        "kb_pack_get",
+		Description: "Read one published knowledge package by name or id: its synthesis (purpose, evidence usage, boundaries and conclusions, every conclusion backed by a citation), its source list, and the published synthesis of the packages it references. Citations name file + section + pages; use kb_section to read the cited original.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+			"name": map[string]any{"type": "string", "description": "package name or id"},
+		}, "required": []string{"name"}},
 	},
 	{
 		Name:        "whoami",
@@ -589,6 +602,18 @@ func (s *Server) callTool(w http.ResponseWriter, ctx context.Context, req rpcReq
 			})
 			text = string(b)
 		}
+	case "kb_pack_list":
+		b, _ := json.Marshal(map[string]any{"packages": s.listKnowledgePackages(tok, user)})
+		text = string(b)
+	case "kb_pack_get":
+		name, _ := params.Arguments["name"].(string)
+		pkg, found := s.getKnowledgePackage(tok, user, name)
+		if !found {
+			text, isErr = "package not found or not accessible at your tier", true
+		} else {
+			b, _ := json.Marshal(pkg)
+			text = string(b)
+		}
 	case "kb_get":
 		id, _ := params.Arguments["doc_id"].(string)
 		var doc *store.KBDoc
@@ -625,6 +650,138 @@ func (s *Server) callTool(w http.ResponseWriter, ctx context.Context, req rpcReq
 		"content": []map[string]any{{"type": "text", "text": text}},
 		"isError": isErr,
 	})
+}
+
+// ---- F22: curated knowledge packages ----
+
+type packListEntry struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Level       string `json:"level"`
+	Scope       string `json:"scope"`
+	Version     int    `json:"published_version"`
+	Sources     int    `json:"sources"`
+	References  int    `json:"references"`
+}
+
+// listKnowledgePackages advertises the published packages the caller
+// may use: status published, level at or below the caller's tier cap,
+// and the caller's department in scope. Unpublished, above-tier and
+// out-of-scope packages are indistinguishable from unknown ones.
+func (s *Server) listKnowledgePackages(tok *store.APIToken, user *store.User) []packListEntry {
+	maxLevel := kb.MaxLevelForTier(tok.Tier)
+	out := []packListEntry{}
+	s.st.Read(func(st *store.State) {
+		for _, p := range st.KnowledgePackages {
+			pub := p.Published()
+			if pub == nil {
+				continue
+			}
+			lvl, ok := store.ParseDataLevel(pub.Level)
+			if !ok || lvl > maxLevel {
+				continue
+			}
+			if !p.InScope(user.Department) {
+				continue
+			}
+			out = append(out, packListEntry{ID: p.ID, Name: p.Name,
+				Description: p.Description, Level: pub.Level, Scope: p.Scope,
+				Version: p.PublishedVersion, Sources: len(pub.Sources),
+				References: len(pub.References)})
+		}
+	})
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+type packSourceView struct {
+	DocID  string `json:"doc_id"`
+	NodeID string `json:"node_id,omitempty"`
+	File   string `json:"file,omitempty"`
+	Title  string `json:"title,omitempty"`
+	Level  string `json:"level,omitempty"`
+}
+
+type packReferenceView struct {
+	Name      string                  `json:"name"`
+	Level     string                  `json:"level"`
+	Synthesis string                  `json:"synthesis"`
+	Citations []store.PackageCitation `json:"citations"`
+}
+
+type packGetResult struct {
+	ID                 string                  `json:"id"`
+	Name               string                  `json:"name"`
+	Description        string                  `json:"description"`
+	Level              string                  `json:"level"`
+	Scope              string                  `json:"scope"`
+	Version            int                     `json:"published_version"`
+	Synthesis          string                  `json:"synthesis"`
+	Citations          []store.PackageCitation `json:"citations"`
+	Sources            []packSourceView        `json:"sources"`
+	References         []packReferenceView     `json:"references"`
+	WithheldReferences []string                `json:"withheld_references,omitempty"`
+}
+
+// getKnowledgePackage returns one published package for the caller,
+// with its synthesis, citations and source list, plus the published
+// synthesis of every package it references. A reference whose package
+// was withdrawn or republished higher since this package was
+// published is withheld by name instead of served — the package
+// itself stays readable, the stale reference does not leak through.
+func (s *Server) getKnowledgePackage(tok *store.APIToken, user *store.User, nameOrID string) (*packGetResult, bool) {
+	var pkg *store.KnowledgePackage
+	var pkgs map[string]*store.KnowledgePackage
+	s.st.Read(func(st *store.State) {
+		pkgs = st.KnowledgePackages
+		for _, p := range st.KnowledgePackages {
+			if p.ID == nameOrID || p.Name == nameOrID {
+				cp := *p
+				pkg = &cp
+			}
+		}
+	})
+	if pkg == nil {
+		return nil, false
+	}
+	pub := pkg.Published()
+	if pub == nil || !pkg.InScope(user.Department) {
+		return nil, false
+	}
+	lvl, ok := store.ParseDataLevel(pub.Level)
+	if !ok || lvl > kb.MaxLevelForTier(tok.Tier) {
+		return nil, false
+	}
+	res := &packGetResult{ID: pkg.ID, Name: pkg.Name, Description: pkg.Description,
+		Level: pub.Level, Scope: pkg.Scope, Version: pkg.PublishedVersion,
+		Synthesis: pub.Content, Citations: pub.Citations,
+		Sources: []packSourceView{}, References: []packReferenceView{}}
+	for _, src := range pub.Sources {
+		v := packSourceView{DocID: src.DocID, NodeID: src.NodeID}
+		if s.fk != nil {
+			if snap, ok := s.fk.Snapshot(src.DocID); ok {
+				v.File, v.Title, v.Level = snap.RelPath, snap.Title, snap.Level.String()
+			}
+		}
+		res.Sources = append(res.Sources, v)
+	}
+	for _, ref := range pub.References {
+		name, rlevel, synthesis, cits, ok := knowpack.PublishedSynthesis(ref, pkgs, lvl)
+		if !ok {
+			withheld := ref
+			s.st.Read(func(st *store.State) {
+				if p, ok := st.KnowledgePackages[ref]; ok {
+					withheld = p.Name
+				}
+			})
+			res.WithheldReferences = append(res.WithheldReferences, withheld)
+			continue
+		}
+		res.References = append(res.References, packReferenceView{
+			Name: name, Level: rlevel, Synthesis: synthesis, Citations: cits})
+	}
+	return res, true
 }
 
 // ---- F8: prompt templates ----
