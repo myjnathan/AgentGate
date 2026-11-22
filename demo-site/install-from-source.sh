@@ -115,12 +115,18 @@ systemctl daemon-reload
 systemctl enable --now agentgate-demo.service
 systemctl enable --now agentgate-demo-reset.timer
 
-# --- Caddy（官方下载页直取二进制） ---
+# --- Caddy（优先发行版包，其次官方下载） ---
 if ! command -v caddy >/dev/null 2>&1; then
-  echo "==> 下载 Caddy"
+  echo "==> 安装 Caddy（apt）"
+  apt-get update -qq && apt-get install -y -qq caddy || true
+fi
+if ! command -v caddy >/dev/null 2>&1; then
+  echo "==> 下载 Caddy 二进制"
   curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=amd64" -o /usr/local/bin/caddy
   chmod 0755 /usr/local/bin/caddy
 fi
+CADDY_BIN="$(command -v caddy)"
+echo "==> Caddy: $CADDY_BIN"
 id caddy >/dev/null 2>&1 || useradd --system --home /var/lib/caddy --shell /usr/sbin/nologin caddy
 mkdir -p /var/lib/caddy /var/log/caddy
 chown -R caddy:caddy /var/lib/caddy /var/log/caddy
@@ -160,8 +166,8 @@ Wants=network-online.target
 Type=notify
 User=caddy
 Group=caddy
-ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile
-ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --force
+ExecStart=$CADDY_BIN run --environ --config /etc/caddy/Caddyfile
+ExecReload=$CADDY_BIN reload --config /etc/caddy/Caddyfile --force
 TimeoutStopSec=5s
 LimitNOFILE=1048576
 PrivateTmp=true
