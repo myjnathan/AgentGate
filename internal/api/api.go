@@ -175,6 +175,11 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/exceptions/{id}/approve", a.requireAdmin(a.approveException))
 	mux.HandleFunc("POST /api/exceptions/{id}/reject", a.requireAdmin(a.rejectException))
 	mux.HandleFunc("POST /api/exceptions/{id}/revoke", a.requireAdmin(a.revokeException))
+	mux.HandleFunc("GET /api/reports", a.requireAdmin(a.listReports))
+	mux.HandleFunc("POST /api/reports", a.requireAdmin(a.generateReport))
+	mux.HandleFunc("GET /api/reports/{id}", a.requireAdmin(a.getReport))
+	mux.HandleFunc("GET /api/reports/{id}/export", a.requireAdmin(a.exportReport))
+	mux.HandleFunc("DELETE /api/reports/{id}", a.requireAdmin(a.deleteReport))
 }
 
 // ---- helpers ----

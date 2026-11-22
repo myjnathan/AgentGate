@@ -1382,6 +1382,30 @@ def main():
     acts24 = [e.get("action") for e in audit24.get("events", [])]
     check("F24 exception audit trail", s == 200 and "exception_requested" in acts24 and "exception_approved" in acts24 and "exception_grant_used" in acts24)
 
+    # F25: compliance reports — generate this week's report (no date:
+    # the server's own today in UTC, so the window always contains
+    # this run), preview, export CSV, delete. Totals must reflect the
+    # run so far: model calls made, blocks from the banned-word and
+    # BYOA-confidential checks, one exception grant spent in F24.
+    s, rep25 = call("/api/reports", {"period": "weekly"}, token=admin_tok)
+    rep25id = rep25.get("id", "")
+    check("F25 weekly report generated", s == 201 and rep25id.startswith("rep_") and rep25.get("period") == "weekly")
+    check("F25 report totals reflect the run", s == 201 and rep25.get("calls", 0) > 0 and rep25.get("blocked", 0) > 0 and rep25.get("tokens", 0) > 0)
+    check("F25 report window is this week", s == 201 and rep25.get("period_start", "").endswith("T00:00:00Z") and rep25.get("audit", {}).get("chain_valid") is True)
+    check("F25 report snapshot sections", s == 201 and rep25.get("channel_total", 0) >= 1 and rep25.get("token_overview", {}).get("total", 0) >= 1 and rep25.get("terminals", {}).get("total", 0) >= 1 and rep25.get("exceptions", {}).get("grants_used", 0) >= 1)
+    check("F25 report carries disclaimer", s == 201 and "不是合规认证" in rep25.get("note", ""))
+    s, _ = call("/api/reports", {"period": "daily"}, token=admin_tok)
+    check("F25 bad period rejected", s == 400)
+    s, _ = call("/api/reports", {"period": "weekly"}, token=sess)
+    check("F25 employee cannot generate reports", s == 403)
+    s, lst25 = call("/api/reports", token=admin_tok, method="GET")
+    check("F25 report listed", s == 200 and any(r.get("id") == rep25id for r in lst25.get("reports", [])))
+    s, csv25 = call("/api/reports/" + rep25id + "/export", token=admin_tok, method="GET")
+    csv25text = csv25.get("_text", "")
+    check("F25 CSV export", s == 200 and "usage,total," in csv25text and "blocked_by_reason," in csv25text and "top_risk_events," in csv25text)
+    s, _ = call("/api/reports/" + rep25id, token=admin_tok, method="DELETE")
+    check("F25 report deleted", s == 200)
+
     httpd.shutdown()
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
