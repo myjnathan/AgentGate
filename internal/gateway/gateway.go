@@ -26,6 +26,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/billing"
 	"github.com/myjnathan/agentgate/internal/cache"
 	"github.com/myjnathan/agentgate/internal/guard"
+	"github.com/myjnathan/agentgate/internal/otel"
 	"github.com/myjnathan/agentgate/internal/ratelimit"
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/store"
@@ -56,6 +57,10 @@ type Policy struct {
 	// default 1h, see cache.DefaultTTL). The cache itself is
 	// in-memory and resets on restart, like channel health (F1).
 	CacheTTL time.Duration
+	// Tracer is the OpenTelemetry exporter (F16); nil or disabled
+	// means no tracing. Spans carry metadata only — never prompt or
+	// response text (see docs/opentelemetry.md).
+	Tracer *otel.Tracer
 }
 
 type Gateway struct {
@@ -90,6 +95,10 @@ func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log, p
 // can wire it to the management API for status, toggling and
 // clearing.
 func (g *Gateway) Cache() *cache.Cache { return g.cache }
+
+// SetTracer wires the OpenTelemetry exporter after construction
+// (used by tests; the server passes it through Policy).
+func (g *Gateway) SetTracer(tr *otel.Tracer) { g.policy.Tracer = tr }
 
 // rateLimits resolves the effective RPM/TPM for a token: its own
 // configured limit wins, otherwise the tier default.
@@ -202,6 +211,102 @@ func writeErr(w http.ResponseWriter, status int, code, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"error": map[string]any{"code": code, "message": msg, "type": "agentgate_error"},
 	})
+}
+
+// statusRecorder captures the HTTP status of a gateway response for
+// the deferred span end, without changing what the client sees. It
+// forwards Flush so SSE streaming keeps working (streamCopy asserts
+// http.Flusher).
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	if r.status == 0 {
+		r.status = code
+	}
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return r.ResponseWriter.Write(b)
+}
+
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// traceState carries the per-call facts the deferred span end
+// reports. Fields are filled as the handler learns them; the span
+// itself is metadata only (model, channel, level, decision,
+// tokens), never request or response text.
+type traceState struct {
+	decision string
+	model    string
+	channel  string
+	level    string
+	tokens   int64
+	cache    string
+	sidecar  string
+}
+
+// startTrace begins the gateway span for a call (a no-op span when
+// the tracer is nil or disabled) and returns it with the state the
+// deferred end reports. The caller's traceparent, if valid, is
+// joined so one trace covers the agent, the gateway and the model.
+func (g *Gateway) startTrace(r *http.Request, tok *store.APIToken, user *store.User) (*otel.Span, *traceState) {
+	ts := &traceState{decision: "allow"}
+	if g.policy.Tracer == nil {
+		return nil, ts
+	}
+	parent, _ := otel.ParseTraceParent(r.Header.Get("traceparent"))
+	span := g.policy.Tracer.Start("gateway.chat_completions", parent,
+		otel.StringAttr("agentgate.actor_id", user.ID),
+		otel.StringAttr("agentgate.agent_type", tok.AgentType),
+		otel.StringAttr("agentgate.tier", string(tok.Tier)),
+		otel.StringAttr("agentgate.department", user.Department))
+	return span, ts
+}
+
+// endTrace finishes the span and records the call counters. The
+// status comes from the recorder, the other facts from ts.
+func (g *Gateway) endTrace(span *otel.Span, ts *traceState, rec *statusRecorder) {
+	if span == nil {
+		return
+	}
+	status := 1
+	msg := ""
+	if rec.status >= 400 {
+		status = 2
+		msg = http.StatusText(rec.status)
+	}
+	attrs := []otel.Attr{
+		otel.StringAttr("agentgate.decision", ts.decision),
+		otel.StringAttr("agentgate.model", ts.model),
+		otel.StringAttr("agentgate.channel", ts.channel),
+		otel.StringAttr("agentgate.data_level", ts.level),
+		otel.IntAttr("agentgate.tokens_total", ts.tokens),
+	}
+	if ts.cache != "" {
+		attrs = append(attrs, otel.StringAttr("agentgate.cache", ts.cache))
+	}
+	if ts.sidecar != "" {
+		attrs = append(attrs, otel.StringAttr("agentgate.sidecar", ts.sidecar))
+	}
+	span.SetAttrs(attrs...)
+	span.End(status, msg)
+	if tr := g.policy.Tracer; tr != nil {
+		tr.AddCounter("agentgate.gateway.calls", 1, map[string]string{"decision": ts.decision})
+		if ts.tokens > 0 {
+			tr.AddCounter("agentgate.gateway.tokens", ts.tokens, map[string]string{"channel": ts.channel})
+		}
+	}
 }
 
 // Models lists models the caller's tier may use.
@@ -376,12 +481,21 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "unauthorized", "invalid or expired token")
 		return
 	}
+	// OpenTelemetry (F16): one server span per call, finished by a
+	// deferred end that reads the recorder status and the trace
+	// state filled in below. The recorder forwards Flush so SSE
+	// streaming is unaffected.
+	rec := &statusRecorder{ResponseWriter: w}
+	w = rec
+	span, ts := g.startTrace(r, tok, user)
+	defer g.endTrace(span, ts, rec)
 	// Per-token rate limit (F3): RPM counts the request now, TPM is
 	// checked against tokens recorded from completed responses.
 	// A denied request is audited but never reaches the pipeline or
 	// an upstream channel.
 	rpm, tpm := g.rateLimits(tok)
 	if allowed, kind, retryAfter := g.limiter.Allow(tok.ID, rpm, tpm, time.Now()); !allowed {
+		ts.decision = "block"
 		g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 			Kind: "rate_limit", Action: "rate_limited", Decision: "block",
 			Detail: map[string]string{"limit": kind, "token_id": tok.ID}})
@@ -396,16 +510,20 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 32<<20))
 	if err != nil {
+		ts.decision = "error"
 		writeErr(w, http.StatusBadRequest, "bad_request", "cannot read body")
 		return
 	}
 	var req chatRequest
 	if err := json.Unmarshal(body, &req); err != nil || req.Model == "" {
+		ts.decision = "error"
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid chat completion request")
 		return
 	}
+	ts.model = req.Model
 	// Quota check (monthly token cap on the token).
 	if tok.MonthlyCap > 0 && tok.UsedTokens >= tok.MonthlyCap {
+		ts.decision = "block"
 		writeErr(w, http.StatusTooManyRequests, "quota_exceeded", "monthly token quota exhausted")
 		return
 	}
@@ -415,6 +533,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// flight is never the one blocked — the check runs before the
 	// pipeline, against spend so far this calendar month (UTC).
 	if spent, cap, exceeded := g.departmentBudgetExceeded(user); exceeded {
+		ts.decision = "block"
 		g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 			Kind: "violation", Action: "model_call_blocked", Model: req.Model, Decision: "block",
 			Detail: map[string]string{"reason": "department_budget_exceeded", "department": user.Department,
@@ -474,10 +593,12 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	sidecar := r.Header.Get("X-AgentGate-Sidecar")
 	if sidecar != "" {
 		detail["sidecar"] = sidecar
+		ts.sidecar = sidecar
 	}
 
 	// Banned words: hard block.
 	if hasBanned && !g.policy.DryRun {
+		ts.decision, ts.level = "block", level.String()
 		g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 			Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block", Detail: detail})
 		writeErr(w, http.StatusBadRequest, "request_rejected", "request blocked by protection policy (banned content)")
@@ -486,6 +607,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// BYOA tier may never send confidential+ data anywhere.
 	if tok.Tier == store.TierBYOA && level >= store.LevelConfidential && !g.policy.DryRun {
+		ts.decision, ts.level = "block", level.String()
 		g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 			Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
 			Detail: mergeDetail(detail, "reason", "byoa_tier_cannot_send_confidential")})
@@ -495,6 +617,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !g.anyChannelForModel(req.Model) {
+		ts.decision = "error"
 		writeErr(w, http.StatusBadRequest, "model_not_available", "model is not available on this gateway")
 		return
 	}
@@ -513,12 +636,14 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		// the generic no-channel error — the operator can see exactly
 		// which kind of channel is missing.
 		if g.channelsBlockedByTrust(req.Model, level) {
+			ts.decision, ts.level = "block", level.String()
 			g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 				Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
 				Detail: mergeDetail(detail, "reason", "no_compliant_channel")})
 			writeErr(w, http.StatusForbidden, "no_compliant_channel", noCompliantChannelMessage(level))
 			return
 		}
+		ts.decision, ts.level = "block", level.String()
 		g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 			Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
 			Detail: mergeDetail(detail, "reason", "no_channel_for_data_level")})
@@ -581,6 +706,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			if sidecar != "" {
 				cacheDetail["sidecar"] = sidecar
 			}
+			ts.decision, ts.channel, ts.level, ts.cache = decision, candidates[0].Name, level.String(), "hit"
 			g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 				Kind: "cache_hit", Action: "chat_completions", Model: req.Model, Channel: candidates[0].Name,
 				DataLevel: level.String(), Decision: decision, Detail: cacheDetail})
@@ -649,6 +775,11 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 			upReq.Header.Set("Content-Type", "application/json")
 			upReq.Header.Set("Authorization", "Bearer "+apiKey)
+			// Trace context (F16): the upstream joins this call's
+			// trace when tracing is on; a no-op span yields "".
+			if tp := span.TraceParent(); tp != "" {
+				upReq.Header.Set("traceparent", tp)
+			}
 			if req.Stream {
 				upReq.Header.Set("Accept", "text/event-stream")
 			}
@@ -758,6 +889,10 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	if fallbackFrom != "" {
 		detail["fallback_from"] = fallbackFrom
+	}
+	ts.decision, ts.channel, ts.level, ts.tokens = decision, channel.Name, level.String(), usedTokens
+	if v := rec.Header().Get("X-AgentGate-Cache"); v != "" {
+		ts.cache = strings.ToLower(v)
 	}
 	g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 		Kind: "model_call", Action: "chat_completions", Model: req.Model, Channel: channel.Name,

@@ -24,6 +24,7 @@ import (
 
 type testEnv struct {
 	srv     *httptest.Server
+	msrv    *mcp.Server
 	st      *store.Store
 	byoaTok string
 	mgdTok  string
@@ -195,7 +196,7 @@ func setup(t *testing.T) *testEnv {
 		}
 		return plain
 	}
-	return &testEnv{srv: srv, st: st,
+	return &testEnv{srv: srv, msrv: msrv, st: st,
 		byoaTok: mkToken("lixiaofeng", store.TierBYOA),
 		mgdTok:  mkToken("chenjing", store.TierManaged)}
 }

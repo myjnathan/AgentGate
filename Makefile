@@ -33,7 +33,7 @@ test:
 	$(GO) vet ./... && $(GO) test ./...
 
 smoke: build
-	@AGENTGATE_MASTER_KEY=make-smoke-master-key AGENTGATE_DEMO=1 AGENTGATE_DATA=$$(mktemp -d) AGENTGATE_ADDR=127.0.0.1:8799 ./dist/agentgate & \
+	@AGENTGATE_MASTER_KEY=make-smoke-master-key AGENTGATE_DEMO=1 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 AGENTGATE_DATA=$$(mktemp -d) AGENTGATE_ADDR=127.0.0.1:8799 ./dist/agentgate & \
 	SRV=$$!; sleep 2; \
 	AGENTGATE_GATEWAY=http://127.0.0.1:8799 AGENTGATE_GUARD_BANNED_WORDS=test_sensitive ./dist/ag-guard -listen 127.0.0.1:18765 & \
 	GUARD=$$!; sleep 1; \
