@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentGate — 不绑定任何 Agent 的企业 AI 治理层</title>
+<meta name="description" content="AgentGate 是开源的企业 AI 治理平台：员工爱用哪个桌面 Agent 就用哪个，公司统一管住模型、能力与数据三道门。分级防泄漏、可逆脱敏、审计可查，单二进制零依赖部署。">
+<style>
+  :root{--ink:#0f172a;--body:#334155;--mut:#64748b;--line:#e2e8f0;--bg:#f6f9fc;--card:#fff;--pri:#4f46e5;--pri2:#eef2ff;--ok:#047857;--warn:#b45309}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--body);background:var(--bg);line-height:1.7;font-size:15px}
+  a{color:var(--pri);text-decoration:none}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 20px}
+  header{position:sticky;top:0;background:rgba(255,255,255,.92);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);z-index:10}
+  .nav{display:flex;align-items:center;gap:26px;height:60px}
+  .logo{font-weight:800;color:var(--ink);font-size:19px;letter-spacing:.2px}
+  .logo span{color:var(--pri)}
+  .nav nav{margin-left:auto;display:flex;gap:22px;font-size:14px}
+  .nav nav a{color:var(--body)}
+  .btn{display:inline-block;background:var(--pri);color:#fff;padding:9px 20px;border-radius:8px;font-weight:600;font-size:14px}
+  .btn.ghost{background:#fff;color:var(--pri);border:1px solid var(--pri)}
+  .hero{padding:72px 0 56px;text-align:center}
+  .hero h1{color:var(--ink);font-size:40px;line-height:1.25;font-weight:800}
+  .hero h1 em{font-style:normal;color:var(--pri)}
+  .hero p{max-width:720px;margin:20px auto 30px;font-size:17px;color:var(--body)}
+  .hero .cta{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:8px 0 56px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px}
+  .stat b{display:block;color:var(--ink);font-size:26px}
+  .stat small{color:var(--mut)}
+  section{padding:34px 0}
+  h2{color:var(--ink);font-size:26px;margin-bottom:8px}
+  .sub{color:var(--mut);margin-bottom:24px;max-width:760px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px}
+  .card h3{color:var(--ink);font-size:17px;margin-bottom:8px}
+  .card p{font-size:14px}
+  .gates{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .gate{background:var(--pri2);border:1px solid #e0e7ff;border-radius:12px;padding:22px}
+  .gate h3{color:var(--ink);margin-bottom:8px}
+  .gate p{font-size:14px}
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;counter-reset:step}
+  .step{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px}
+  .step b{color:var(--pri)}
+  .demo-box{background:var(--ink);color:#e2e8f0;border-radius:14px;padding:30px}
+  .demo-box h2{color:#fff}
+  .demo-box code{background:#1e293b;color:#a5b4fc;padding:2px 8px;border-radius:6px;font-size:13px}
+  .demo-box .btn{background:#6366f1}
+  .weak li{margin:6px 0 6px 18px;font-size:14.5px}
+  footer{border-top:1px solid var(--line);padding:28px 0 40px;color:var(--mut);font-size:13.5px;margin-top:30px}
+  @media(max-width:860px){.grid,.gates,.steps,.stats{grid-template-columns:1fr}.hero h1{font-size:30px}.nav nav{display:none}}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap nav">
+    <div class="logo">Agent<span>Gate</span></div>
+    <nav>
+      <a href="#gates">三道门</a><a href="#features">核心能力</a><a href="#deploy">部署</a><a href="#honest">弱点明说</a>
+      <a href="https://github.com/myjnathan/AgentGate">GitHub</a>
+    </nav>
+    <a class="btn" href="https://demo.agentgate.com.cn">在线演示</a>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="hero">
+    <h1>不绑定任何 Agent 的<br><em>企业 AI 治理层</em></h1>
+    <p>员工爱用哪个桌面 Agent——DSH、WorkBuddy、Claude Code——就用哪个。公司不需要管住每一个工具，只需要管住所有工具都必须经过的三道门：模型、能力、数据。</p>
+    <div class="cta">
+      <a class="btn" href="https://demo.agentgate.com.cn">进入在线演示</a>
+      <a class="btn ghost" href="https://github.com/myjnathan/AgentGate">查看开源仓库</a>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><b>78%</b><small>的 AI 用户自带工具上班（BYOAI）——微软《工作趋势指数 2024》，31 国 31,000 人调查</small></div>
+    <div class="stat"><b>63%</b><small>的企业没有或正在制定 AI 治理政策——IBM《2025 数据泄露成本报告》</small></div>
+    <div class="stat"><b>20%</b><small>的数据泄露涉及影子 AI，平均多付出 67 万美元——同上</small></div>
+  </div>
+
+  <section id="gates">
+    <h2>守的不是 Agent，是三道门</h2>
+    <p class="sub">任何 Agent 想在公司里真正干活，都必须过这三关。门在我们手里，Agent 随便换。</p>
+    <div class="gates">
+      <div class="gate"><h3>模型门</h3><p>统一的模型网关：数据先分级再放行——公开、内部走签约云；机密先脱敏再上云，原文不出公司；绝密只走本地模型或直接拦截。配额、成本、审计全在这里。</p></div>
+      <div class="gate"><h3>能力门</h3><p>公司的知识库和业务系统只以受授权的 MCP 工具形式开放，凭据永远留在网关一侧、不下发到员工电脑。员工能查到什么，由他的密级决定，不是由他用的工具决定。</p></div>
+      <div class="gate"><h3>终端门</h3><p>受管 Agent 上岗先「证明」自己：版本、配置、插件清单对不上策略，自动降级。员工电脑上的守护程序在数据离开机器之前就先脱敏，明文不出端。</p></div>
+    </div>
+  </section>
+
+  <section id="features">
+    <h2>核心能力</h2>
+    <p class="sub">为没有自有模型、没有数据库、没有知识库的传统公司设计：零预置假设，开箱即用。</p>
+    <div class="grid">
+      <div class="card"><h3>分级路由</h3><p>按数据密级和通道信任类型自动选路：签约云、专有云、本地小模型各行其道，无合规通道时明确拦截并说明原因。</p></div>
+      <div class="card"><h3>可逆脱敏</h3><p>身份证、手机号、密钥等敏感信息出门前替换为占位符，响应回来自动还原，连流式输出也不漏。映射只在内存中，用完即毁。</p></div>
+      <div class="card"><h3>文件夹即知识库</h3><p>把共享文件夹指给它，自动建成带目录、摘要和页码引用的 Wiki 知识库。知识从现有文件里长出来，不用先整理录入。</p></div>
+      <div class="card"><h3>专题知识包</h3><p>围绕具体工作问题精选文件、写综合说明，结论条条带原文出处。口径受控、责任可追溯的「案卷」，不是大杂烩。</p></div>
+      <div class="card"><h3>Agent 证明与终端盘点</h3><p>受管 Agent 登录时提交版本与配置证据，平台核验后才发受管令牌；终端持续心跳盘点，配置漂移一眼可见。</p></div>
+      <div class="card"><h3>例外审批</h3><p>被拦下的高密级调用可以申请例外：员工说明理由，管理员审批，一次性放行，全程留痕。绝密默认不可例外。</p></div>
+      <div class="card"><h3>防篡改审计</h3><p>审计日志带哈希链，事后改一条就会断链。谁在什么时候把什么级别的数据发给了哪个模型，清清楚楚。</p></div>
+      <div class="card"><h3>组织同步</h3><p>钉钉、飞书、企业微信的部门和员工目录自动同步，第三方身份登录时绑定。同步只建账号，不自动给权限。</p></div>
+      <div class="card"><h3>与透明加密配合</h3><p>和 IP-guard 等透明加密产品分工：文件级外发走加密产品的审批，语义级外发走 AgentGate 的分级。为受控 Agent 开进程白名单读明文，出口由我们守住。</p></div>
+    </div>
+  </section>
+
+  <section id="deploy">
+    <h2>部署：一个文件，三步</h2>
+    <p class="sub">单二进制 + 自带存储，不要求数据库、不要求容器、不要求云。对比同类产品动辄 TiDB/OceanBase 起步，这是给中小公司准备的形态。</p>
+    <div class="steps">
+      <div class="step"><p><b>第一步</b></p><p>下载对应平台的二进制，放到任意一台内网机器（Windows / Linux / macOS 均可）。</p></div>
+      <div class="step"><p><b>第二步</b></p><p>设一个主密钥启动，打开管理台，按「保守模式」预设确认策略——机密以上默认拦截、审计全开。</p></div>
+      <div class="step"><p><b>第三步</b></p><p>员工用设备码接入自己的 Agent。先开「观察模式」只审计不拦截，跑两周看报表，再逐步收紧。</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="demo-box">
+      <h2>在线演示</h2>
+      <p style="margin:10px 0 16px">演示环境装的是虚构公司「星河精密」的示例数据，每 6 小时自动重置。管理员账号 <code>admin / agentgate-admin</code>，员工账号 <code>lixiaofeng / demo12345</code>。可以试着让员工账号去问注册部的机密文档，看看分级拦截是怎么工作的。</p>
+      <a class="btn" href="https://demo.agentgate.com.cn">打开演示管理台</a>
+    </div>
+  </section>
+
+  <section id="honest">
+    <h2>弱点明说</h2>
+    <p class="sub">我们把防护边界写在明处。做不到的，不假装做得到。</p>
+    <ul class="weak">
+      <li><b>只防电脑里的数据流。</b>员工拍照、默记、口述把信息带出去，不在任何软件的防护范围内——那是贵公司保密制度的事，我们明说，不遮掩。</li>
+      <li><b>规则检测看字面，不看语义。</b>把机密换个说法、拆开、编码再发，规则可能抓不住（语义复核层已在开发路线图上）。目前靠审计抽查和异常告警兜底。</li>
+      <li><b>Agent 证明是软件自报。</b>能防配置错误和私自改装，防不住蓄意伪造证据的高手——这一层定位是「证明题」不是「防弹衣」。</li>
+      <li><b>签约云的「零留存」是合同承诺，不是技术保证。</b>所以我们的默认做法是先脱敏再上云：云端看到的是占位符，承诺落空也拿不到原文。</li>
+      <li><b>单机版没有高可用。</b>网关宕机时受管调用会中断（高密级默认拦截，不会 fail-open 放行）。双机热备在路线图末尾。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>开源与许可证</h2>
+    <p class="sub" style="max-width:860px">AgentGate 采用 <b>GNU AGPL-3.0</b> 开源：任何人可以免费使用，包括商业使用；但如果你修改了它并对外分发、或用它提供网络服务，就必须同样以 AGPL 开源。我们图的是让大家用起来，同时防止大厂闭源拿去转卖。代码是否可信，不用听我们说——自己审计，或者让你的集成商审计。</p>
+    <a class="btn" href="https://github.com/myjnathan/AgentGate">github.com/myjnathan/AgentGate</a>
+  </section>
+
+  <footer>
+    <div>AgentGate — 不绑定任何 Agent 的企业 AI 治理层。本站数据均为虚构演示数据（星河精密）。</div>
+  </footer>
+</div>
+</body>
+</html>
