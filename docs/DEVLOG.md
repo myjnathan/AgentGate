@@ -2,6 +2,17 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-22 · F23 终端持续盘点与断网策略缓存
+
+- 本轮按常规规程选条目：体内的 12:26 特别指令（F17 + 蓝图修订稿）早已在 F17 轮执行完毕、执行后作废；待办登记 2–5 均已在 F16/F19 轮执行完毕、作废；P0、P1 全部 done，P2 按清单顺序取 F23（首个剩余 P2 条目）。远端 main 已含 F22（PR #18，HEAD 23db1b80），无在途分支需续传。
+- 借鉴 Fleet / osquery 的终端可见性模式（Fleet 官方发布说明 fleetdm.com/releases/fleet-3-12-0，2026-11-22 查阅）：主机定期上报 vitals、服务端按最后上报时间推导新鲜度、可对单个主机点「Refetch」拿权威最新值；osquery 侧的落地形态是策略查询（`inventory-heartbeat-age-seconds.sql` 距上次心跳秒数、`beacon-version.sql` 已装版本）配 Labels（按 IdP 部门分组）做筛选。IP-guard 的离线策略缓存无公开 API 文档，模型沿用本仓 docs/integrations/ipguard.md 的配合结论。
+- 复用检查（Nathan 复用优先指示）：未复制 Fleet/osquery 代码——Fleet 是 Go+MySQL+Redis 的整套设备管理平台（MIT），osquery 是 C++ 端点探针，均与本仓库单二进制 + 令牌认证架构不匹配；心跳、漂移评估、策略快照与离线缓冲约 900 行纯标准库自研；漂移评估复用本仓已有 `attest.Evaluate`（F14），词表检测复用 `internal/guard`（F15）。
+- 实现：新包 `internal/terminal`（`Heartbeat` + 形状校验复用证明报告规则；`PolicySnapshot`：快照内容 SHA-256 作版本、词表排序后定版、篡改校验；`DriftReasons`：无策略不漂移、有策略走 `attest.Evaluate`、只返原因码；`Terminal` 记录 + `Status`：5 分钟 online / 60 分钟 offline）；`store.State` 增加 `Terminals`；管理 API（`internal/api/terminals.go`）：`POST /api/terminals/heartbeat`（令牌认证，Agent 类型与等级取自令牌、会话调用退回请求体；只审计注册/漂移出现/漂移消除/断网补报四类变迁，不记每次心跳）、`GET /api/terminals`（部门/Agent/版本/状态/漂移筛选）+ `GET /api/terminals/{id}`、`GET /api/sidecar/policy`（任意有效令牌可取）；`alert.FromEvent` 新增 `terminal_drift`（warning）；sidecar：`Config` 增加 `agent_type`/`plugins`/`heartbeat_interval_seconds`/`policy_cache_path`，`Server` 增加策略快照（local/gateway/cached）+ 检测器热换 + 心跳循环（借用代理请求里见到的令牌，只存内存）+ 断网决策缓冲；代理请求时最多每 5 分钟后台刷新一次策略（成功换检测器并落盘 0600，失败保持旧策略，篡改缓存忽略）；转发失败时按缓存策略执行：密级 ≤ offline_max_level（默认 internal）记 `offline_unreachable` 返回 502，之上记 `offline_blocked` 返回 503（fail-closed），dry-run 永不拦截；心跳成功时清空缓冲；`GET /status` 新增策略版本/来源/刷新时间、心跳状态与待补报数；`ag-guard` 增加 `-agent-type`/`-plugins`/`-heartbeat-seconds`/`-policy-cache`，`cmd/agentgate` 接线 `SetSidecarPolicy`（`AGENTGATE_OFFLINE_MAX_LEVEL` 可调上限）；管理台新增「终端清单」页（筛选 + 列表，漂移标红，中英双语）；详见 docs/terminal-inventory.md。
+- 关键决策：① 心跳不进审计日志——每分钟一次的心跳会淹没审计，只审计注册与漂移/补报变迁；② 漂移评估复用 F14 的 `attest.Evaluate` 而不是另写一套判定，心跳即持续证明；③ 策略刷新不改变 sidecar 本地的 dry-run 标志（dry-run 是端侧操作员的上线选择，快照里的 dry-run 只作展示），避免一次刷新悄悄把观测模式翻成强制模式；④ 断网决策缓冲只在内存中（sidecar 在断网期间重启会丢失未补报条目，策略缓存落盘不受此限），是实现复杂度与可信度之间的取舍，已写入文档已知限制；⑤ 心跳认证借用代理请求里见到的令牌、不另存凭证，sidecar 自身不持有任何长期密钥。
+- 测试：terminal 包 4 项 + API 端点 1 项 + alert 分类 1 项 + sidecar 5 项 + 冒烟新增 14 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（terminal/api/sidecar）全绿；`make smoke` 218 项断言 0 失败（基线 204 + 新增 14）。
+- 本轮实测抓到的真问题：① 冒烟初版把员工 API 令牌（`tok`）当作会话去调 `GET /api/terminals`，期望 403 却拿到 401——requireAdmin 是会话守卫，API 令牌本来就进不去；已改用员工会话 `sess` 断言 403（与 API 测试的 empSess 口径一致）。② 心跳返回的 `drift_reasons` 在无漂移时是 JSON null 而非 `[]`，冒烟 `== []` 失败；已在服务端把 nil 强制为空数组（列表端点此前已做同样处理）。③ sidecar 策略源断言初版只认 `gateway`，但缓存文件（上一轮冒烟写下）未满 5 分钟刷新间隔时来源是 `cached`——行为本身正确（5 分钟内不重复刷新）；已改为断言策略版本与服务端快照一致且来源为 gateway/cached 之一。另记：冒烟脚本的中文部门名进 URL 查询串须 `urllib.parse.quote` 编码（F19 轮 doc_id 同类坑）。④ 提交前全量 `go test ./...` 时 sidecar 包偶发一次失败，单跑与重跑全绿（未抓到具体用例，疑似 1 秒心跳 ticker 测试在并行负载下的时序抖动）；已在两次全量重跑中确认通过，未改代码。
+- 推送结果：（待填）
+
 ## 2026-11-22 · F22 专题知识包
 
 - 本轮按常规规程选条目：体内的 12:26 特别指令（F17 + 蓝图修订稿）早已在 F17 轮执行完毕、执行后作废；待办登记 2–5 均已在 F16/F19 轮执行完毕、作废；P0、P1 全部 done，P2 按清单顺序取 F22（首个剩余 P2 条目）。远端 main 已含 F21（PR #17，HEAD b0b85e2f），无在途分支需续传。
@@ -11,6 +22,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 关键决策：① 引用只能向下——被引用包的密级须 ≤ 本包来源的最高密级（不是取 max 吸收：低密级包不得嵌入高密级内容是禁令，不是升级理由；想引用更高密级的包，先给本包加一个同等密级的来源，包的密级随之升高再引用）；② 回指由树填入、不接受手写回指，不存在的章节在创建时即被拒绝；③ 起草开放给任何登录用户（Agent 起草 → 管理员审批），审核 / 发布 / 删除仅 admin/security；④ 驳回已发布包即撤回——`Published()` 要求 status 为 published，只看 PublishedVersion 会把已撤回的包继续当作已发布；⑤ 审计只记包名/版本/密级，不记综合正文（综合本身可能概括机密文档内容）；⑥ 首次发布经审核与经发布端点同款重验配方，过期配方不能悄悄成为生产版本。
 - 测试：knowpack 包 5 项 + API 端点 1 项 + MCP 集成 1 项 + 冒烟新增 14 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（knowpack/api/mcp/store）全绿；`make smoke` 204 项断言 0 失败（基线 190 + 新增 14）。
 - 本轮实测抓到的真问题：① 审核-批准初版未重验配方：驳回已发布包只改 status、不清 PublishedVersion，`Published()` 初版只看版本号、被撤回的包仍算已发布，导致「撤回引用后发布」测试返回 200 而非 409。已修：`Published()` 要求 status == published；审核首次发布与发布端点同款重验配方（新增 API 回归用例）。② 冒烟断言的子串与种子综合文本不一致（断言写「请假须提前提交申请」，种子实际写「请假须提前在系统提交申请」），已按种子文本修正断言。③ API 测试初版把员工起草当 403——设计本就是任何员工可起草（Agent 起草 → 管理员审批），已按设计修正断言（员工可创建自己的草稿与加版，不可动他人包、不可审核/发布/删除）。
+- 推送结果：整包快照推送一次成功（push-files，16 个文件一次提交 0a2ebeda 到 loop/f22，16/16 blob 哈希核对一致；推送前核对同步基点：8 个改动文件远端 blob 与本地父提交一致，DEVLOG.md 仅差本地独有的 F21 推送记录行，7 个新文件在远端 main 不存在）；PR #18 合并进远端 main（合并提交 23db1b80）；远端 main 上 `internal/knowpack/knowpack.go` 哈希与本地快照一致。另记：首次 `create_branch` 调用被连接器服务重启中断、核查确认分支未建出后重试成功；`list_branches` 不在连接器只读集内，须走 `call-tool`。待删分支新增 loop/f22（共 12 个，需 Nathan 网页端手动删除）。
 
 ## 2026-11-22 · F21 组织架构同步与 IM 身份绑定
 

@@ -18,6 +18,7 @@ import (
 
 	"github.com/myjnathan/agentgate/internal/attest"
 	"github.com/myjnathan/agentgate/internal/distrib"
+	"github.com/myjnathan/agentgate/internal/terminal"
 )
 
 // Tier is the trust tier of an agent installation / token.
@@ -508,6 +509,10 @@ type State struct {
 	// (backlog F22), keyed by package ID; each package is a
 	// recipe (sources + references) plus versioned synthesis.
 	KnowledgePackages map[string]*KnowledgePackage `json:"knowledge_packages"`
+	// Terminals holds the continuous terminal inventory (backlog
+	// F23), keyed by terminal ID; one record per (user, agent
+	// type), maintained by sidecar heartbeats.
+	Terminals map[string]*terminal.Terminal `json:"terminals"`
 }
 
 // OrgProvider is one third-party directory (org sync) configuration
@@ -571,6 +576,7 @@ func newState() *State {
 		PackageUploads:      map[string]*distrib.Upload{},
 		OrgProviders:        map[string]*OrgProvider{},
 		KnowledgePackages:   map[string]*KnowledgePackage{},
+		Terminals:           map[string]*terminal.Terminal{},
 	}
 }
 
@@ -642,6 +648,9 @@ func New(dir string) (*Store, error) {
 		}
 		if st.KnowledgePackages == nil {
 			st.KnowledgePackages = map[string]*KnowledgePackage{}
+		}
+		if st.Terminals == nil {
+			st.Terminals = map[string]*terminal.Terminal{}
 		}
 		s.st = &st
 	} else if !os.IsNotExist(err) {

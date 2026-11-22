@@ -26,6 +26,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/semidx"
 	"github.com/myjnathan/agentgate/internal/store"
+	"github.com/myjnathan/agentgate/internal/terminal"
 )
 
 type API struct {
@@ -44,6 +45,9 @@ type API struct {
 	orgsync    *orgsync.Syncer
 	cache      *cache.Cache
 	tracer     *otel.Tracer
+	// sidecarPolicy returns the policy snapshot a sidecar caches
+	// (backlog F23); nil when the server was started without one.
+	sidecarPolicyFn func() terminal.PolicySnapshot
 }
 
 func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log) *API {
@@ -158,6 +162,10 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/orgsync/bindings", a.requireAdmin(a.bindOrgIdentity))
 	mux.HandleFunc("DELETE /api/orgsync/bindings/{user_id}/{provider}", a.requireAdmin(a.unbindOrgIdentity))
 	mux.HandleFunc("GET /api/orgsync/bindings", a.requireSession(a.listMyOrgBindings))
+	mux.HandleFunc("POST /api/terminals/heartbeat", a.requireTokenOrSession(a.terminalHeartbeat))
+	mux.HandleFunc("GET /api/terminals", a.requireAdmin(a.listTerminals))
+	mux.HandleFunc("GET /api/terminals/{id}", a.requireAdmin(a.getTerminal))
+	mux.HandleFunc("GET /api/sidecar/policy", a.requireTokenOrSession(a.getSidecarPolicy))
 }
 
 // ---- helpers ----

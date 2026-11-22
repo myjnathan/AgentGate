@@ -12,21 +12,69 @@ import (
 
 	"github.com/myjnathan/agentgate/internal/sidecar"
 	"github.com/myjnathan/agentgate/internal/store"
+	"github.com/myjnathan/agentgate/internal/terminal"
 )
 
 // fakeGateway records what it received (like mockllm, it echoes the
-// last user message so tests can observe redaction + restore).
+// last user message so tests can observe redaction + restore). It
+// also emulates the F23 server endpoints: GET /api/sidecar/policy
+// returns a snapshot built from policyBanned/policyCustom, and POST
+// /api/terminals/heartbeat records the heartbeat. Chat bodies and
+// headers are recorded separately from policy/heartbeat traffic, so
+// calls() still counts model calls only. Set failChat to make chat
+// requests fail at the transport level (gateway unreachable).
 type fakeGateway struct {
-	mu       sync.Mutex
-	bodies   []string
-	headers  []http.Header
-	modelsOK bool
+	mu           sync.Mutex
+	bodies       []string
+	headers      []http.Header
+	modelsOK     bool
+	policyBanned []string
+	policyCustom []string
+	policyHits   int
+	heartbeats   []string
+	failChat     bool
 }
 
 func (f *fakeGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/v1/models" {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"mock-eco","object":"model"}]}`))
+		return
+	}
+	if r.URL.Path == "/api/sidecar/policy" {
+		f.mu.Lock()
+		f.policyHits++
+		banned := append([]string(nil), f.policyBanned...)
+		custom := append([]string(nil), f.policyCustom...)
+		f.mu.Unlock()
+		snap := terminal.NewPolicySnapshot(banned, custom, false, "internal")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"source": "gateway", "version": snap.Version,
+			"banned_words": snap.BannedWords, "custom_words": snap.CustomWords,
+			"dry_run": snap.DryRun, "offline_max_level": snap.OfflineMaxLevel})
+		return
+	}
+	if r.URL.Path == "/api/terminals/heartbeat" {
+		body, _ := io.ReadAll(r.Body)
+		f.mu.Lock()
+		f.heartbeats = append(f.heartbeats, string(body))
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"terminal_id": "term_test", "status": "online", "drift_reasons": []string{}})
+		return
+	}
+	f.mu.Lock()
+	fail := f.failChat
+	f.mu.Unlock()
+	if fail {
+		// Drop the connection without a response: the client's Do
+		// fails, which is exactly the gateway-unreachable path.
+		if hj, ok := w.(http.Hijacker); ok {
+			conn, _, _ := hj.Hijack()
+			_ = conn.Close()
+		}
 		return
 	}
 	body, _ := io.ReadAll(r.Body)
@@ -89,6 +137,30 @@ func (f *fakeGateway) lastHeader() http.Header {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.headers[len(f.headers)-1]
+}
+
+func (f *fakeGateway) policyHitCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.policyHits
+}
+
+func (f *fakeGateway) heartbeatCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.heartbeats)
+}
+
+func (f *fakeGateway) lastHeartbeat() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.heartbeats[len(f.heartbeats)-1]
+}
+
+func (f *fakeGateway) setFailChat(fail bool) {
+	f.mu.Lock()
+	f.failChat = fail
+	f.mu.Unlock()
 }
 
 func startSidecar(t *testing.T, gw *fakeGateway, cfg sidecar.Config) *httptest.Server {
