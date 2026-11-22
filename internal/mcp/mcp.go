@@ -25,6 +25,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/kb"
 	"github.com/myjnathan/agentgate/internal/otel"
 	"github.com/myjnathan/agentgate/internal/restadapter"
+	"github.com/myjnathan/agentgate/internal/semidx"
 	"github.com/myjnathan/agentgate/internal/store"
 )
 
@@ -36,6 +37,7 @@ type Server struct {
 	fed   *federation.Registry
 	rest  *restadapter.Adapter
 	fk    *folderkb.Registry
+	semix *semidx.Index
 	// tracer is the OpenTelemetry exporter (F16); nil or disabled
 	// means no tracing. Spans carry metadata only — never tool
 	// arguments or results (see docs/opentelemetry.md).
@@ -54,6 +56,12 @@ func (s *Server) SetTracer(tr *otel.Tracer) {
 // folder half of kb_search.
 func (s *Server) SetFolderKB(fk *folderkb.Registry) {
 	s.fk = fk
+}
+
+// SetSemanticIndex wires the semantic index (backlog F19) used by
+// the kb_entries tool.
+func (s *Server) SetSemanticIndex(ix *semidx.Index) {
+	s.semix = ix
 }
 
 func New(st *store.Store, au *auth.Service, al *audit.Log, det *guard.Detector, fed *federation.Registry, rest *restadapter.Adapter) *Server {
@@ -92,8 +100,15 @@ var tools = []toolDef{
 	},
 	{
 		Name:        "kb_catalog",
-		Description: "List the folder-indexed knowledge-base documents visible at your tier (the Wiki home): title, source folder, data level, page count and top-level sections. Start here, then read a document's structure with kb_structure.",
+		Description: "List the folder-indexed knowledge-base documents visible at your tier (the Wiki home): title, source folder, data level, page count and top-level sections. Start here, then read a document's semantic entries with kb_entries to judge relevance, then kb_structure and kb_section to drill down.",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
+		Name:        "kb_entries",
+		Description: "Read the FRAS semantic index entries of one folder document (the catalog layer): one entry per section with function, relations, applicability and hard constraints, tag coordinates (department/type/importance), and a source citation (file + section + pages). Read these before kb_structure when judging whether a document is relevant.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+			"doc_id": map[string]any{"type": "string"},
+		}, "required": []string{"doc_id"}},
 	},
 	{
 		Name:        "kb_structure",
@@ -521,6 +536,22 @@ func (s *Server) callTool(w http.ResponseWriter, ctx context.Context, req rpcReq
 		}
 		b, _ := json.Marshal(map[string]any{"documents": entries})
 		text = string(b)
+	case "kb_entries":
+		id, _ := params.Arguments["doc_id"].(string)
+		var entries []semidx.Entry
+		var found bool
+		if s.semix != nil {
+			entries, found = s.semix.Entries(id, kb.MaxLevelForTier(tok.Tier))
+		}
+		if !found {
+			text, isErr = "document not found, has no semantic entries, or is not accessible at your tier", true
+		} else {
+			if entries == nil {
+				entries = []semidx.Entry{}
+			}
+			b, _ := json.Marshal(map[string]any{"doc_id": id, "entries": entries})
+			text = string(b)
+		}
 	case "kb_structure":
 		id, _ := params.Arguments["doc_id"].(string)
 		var tree *folderkb.Node

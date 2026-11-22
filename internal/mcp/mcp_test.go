@@ -2,6 +2,7 @@ package mcp_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/seed"
+	"github.com/myjnathan/agentgate/internal/semidx"
 	"github.com/myjnathan/agentgate/internal/store"
 )
 
@@ -86,6 +88,11 @@ func setup(t *testing.T) *testEnv {
 	}
 	msrv := mcp.New(st, au, al, det, fed, rest)
 	msrv.SetFolderKB(fk)
+	// Semantic index (F19): entries are generated at setup, like the
+	// startup rescan in main.
+	semix := semidx.New()
+	msrv.SetSemanticIndex(semix)
+	semix.RegenerateChanged(context.Background(), fk.Snapshots())
 	srv := httptest.NewServer(msrv)
 	t.Cleanup(srv.Close)
 

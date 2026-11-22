@@ -331,12 +331,17 @@
           <div><label class="f" data-i18n="name">名称</label><input id="fbName" placeholder="e.g. 公司制度"></div>
           <div><label class="f" data-i18n="path">路径</label><input id="fbPath" placeholder="/path/to/shared/folder"></div>
           <div><label class="f" data-i18n="maxLevel">数据等级</label><select id="fbLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select></div>
+          <div><label class="f" data-i18n="department">所属部门（可选）</label><input id="fbDept" placeholder="e.g. 人力部"></div>
         </div>
         <div class="row"><button class="btn" onclick="addFolder()" data-i18n="addBtn">添加</button><span id="fbMsg" class="msg"></span></div>
         <p class="hint" style="margin-top:10px" data-i18n="foldersHint">支持 .md / .txt / .docx / .pdf，增量更新只索引变化文件；引用精确到文件 + 章节 + 页码。摘要为抽取式（章节首句），不经过模型，不产生泄漏通道。</p>
       </div>
+      <div class="card"><h3 data-i18n="semTitle">语义索引（FRAS）</h3>
+        <p class="desc" data-i18n="semDesc">每份文档的每个章节一行语义条目（职责 / 关联 / 适用范围 / 硬约束）加标签坐标（部门 / 类型 / 重要度），作为目录层供 Agent 判断相关性；每条带原文回指（文件 + 章节 + 页码）。默认抽取式生成，绝密文档只登记标题。</p>
+        <div id="semCov" class="muted">—</div>
+      </div>
       <div class="card"><h3 data-i18n="folderList">已索引文件夹</h3>
-        <table id="folders"><thead><tr><th data-i18n="name">名称</th><th data-i18n="path">路径</th><th data-i18n="maxLevel">数据等级</th><th data-i18n="docs">文档</th><th data-i18n="lastScan">最近扫描</th><th></th></tr></thead><tbody></tbody></table>
+        <table id="folders"><thead><tr><th data-i18n="name">名称</th><th data-i18n="department">部门</th><th data-i18n="path">路径</th><th data-i18n="maxLevel">数据等级</th><th data-i18n="docs">文档</th><th data-i18n="lastScan">最近扫描</th><th></th></tr></thead><tbody></tbody></table>
       </div>
     </section>
 
@@ -476,6 +481,7 @@ const I18N = {
     keysHint:"同一渠道可配多把上游密钥，网关按轮询分摊调用；上游返回 401 的密钥会自动摘除并告警，管理员也可在此停用 / 恢复 / 删除。密钥只显示后四位，永不回显。",
     foldersTitle:"文件夹知识库",foldersDesc:"指定共享文件夹即自动索引，按文件夹映射密级；Agent 按「目录 → 章节树 → 原文」渐进式取用。",addFolder:"添加文件夹",folderList:"已索引文件夹",path:"路径",docs:"文档",lastScan:"最近扫描",
     foldersHint:"支持 .md / .txt / .docx / .pdf，增量更新只索引变化文件；引用精确到文件 + 章节 + 页码。摘要为抽取式（章节首句），不经过模型，不产生泄漏通道。",
+    department:"部门",semTitle:"语义索引（FRAS）",semDesc:"每份文档的每个章节一行语义条目（职责 / 关联 / 适用范围 / 硬约束）加标签坐标（部门 / 类型 / 重要度），作为目录层供 Agent 判断相关性；每条带原文回指（文件 + 章节 + 页码）。默认抽取式生成，绝密文档只登记标题。",semRegen:"生成语义索引",semDocs:"篇文档",semSections:"个章节",semStale:"篇过期",
     skillsTitle:"技能（Skills）",skillsDesc:"SKILL.md 技能包的提交、审核与发布；发布后员工的 Agent 可按部门范围取用。",submitSkill:"提交技能",skillList:"技能列表",version:"版本",status:"状态",scope:"范围",updated:"更新",submitBtn:"提交审核",
     promptsTitle:"Prompt 模板库",promptsDesc:"模板走提交 → 审核 → 发布：新版本只追加不改旧版，发布后才对 Agent 可见；回滚即重新发布旧版本。",addPrompt:"新建模板",promptList:"模板列表",desc2:"描述",minTier:"最低等级",versions:"版本",
     ptContentL:"模板正文（{{name}} 为占位符）",ptArgsL:"参数定义（JSON 数组）",promptsHint:"Agent 经 /mcp prompts/get 读取已发布版本；参数先过 DLP，渲染结果再过 DLP + 自带级脱敏。",
@@ -515,6 +521,7 @@ const I18N = {
     keysHint:"A channel can hold several upstream keys; the gateway round-robins calls across them. A key the upstream rejects with 401 is auto-removed and alerted; admins can also disable, re-enable or delete keys here. Only the last 4 characters are ever shown.",
     foldersTitle:"Folder knowledge base",foldersDesc:"Register a shared folder and it is indexed automatically, at the folder's data level; agents drill down catalog → section tree → section text.",addFolder:"Add folder",folderList:"Indexed folders",path:"Path",docs:"Docs",lastScan:"Last scan",
     foldersHint:"Supports .md / .txt / .docx / .pdf; rescans only re-index changed files. Citations are precise to file + section + pages. Summaries are extractive (the section's opening sentence), never produced by a model, so they open no leak channel.",
+    department:"Department",semTitle:"Semantic index (FRAS)",semDesc:"One FRAS entry (function / relations / applicability / hard constraints) plus tag coordinates (department / type / importance) per section, as the catalog layer agents use to judge relevance; every entry cites its source (file + section + pages). Extractive by default; secret documents register titles only.",semRegen:"Generate semantic index",semDocs:"docs",semSections:"sections",semStale:"stale",
     skillsTitle:"Skills",skillsDesc:"Submit, review and publish SKILL.md packages; published skills are available to agents within their department scope.",submitSkill:"Submit a skill",skillList:"Skills",version:"Version",status:"Status",scope:"Scope",updated:"Updated",submitBtn:"Submit for review",
     promptsTitle:"Prompt templates",promptsDesc:"Templates follow submit → review → publish: new versions only append; a version serves agents only after publishing, and rolling back means re-publishing an older version.",addPrompt:"New template",promptList:"Templates",desc2:"Description",minTier:"Min tier",versions:"Versions",
     ptContentL:"Template body ({{name}} placeholders)",ptArgsL:"Arguments (JSON array)",promptsHint:"Agents read the published version via /mcp prompts/get; arguments pass DLP first, and the rendered text passes DLP + BYOA redaction.",
@@ -835,14 +842,27 @@ async function addChannel(){
 async function loadFolders(){
   try{ const d = await api("/api/kb/folders");
     document.querySelector("#folders tbody").innerHTML = (d.folders||[]).map(f=>
-      `<tr><td style="font-weight:600;color:var(--ink)">${esc(f.name)}</td><td class="muted">${esc(f.path||"")}</td><td>${pill(f.level)}</td><td>${f.docs||0}</td><td class="muted">${(f.last_scan||"").slice(0,19).replace("T"," ")}${f.last_error?(" · ✗ "+esc(f.last_error)):""}</td>`+
-      `<td style="white-space:nowrap"><button class="btn ghost small" onclick="rescanFolder('${f.id}')">${T("rescan")}</button> <button class="btn ghost small danger" onclick="deleteFolder('${f.id}')">✕</button></td></tr>`).join("") || `<tr><td colspan="6" class="empty">${T("empty")}</td></tr>`;
+      `<tr><td style="font-weight:600;color:var(--ink)">${esc(f.name)}</td><td class="muted">${esc(f.department||"—")}</td><td class="muted">${esc(f.path||"")}</td><td>${pill(f.level)}</td><td>${f.docs||0}</td><td class="muted">${(f.last_scan||"").slice(0,19).replace("T"," ")}${f.last_error?(" · ✗ "+esc(f.last_error)):""}</td>`+
+      `<td style="white-space:nowrap"><button class="btn ghost small" onclick="rescanFolder('${f.id}')">${T("rescan")}</button> <button class="btn ghost small" onclick="regenSemantic('${f.id}')">${T("semRegen")}</button> <button class="btn ghost small danger" onclick="deleteFolder('${f.id}')">✕</button></td></tr>`).join("") || `<tr><td colspan="7" class="empty">${T("empty")}</td></tr>`;
+    loadSemanticCoverage();
   }catch(e){ toast(e.message, false); }
 }
+async function loadSemanticCoverage(){
+  try{ const d = await api("/api/kb/semantic/coverage");
+    const c = d.coverage||{};
+    const stale = (c.stale_docs||[]).length;
+    document.querySelector("#semCov").textContent = "✓ "+(c.docs_indexed||0)+"/"+(c.docs_total||0)+" "+T("semDocs")+" · "+(c.chapters_indexed||0)+"/"+(c.chapters_total||0)+" "+T("semSections")+(stale?(" · ⚠ "+stale+" "+T("semStale")):"");
+  }catch(e){ document.querySelector("#semCov").textContent = "—"; }
+}
 async function addFolder(){
-  try{ const d = await api("/api/kb/folders",{method:"POST",body:JSON.stringify({name:fbName.value.trim(),path:fbPath.value.trim(),level:fbLevel.value})});
-    setMsg("fbMsg", "✓ saved ("+(d.docs||0)+" docs)"); fbName.value=""; fbPath.value=""; loadFolders();
+  try{ const d = await api("/api/kb/folders",{method:"POST",body:JSON.stringify({name:fbName.value.trim(),path:fbPath.value.trim(),level:fbLevel.value,department:fbDept.value.trim()})});
+    setMsg("fbMsg", "✓ saved ("+(d.docs||0)+" docs)"); fbName.value=""; fbPath.value=""; fbDept.value=""; loadFolders();
   }catch(e){ setMsg("fbMsg", e.message, false); }
+}
+async function regenSemantic(id){
+  try{ const d = await api("/api/kb/folders/"+id+"/semantic",{method:"POST",body:"{}"});
+    toast("✓ "+(d.regenerated||0)+" docs indexed"+(d.model_fallback?" (model fallback)":"")); loadFolders();
+  }catch(e){ toast(e.message, false); }
 }
 async function rescanFolder(id){
   try{ const d = await api("/api/kb/folders/"+id+"/rescan",{method:"POST",body:"{}"});

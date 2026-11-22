@@ -20,15 +20,16 @@ func (a *API) SetFolderKB(fk *folderkb.Registry) {
 }
 
 type folderSourceView struct {
-	ID       string             `json:"id"`
-	Name     string             `json:"name"`
-	Path     string             `json:"path"`
-	Level    string             `json:"level"`
-	Enabled  bool               `json:"enabled"`
-	Docs     int                `json:"docs"`
-	LastScan string             `json:"last_scan,omitempty"`
-	LastErr  string             `json:"last_error,omitempty"`
-	Last     folderkb.ScanStats `json:"last_scan_stats"`
+	ID         string             `json:"id"`
+	Name       string             `json:"name"`
+	Path       string             `json:"path"`
+	Level      string             `json:"level"`
+	Department string             `json:"department,omitempty"`
+	Enabled    bool               `json:"enabled"`
+	Docs       int                `json:"docs"`
+	LastScan   string             `json:"last_scan,omitempty"`
+	LastErr    string             `json:"last_error,omitempty"`
+	Last       folderkb.ScanStats `json:"last_scan_stats"`
 }
 
 func (a *API) listFolderSources(w http.ResponseWriter, r *http.Request, u *store.User) {
@@ -36,8 +37,9 @@ func (a *API) listFolderSources(w http.ResponseWriter, r *http.Request, u *store
 	if a.fk != nil {
 		for _, st := range a.fk.Status() {
 			v := folderSourceView{ID: st.Source.ID, Name: st.Source.Name, Path: st.Source.Path,
-				Level: st.Source.Level.String(), Enabled: st.Source.Enabled,
-				Docs: st.Docs, LastErr: st.LastErr, Last: st.Last}
+				Level: st.Source.Level.String(), Department: st.Source.Department,
+				Enabled: st.Source.Enabled,
+				Docs:    st.Docs, LastErr: st.LastErr, Last: st.Last}
 			if st.LastScan != nil {
 				v.LastScan = st.LastScan.Format("2006-01-02T15:04:05Z07:00")
 			}
@@ -49,9 +51,10 @@ func (a *API) listFolderSources(w http.ResponseWriter, r *http.Request, u *store
 
 func (a *API) createFolderSource(w http.ResponseWriter, r *http.Request, u *store.User) {
 	var in struct {
-		Name  string `json:"name"`
-		Path  string `json:"path"`
-		Level string `json:"level"`
+		Name       string `json:"name"`
+		Path       string `json:"path"`
+		Level      string `json:"level"`
+		Department string `json:"department"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Name == "" || in.Path == "" {
 		writeErr(w, http.StatusBadRequest, "name and path required")
@@ -85,7 +88,7 @@ func (a *API) createFolderSource(w http.ResponseWriter, r *http.Request, u *stor
 		}
 	}
 	src := &store.KBFolderSource{ID: store.NewID("kbf"), Name: in.Name, Path: abs,
-		Level: lvl, Enabled: true, CreatedAt: time.Now()}
+		Level: lvl, Department: in.Department, Enabled: true, CreatedAt: time.Now()}
 	// Index before persisting: a folder that cannot be read is a
 	// 400, not a registered-but-broken source.
 	var stats folderkb.ScanStats
@@ -98,6 +101,7 @@ func (a *API) createFolderSource(w http.ResponseWriter, r *http.Request, u *stor
 	}
 	a.st.WithLock(func(st *store.State) { st.KBFolderSources[src.ID] = src })
 	_ = a.st.Save()
+	a.refreshSemanticIndex()
 	a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, Kind: "admin", Action: "folder_source_created",
 		Detail: map[string]string{"folder": src.Name, "path": src.Path, "level": lvl.String(),
 			"docs": strconv.Itoa(stats.Added + stats.Unchanged)}})
@@ -122,6 +126,9 @@ func (a *API) deleteFolderSource(w http.ResponseWriter, r *http.Request, u *stor
 	if a.fk != nil {
 		a.fk.DropSource(id)
 	}
+	if a.semidx != nil {
+		a.semidx.DropSource(id)
+	}
 	a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, Kind: "admin", Action: "folder_source_deleted",
 		Detail: map[string]string{"folder": name}})
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
@@ -143,6 +150,7 @@ func (a *API) rescanFolderSource(w http.ResponseWriter, r *http.Request, u *stor
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	a.refreshSemanticIndex()
 	a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, Kind: "admin", Action: "folder_source_rescanned",
 		Detail: map[string]string{"folder": src.Name,
 			"added": strconv.Itoa(stats.Added), "updated": strconv.Itoa(stats.Updated),

@@ -39,9 +39,17 @@
 //	                     http://localhost:4318) to export desensitized
 //	                     traces and metrics; unset = tracing disabled.
 //	                     Protocol must be http/json when set.
+//	AGENTGATE_SEMANTIC_MODEL_URL / AGENTGATE_SEMANTIC_MODEL_TOKEN /
+//	AGENTGATE_SEMANTIC_MODEL
+//	                     semantic-entry model generation (backlog F19):
+//	                     when set, POST /api/kb/folders/{id}/semantic
+//	                     with {"model": true} asks this chat-completions
+//	                     endpoint to write FRAS entries; unset = model
+//	                     generation unavailable (extractive only).
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -65,6 +73,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/seed"
+	"github.com/myjnathan/agentgate/internal/semidx"
 	"github.com/myjnathan/agentgate/internal/store"
 	"github.com/myjnathan/agentgate/internal/webui"
 )
@@ -198,8 +207,12 @@ func main() {
 	// registered shared folders. Indexed at startup (after the demo
 	// seed above, so demo folders are included) and on admin rescan.
 	fk := folderkb.New(st)
+	// Semantic index (backlog F19): FRAS entries over the folder
+	// index, regenerated extractively after every rescan.
+	semix := semidx.New()
 	mcpSrv := mcp.New(st, au, al, det, fed, restAd)
 	mcpSrv.SetFolderKB(fk)
+	mcpSrv.SetSemanticIndex(semix)
 	mcpSrv.SetTracer(otelTracer)
 	rest := api.New(st, au, box, al)
 	rest.SetTracer(otelTracer)
@@ -207,6 +220,12 @@ func main() {
 	rest.SetFederation(fed)
 	rest.SetRESTAdapter(restAd)
 	rest.SetFolderKB(fk)
+	rest.SetSemanticIndex(semix)
+	if semURL := os.Getenv("AGENTGATE_SEMANTIC_MODEL_URL"); semURL != "" {
+		rest.SetSemanticModel(semidx.NewModelGenerator(semidx.ModelConfig{
+			Endpoint: semURL, Token: os.Getenv("AGENTGATE_SEMANTIC_MODEL_TOKEN"),
+			Model: os.Getenv("AGENTGATE_SEMANTIC_MODEL")}, nil))
+	}
 	rest.SetCache(gw.Cache())
 	rest.SetAlertDispatcher(dispatcher)
 	for _, src := range fk.Sources() {
@@ -220,6 +239,9 @@ func main() {
 		}
 		log.Printf("folderkb: %s: %d docs (%d added, %d updated, %d unchanged, %d errors)",
 			src.Name, fk.DocCount(src.ID), stats.Added, stats.Updated, stats.Unchanged, stats.Errors)
+	}
+	if reg, _ := semix.RegenerateChanged(context.Background(), fk.Snapshots()); reg > 0 {
+		log.Printf("semidx: generated semantic entries for %d documents", reg)
 	}
 
 	mux := http.NewServeMux()
