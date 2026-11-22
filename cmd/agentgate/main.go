@@ -62,6 +62,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/api"
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
+	"github.com/myjnathan/agentgate/internal/distrib"
 	"github.com/myjnathan/agentgate/internal/federation"
 	"github.com/myjnathan/agentgate/internal/folderkb"
 	"github.com/myjnathan/agentgate/internal/gateway"
@@ -228,6 +229,10 @@ func main() {
 	}
 	rest.SetCache(gw.Cache())
 	rest.SetAlertDispatcher(dispatcher)
+	// Package distribution (backlog F20): install packages are
+	// hosted under <data>/packages, employees download them, and
+	// their hashes feed the F14 attestation baseline.
+	rest.SetPackageRegistry(distrib.NewRegistry(filepath.Join(dataDir, "packages")))
 	for _, src := range fk.Sources() {
 		if !src.Enabled {
 			continue

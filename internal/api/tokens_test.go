@@ -12,6 +12,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/api"
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
+	"github.com/myjnathan/agentgate/internal/distrib"
 	"github.com/myjnathan/agentgate/internal/federation"
 	"github.com/myjnathan/agentgate/internal/folderkb"
 	"github.com/myjnathan/agentgate/internal/restadapter"
@@ -40,6 +41,7 @@ func setupTokensAPI(t *testing.T) (*httptest.Server, *store.Store, string, strin
 	rest.SetFederation(federation.New(st, box))
 	rest.SetRESTAdapter(restadapter.New(st, box))
 	rest.SetFolderKB(folderkb.New(st))
+	rest.SetPackageRegistry(distrib.NewRegistry(filepath.Join(dir, "packages")))
 	mux := http.NewServeMux()
 	rest.Register(mux)
 	srv := httptest.NewServer(mux)

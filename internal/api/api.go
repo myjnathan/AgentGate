@@ -16,6 +16,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
 	"github.com/myjnathan/agentgate/internal/cache"
+	"github.com/myjnathan/agentgate/internal/distrib"
 	"github.com/myjnathan/agentgate/internal/federation"
 	"github.com/myjnathan/agentgate/internal/folderkb"
 	"github.com/myjnathan/agentgate/internal/oidc"
@@ -38,6 +39,7 @@ type API struct {
 	fk         *folderkb.Registry
 	semidx     *semidx.Index
 	semModel   *semidx.ModelGenerator
+	pkgs       *distrib.Registry
 	cache      *cache.Cache
 	tracer     *otel.Tracer
 }
@@ -126,6 +128,18 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/attestation/policies", a.requireAdmin(a.upsertAttestationPolicy))
 	mux.HandleFunc("DELETE /api/attestation/policies/{agent}", a.requireAdmin(a.deleteAttestationPolicy))
 	mux.HandleFunc("GET /api/attestation/reports", a.requireAdmin(a.listAttestationReports))
+	mux.HandleFunc("GET /api/packages", a.requireAdmin(a.listPackages))
+	mux.HandleFunc("POST /api/packages", a.requireAdmin(a.uploadPackage))
+	mux.HandleFunc("POST /api/packages/uploads", a.requireAdmin(a.initUpload))
+	mux.HandleFunc("GET /api/packages/uploads/{id}/status", a.requireAdmin(a.uploadStatus))
+	mux.HandleFunc("PUT /api/packages/uploads/{id}", a.requireAdmin(a.uploadChunk))
+	mux.HandleFunc("POST /api/packages/uploads/{id}/complete", a.requireAdmin(a.completeUpload))
+	mux.HandleFunc("DELETE /api/packages/uploads/{id}", a.requireAdmin(a.abortUpload))
+	mux.HandleFunc("GET /api/packages/{id}/download", a.requireSession(a.downloadPackage))
+	mux.HandleFunc("DELETE /api/packages/{id}", a.requireAdmin(a.deletePackage))
+	mux.HandleFunc("POST /api/packages/{id}/baseline", a.requireAdmin(a.registerBaseline))
+	mux.HandleFunc("POST /api/packages/cleanup", a.requireAdmin(a.cleanupPackages))
+	mux.HandleFunc("POST /api/packages/user-bundle", a.requireAdmin(a.generateUserBundle))
 }
 
 // ---- helpers ----

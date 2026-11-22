@@ -5,14 +5,18 @@
 #   make test      go vet + full test suite
 #   make smoke     build, boot demo mode, run e2e/smoke.py against it
 #   make image     docker image agentgate:$(VERSION)
-#   make bundle    offline bundle (image tar + compose + install.sh + VERSION)
+#   make bundle      offline management bundle (image tar + compose + install.sh + VERSION)
+#   make bundle-user offline user bundle zip (ag-guard + ag-setup + guard.json + MANIFEST.json)
 #   make clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GO      ?= go
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build release test smoke image bundle clean
+.PHONY: build release test smoke image bundle bundle-user clean
+
+bundle-user: build
+	@python3 deploy/make-user-bundle.py
 
 build:
 	mkdir -p dist
