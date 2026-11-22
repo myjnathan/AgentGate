@@ -70,6 +70,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/audit/export", a.requireAdmin(a.exportAudit))
 	mux.HandleFunc("POST /api/audit/archive", a.requireAdmin(a.archiveAudit))
 	mux.HandleFunc("GET /api/stats", a.requireAdmin(a.getStats))
+	mux.HandleFunc("GET /api/sidecar/stats", a.requireAdmin(a.sidecarStats))
 	mux.HandleFunc("GET /api/budgets", a.requireAdmin(a.listBudgets))
 	mux.HandleFunc("POST /api/budgets", a.requireAdmin(a.createBudget))
 	mux.HandleFunc("PATCH /api/budgets/{id}", a.requireAdmin(a.updateBudget))

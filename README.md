@@ -56,7 +56,7 @@ go build -o ag-setup ./cmd/ag-setup
 ## 架构一瞥
 
 ```text
-桌面 Agent（任意） ──► [本地隐私网关(规划)] ──► 企业网关（防护管线/分级路由）
+桌面 Agent（任意） ──► 本地隐私网关 ag-guard（端侧检测/脱敏/还原，见 [docs/local-gateway-sidecar.md](docs/local-gateway-sidecar.md)）──► 企业网关（防护管线/分级路由）
                                                     ├─► 签约云模型（低密级）
                                                     ├─► 脱敏后上云（机密默认）/ 专有云-VPC（可选）/ 本地小模型（绝密）
                                                     └─► MCP 工具 / 知识库 / 企业系统
@@ -76,7 +76,7 @@ go vet ./...
 go test ./...
 ```
 
-仓库结构：`server` 逻辑在 `internal/`，端侧工具在 `cmd/ag-setup`，出口守卫模板在 `endpoint/egress/`，受管 Agent 说明在 `managed-agent/`，部署脚本在 `deploy/`。
+仓库结构：`server` 逻辑在 `internal/`，端侧工具在 `cmd/ag-setup`（接入）与 `cmd/ag-guard`（本地隐私网关 sidecar），出口守卫模板在 `endpoint/egress/`，受管 Agent 说明在 `managed-agent/`，部署脚本在 `deploy/`。
 
 ## License
 

@@ -466,6 +466,15 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 		detail["findings"] = strings.Join(ks, ",")
 	}
+	// Endpoint sidecar signal (F15): a request that arrived through
+	// ag-guard carries X-AgentGate-Sidecar. Record it on every audit
+	// event for this call (violation and model_call both reuse this
+	// detail map) so operators can see endpoint coverage in the
+	// audit trail and in GET /api/sidecar/stats.
+	sidecar := r.Header.Get("X-AgentGate-Sidecar")
+	if sidecar != "" {
+		detail["sidecar"] = sidecar
+	}
 
 	// Banned words: hard block.
 	if hasBanned && !g.policy.DryRun {
@@ -568,9 +577,13 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if cacheEligible {
 		key := cache.Key(candidates[0].ID, level.String(), body)
 		if status, cachedBody, ok := g.cache.Get(key); ok {
+			cacheDetail := map[string]string{"cache": "hit"}
+			if sidecar != "" {
+				cacheDetail["sidecar"] = sidecar
+			}
 			g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 				Kind: "cache_hit", Action: "chat_completions", Model: req.Model, Channel: candidates[0].Name,
-				DataLevel: level.String(), Decision: decision, Detail: map[string]string{"cache": "hit"}})
+				DataLevel: level.String(), Decision: decision, Detail: cacheDetail})
 			w.Header().Set("X-AgentGate-Cache", "HIT")
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)

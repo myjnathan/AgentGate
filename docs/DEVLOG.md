@@ -2,6 +2,16 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-22 · F15 本地隐私网关 sidecar
+- 本轮按常规规程选条目：体内的两段特别指令均已作废——12:26 特别指令（F17 + 蓝图修订稿）在 F17 轮执行完毕、F19 登记随 F14 轮进 backlog；P0、P1 全部 done，P2 按清单顺序取 F15（首个剩余 P2 条目）。远端 main 已含 F14（PR #12，HEAD 2e631884），无在途分支需续传。
+- 借鉴 AstrLink 本地隐私网关（toolhunter.cc 介绍与 DeepWiki 隐私引擎页，2026-11-22 查阅）：端侧规则/本地模型检测、提醒/拦截/占位符替换、响应回程本地还原、隐私 worker 独立进程 + dry-run 诊断。我们照此实现，但做四处改动：① 检测复用本仓 `internal/guard`，不引 ONNX 模型与 Rust worker——本轮只做规则检测（蓝图既定）；② sidecar 本身就是 Go 单进程守护进程，映射只在本次请求内存中；③ 占位符编号与 F10 同款、流式还原用同一 holdback 模式；④ 出口收紧：sidecar 构造上只拨配置的企业网关一个地址（配合 endpoint/egress 防火墙模板），AstrLink 是通用本地网关、可配任意上游。
+- 复用检查（Nathan 复用优先指示）：未复制 AstrLink 代码——其隐私引擎为 Go core + Rust ONNX worker，与本仓纯 Go 标准库路线不匹配；检测与还原复用本仓已有 `internal/guard`（F10 已验证的 Redactor/Restore/MaxPlaceholderLength），流式还原复用 F10 的 holdback 模式。
+- 实现：新包 `internal/sidecar`（`Config` + `Validate`：网关地址须 http(s)、不得嵌凭据、不得指回自身；`Server`：`127.0.0.1` 代理，`POST /v1/chat/completions` 先扫描后转发、`GET /v1/models` 直通、`GET /healthz` 与 `GET /status`；违禁词本地 400 `sidecar_blocked`、PII/凭据/自定义词脱敏后转发、响应还原、发往网关时带 `X-AgentGate-Sidecar` 与只升不降的 `X-AgentGate-Data-Level`；计数器与最近 50 条决策只含类别、不含原文）；新二进制 `cmd/ag-guard`（配置优先级：`~/.agentgate/guard.json` < 环境变量 < 命令行，优雅停机）；网关 `ChatCompletions` 把 sidecar 标识记进审计 `detail.sidecar`（model_call 与 cache_hit）；管理 API `GET /api/sidecar/stats`（admin/security，扫审计日志计数经 sidecar 的调用/缓存命中/最近一次/按 Agent 分组）；`ag-setup` 增加 `--sidecar`/`--sidecar-url`（模型地址改写为 sidecar 地址、证明里 `guard_applied` 隐含为真、配置哈希覆盖实际写入的 model_base）；管理台「设备接入」页新增 sidecar 卡片（调用量 + 最近一次 + 部署说明，中英双语）；`make build`/`release` 产出 ag-guard，`make smoke` 起 sidecar 随测；详见 docs/local-gateway-sidecar.md。
+- 关键决策：映射只在本次请求内存中、请求结束即丢弃（不写盘、不记日志、不上报），是端侧脱敏可信的前提；本地拦截只记在端侧 `/status`、不上报网关——平台侧只统计到达网关的 sidecar 调用（有意的分工，不是漏报）；sidecar 只代理模型流量，MCP 仍直连网关、由服务端工具授权与 DLP 管控；dry-run 先只记录不拦截不脱敏，与产品「先观察 → 再提醒 → 后拦截」一致；网关侧词表改动不自动同步端侧配置，网关二次检测是兜底。
+- 测试：sidecar 包 9 项（配置校验六类拒绝、干净请求直通、PII 上游只见占位符/下游还原/状态计数无原文泄漏、违禁词本地拦截且网关零调用、dry-run 只记录、流式逐字节分片还原、tool_calls 参数共享占位符编号、models 直通、healthz）+ 流式还原白盒 2 项（逐字节读取下双占位符还原、空映射原样直通）+ 网关 3 项（sidecar 标识进 model_call 审计、cache_hit 同样记录、无标识不记）+ API 端点 1 项（计数口径、员工 403）+ 冒烟新增 9 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 145 项断言 0 失败。
+- 本轮实测抓到的真问题：首版流式还原只对「放行前缀」做 Restore、把占位符切在放行边界上时会漏还原（占位符前半段已发出、后半段留在缓冲，永不再合）。已按 F10 的 streamCopy 改法修正：每次对整段待发缓冲做 Restore、只放行超出 holdback 的安全前缀；冒烟的流式断言与白盒逐字节测试均覆盖此路径。另：Go 的 `json.Marshal` 默认把 `<PII_1>` 转义成 `\u003cPII_1\u003e`，上游报文断言须先解码再计数（与 F10 占位符转义同款）。
+- 推送结果：（待填）
+
 ## 2026-11-22 · F14 Agent 证明（Attestation）
 - 本轮按常规规程选条目：12:26 特别指令（F17 + 蓝图修订稿）早已在 F17 轮执行完毕、执行后作废；P0、P1 全部 done，P2 按清单顺序取 F14（首个剩余 P2 条目）。远端 main 已含 F13（PR #11，HEAD ebd42d4a），无在途分支需续传。
 - 借鉴 IETF RATS RFC 9334（rfc9334）与 SPIFFE/SPIRE 官方文档（spiffe.io，2026-11-22 查阅）：RATS 的角色模型——Attester 上报 Evidence，Verifier 按 Appraisal Policy 对照 Reference Values 与 Endorsements 评估、产出 Attestation Results，Relying Party 据此决策；Verifier 与 Relying Party 分离；新鲜度靠 nonce（或可信时钟/epoch）。SPIFFE/SPIRE 的做法是先证明、后发身份：节点证明与工作负载证明都通过才发 SVID，身份即证明链的结论，SVID 短期有效。我们照此实现，但做三处改动：① 新鲜度不用单独 nonce——证明绑定到一次设备码（code + polling secret，单次使用、10 分钟过期），一份证明不能重放到下一次登录；② 失败不拒绝登录、而是降级为自带级（员工仍可用通用能力，敏感能力不落到不合规 Agent 手里），降级本身记审计并触发 F5 告警；③ 本轮只做软件自报证据的一致性校验，不做密码学绑定（硬件根信任留待后续，见 docs/attestation.md 已知限制）。
@@ -11,7 +21,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 测试：attest 包 3 项（版本比较 12 组、评估 10 类分支含多原因并报、报告与策略校验）+ auth 包 1 项（通过→受管已验证、失败→自带级、未提交→自带级、无策略→受管未验证、错 secret/批准后提交拒绝）+ API 端点 1 项（种子策略、证明通过/失败/未提交全链路、降级审计事件、策略 CRUD、400/403/404）+ alert 分类 1 项（`attest_downgrade` 为 warning，`attest_submit` 本身不告警）+ 冒烟新增 9 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（attest/alert/auth/api）全绿；`make smoke` 136 项断言 0 失败。
 - 冒烟调试实录（与 F14 功能无关的旧缺陷）：本轮冒烟一度 135 通过、1 失败（`downgrade alert delivered to webhook`）。手动复现（新 webhook + 立即降级、预算事件 + 降级、工具拒绝）均能投递；审计日志显示降级事件已记、但 `alert_delivered` 自 seq 14 后再无记录；分发器临时 DEBUG 显示 `tool_call_denied` 的 Send 在 POST 到接收器后挂满 10 秒客户端超时、重试积压致队列满。goroutine 转储证实请求已写出、读循环在等响应；`ss` 显示接收端 socket 收 buffer 躺着 539 字节未读请求、且 LISTEN socket 已消失、smoke.py 只剩主线程——根因是冒烟脚本 F5 段末尾 `httpd.shutdown()` 提前关闭了 Webhook 接收器，而 webhook 仍注册在服务端，F6 `tool_call_denied` 与 F14 `attest_downgrade` 继续向已死监听投递。已改为 main() 末尾再关闭接收器，冒烟随即 136 项全绿。另记后续改进：单个失效 webhook 会以 10 秒超时 + 退避重试阻塞分发队列（队头阻塞），可考虑单 webhook 超时隔离或并行投递。
 - 另记 F19 登记（Nathan 2026-11-22 01:14 批准立项，P2，状态 todo）：知识库语义索引层，借鉴 AOCI-CODE（aoci-spec/aoci-code）的方法——每对象一行语义条目（职责/关联/契约/约束）+ 标签坐标 + 索引治理（校验/漂移/覆盖率），用于优化 F18 文件夹知识库的弱摘要（现为章节首句抽取式）；语义条目须模型生成，必须走网关分级路由/脱敏，绝密只给标题；只借方法不抄代码——AOCI-CODE 许可证 FSL-1.1-MIT（Fair Source，非 OSI 开源、有竞品限制）与 AGPL-3.0 不兼容，代码禁止复制。条目已写入 backlog，随本轮一并提交。
-- 推送结果：（待合并后补记）
+- 推送结果：上一轮推送被 GitHub 连接器服务反复重启中断（list_commits/list_branches/get_file_contents 多次失败，06:24 审批卡过期）；Nathan 10:25 要求重新提交审核后由主对话手动补推成功：建 loop/f14 分支、整包快照推送 22 个文件一次提交 511a90f0、逐文件哈希核对 22/22 一致；PR #12 文件清单与本轮一致，已合并进远端 main，远端 HEAD 2e631884（合并提交）。本轮复核：远端 main HEAD 确为 2e631884（父提交即 511a90f0），读回 main 上 docs/DEVLOG.md、docs/feature-backlog.md、README.md、internal/attest/attest.go 四个关键文件，blob SHA 与本地快照全部一致；本轮基线 go vet/go test 全绿、make smoke 0 失败。待删分支新增 loop/f14（共 13 个，需 Nathan 网页端手动删除）。
 
 ## 2026-11-21 · F13 成本计价与部门预算
 - 本轮按常规规程选条目：12:26 特别指令（F17 + 蓝图修订稿）早已在 F17 轮执行完毕、执行后作废；P0、P1 全部 done，P2 按清单顺序取 F13（首个剩余 P2 条目）。远端 main 已含 F12（PR #10，HEAD 6c9faa4c），无在途分支需续传。

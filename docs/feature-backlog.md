@@ -279,9 +279,16 @@
 - 测试：attest 包 3 项（版本比较 12 组、评估 10 类分支含多原因并报、报告与策略校验）+ auth 包 1 项（通过→受管已验证、失败→自带级、未提交→自带级、无策略→受管未验证、错 secret/批准后提交拒绝）+ API 端点 1 项（种子策略、证明通过/失败/未提交全链路、降级审计事件、策略 CRUD、400/403/404）+ alert 分类 1 项（`attest_downgrade` 为 warning，`attest_submit` 本身不告警）+ 冒烟新增 9 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 136 项断言 0 失败。
 - 已知注意点：本轮证明为软件自报证据，不防有意伪造（见 docs/attestation.md）；证明只在登录时做一次，令牌 30 天有效期内不重评；网关/MCP 的旧测试里 dsh 受管令牌现改为先提交证明再批准（与真实 Agent 同款流程）。冒烟调试中发现并修复一个与 F14 无关的冒烟脚本旧缺陷：F5 段末尾 `httpd.shutdown()` 提前关闭了 Webhook 接收器，但 webhook 仍注册在服务端，F6 `tool_call_denied` 与 F14 `attest_downgrade` 继续向已死监听投递，请求躺在 socket 缓冲区无人读，Go 客户端等满 10 秒超时、重试积压致队列满后丢弃后续告警；已改为 main() 末尾再关闭接收器。另记后续改进：单个失效 webhook 会以 10 秒超时 + 退避重试阻塞分发队列（队头阻塞），可考虑单 webhook 超时隔离或并行投递。
 
-### F15 本地隐私网关 sidecar `todo`
+### F15 本地隐私网关 sidecar `done`（2026-11-22）
 - 来源：AstrLink 本地隐私网关（端侧检测与可逆脱敏、映射不出端）。
 - 适配：ag-setup 配套的本地守护进程，受管级双层脱敏的端侧一层；与出口守卫联动。
+- 借鉴点（AstrLink 官方介绍 toolhunter.cc/tools/astrlink；Calcium-Ion/AstrLink 隐私引擎 DeepWiki，2026-11-22 查阅）：
+  AstrLink 是本地 AI 网关（Go core + Rust 隐私 worker sidecar）：端侧隐私策略按规则（凭据/邮箱/电话/卡号，卡号带 Luhn 校验）或本地 ONNX 模型检测，策略为提醒/拦截/占位符替换，响应回程本地还原；隐私 worker 以独立进程跑模型、Go core 通过 IPC 管理其生命周期与崩溃恢复；另有 dry-run 诊断模式。
+  我们照此实现，但做四处改动：① 检测复用本仓已有的 `internal/guard`（规则 + Aho-Corasick，与网关同款检测器），不引入 ONNX 模型与 Rust worker——本轮只做规则检测（蓝图既定），本地小模型检测留待后续轮次；② 不拉独立模型进程——sidecar 本身就是 Go 单进程守护进程，映射只在本次请求的内存中；③ 占位符编号与网关 F10 同款（同一请求内同一值同一占位符，流式还原用同一 holdback 模式）；④ 出口收紧：sidecar 构造上只拨配置的企业网关一个地址（配合 endpoint/egress 防火墙模板，受管 Agent 进程只准连网关与 127.0.0.1），AstrLink 是通用本地网关、可配任意上游。
+  复用检查（Nathan 复用优先指示）：未复制 AstrLink 代码——其隐私引擎为 Go core + Rust ONNX worker，与本仓纯 Go 标准库路线不匹配；检测与还原复用本仓已有 `internal/guard`（F10 已验证的 Redactor/Restore/MaxPlaceholderLength），流式还原复用 F10 的 holdback 模式（整段还原后只放行安全前缀）。
+- 实现：新包 `internal/sidecar`（`Config` + `Validate`：网关地址须为 http(s)、不得嵌凭据、不得指回自身；`Server`：`127.0.0.1` 代理，`POST /v1/chat/completions` 先扫描后转发、`GET /v1/models` 直通、`GET /healthz` 与 `GET /status`；违禁词本地 400 `sidecar_blocked`、PII/凭据/自定义词脱敏后转发、响应还原（流式用 holdback）、`X-AgentGate-Sidecar: ag-guard/0.1.0` 与只升不降的 `X-AgentGate-Data-Level` 发往网关；计数器与最近 50 条决策只含类别、不含原文）；新二进制 `cmd/ag-guard`（配置文件 `~/.agentgate/guard.json` < 环境变量 < 命令行参数，优雅停机）；网关 `ChatCompletions` 把 sidecar 标识记进审计 `detail.sidecar`（model_call 与 cache_hit）；管理 API `GET /api/sidecar/stats`（admin/security，扫审计日志计数经 sidecar 的调用/缓存命中/最近一次/按 Agent 分组，本地拦截不上报、只在端侧可见）；`ag-setup` 增加 `--sidecar`/`--sidecar-url`（模型地址改写为 sidecar 地址、证明里 `guard_applied` 隐含为真、配置哈希覆盖实际写入的 model_base）；管理台「设备接入」页新增 sidecar 卡片（调用量 + 最近一次 + 部署说明，中英双语）；详见 docs/local-gateway-sidecar.md。
+- 测试：sidecar 包 9 项（配置校验六类拒绝、干净请求直通、PII 上游只见占位符/下游还原/状态计数无原文泄漏、违禁词本地拦截且网关零调用、dry-run 只记录不拦截不脱敏、流式逐字节分片还原、tool_calls 参数共享占位符编号、models 直通、healthz）+ 流式还原白盒 2 项（逐字节读取下双占位符还原、空映射原样直通）+ 网关 3 项（sidecar 标识进 model_call 审计、cache_hit 同样记录、无标识不记）+ API 端点 1 项（计数口径：2 次调用 + 1 次缓存命中、直接调用与 violation 不计、员工 403）+ 冒烟新增 9 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 145 项断言 0 失败。
+- 已知注意点：本轮只做规则检测，本地小模型检测留待后续轮次；只代理模型流量（`/v1/chat/completions`、`/v1/models`），MCP 仍直连网关、由服务端工具授权与 DLP 管控；映射只在内存中，sidecar 重启会中断进行中的请求；流式还原依赖模型原样回传占位符；网关侧词表改动不自动同步到端侧配置，网关二次检测是兜底。
 
 ### F16 OpenTelemetry 导出 `todo`
 - 来源：ContextForge 的 OTel 可观测（Phoenix/Jaeger 等）。
