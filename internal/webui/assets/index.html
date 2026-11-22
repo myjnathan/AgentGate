@@ -294,6 +294,25 @@
       </div>
     </section>
 
+    <!-- terminals -->
+    <section class="page" id="page-terminals">
+      <div class="pageHead"><div><h1 data-i18n="terminalsTitle">终端清单</h1><p class="desc" data-i18n="terminalsDesc">ag-guard 定期心跳上报版本 / 配置哈希 / 插件清单，平台维护全量终端 Agent 资产视图；配置漂移（版本 / 配置 / 插件不符合证明策略）标红并告警。</p></div>
+      <div class="pageActions"><button class="btn ghost" onclick="loadTerminals()" data-i18n="refresh">刷新</button></div></div>
+      <div class="card"><h3 data-i18n="termFilter">筛选</h3>
+        <div class="formGrid">
+          <div><label class="f" data-i18n="dept">部门</label><input id="tmDept" placeholder=""></div>
+          <div><label class="f" data-i18n="termVersion">版本</label><input id="tmVersion" placeholder="0.1.0"></div>
+          <div><label class="f" data-i18n="termStatus">状态</label><select id="tmStatus"><option value="">全部</option><option value="online">online</option><option value="stale">stale</option><option value="offline">offline</option></select></div>
+          <div><label class="f" data-i18n="termDrift">漂移</label><select id="tmDrift"><option value="">全部</option><option value="true">仅漂移</option><option value="false">仅正常</option></select></div>
+        </div>
+        <div class="row"><button class="btn" onclick="loadTerminals()" data-i18n="filterBtn">筛选</button></div>
+      </div>
+      <div class="card"><h3 data-i18n="terminalsList">终端列表</h3>
+        <table id="terminals"><thead><tr><th data-i18n="user">用户</th><th>Agent</th><th data-i18n="termVersion">版本</th><th data-i18n="dept">部门</th><th data-i18n="termStatus">状态</th><th data-i18n="termLastSeen">最近心跳</th><th data-i18n="termDrift">漂移</th><th data-i18n="termOffline">断网补报</th></tr></thead><tbody></tbody></table>
+        <p class="hint" style="margin-top:10px" data-i18n="terminalsHint">在线：5 分钟内有心跳；失联超过 60 分钟记为离线。心跳只含版本、哈希与插件清单等元数据，不含任何请求内容。网关断网期间 ag-guard 按缓存策略执行、高密级默认拦截，恢复后经心跳补报断网期间的审计（只含计数与类别）。</p>
+      </div>
+    </section>
+
     <!-- orgsync -->
     <section class="page" id="page-orgsync">
       <div class="pageHead"><div><h1 data-i18n="orgsyncTitle">组织同步</h1><p class="desc" data-i18n="orgsyncDesc">从钉钉 / 飞书 / 企业微信同步部门与员工目录，登录时把第三方身份绑定到平台账号；同步只建 / 更新账号与部门映射，不授予受管级权限。</p></div>
@@ -571,7 +590,7 @@ const I18N = {
     tokensTitle:"令牌与限流",tokensDesc:"每个接入令牌的速率限制（RPM / TPM）与本月用量；0 表示使用等级默认值。",user:"用户",tier:"等级",used:"已用",expires:"过期",
     tokensHint:"等级默认：受管级 60 RPM / 100000 TPM，自带级 20 RPM / 20000 TPM。修改后即时生效并写入审计。",
     attestTitle:"Agent 证明",attestDesc:"受管 Agent 登录时上报版本 / 配置哈希 / 插件清单，平台校验后才发受管级令牌；不符自动降级为自带级并告警。",addAttestPolicy:"添加证明策略",attestPolicyList:"证明策略",attestReports:"最近证明记录",minVersion:"最低版本",requireReport:"要求证明",requireGuard:"要求守卫",allowedConfigHashes:"允许的配置哈希（逗号分隔，空为不限）",allowedPlugins:"允许的插件（逗号分隔，空为不限）",blockedPlugins:"禁用的插件（逗号分隔）",verdict:"裁决",attested:"证明",
-    attestHint:"无策略的 Agent 类型保持旧行为（按申请发令牌，标记为未验证）；策略一旦要求提交证明，未提交或未通过的受管申请一律降级为自带级。本轮证明为软件自报证据，不防有意伪造，详见 docs/attestation.md。",
+    attestHint:"无策略的 Agent 类型保持旧行为（按申请发令牌，标记为未验证）；策略一旦要求提交证明，未提交或未通过的受管申请一律降级为自带级。本轮证明为软件自报证据，不防有意伪造，详见 docs/attestation.md。",terminalsTitle:"终端清单",terminalsDesc:"ag-guard 定期心跳上报版本 / 配置哈希 / 插件清单，平台维护全量终端 Agent 资产视图；配置漂移（版本 / 配置 / 插件不符合证明策略）标红并告警。",termFilter:"筛选",filterBtn:"筛选",terminalsList:"终端列表",termVersion:"版本",termStatus:"状态",termLastSeen:"最近心跳",termDrift:"漂移",termOffline:"断网补报",terminalsHint:"在线：5 分钟内有心跳；失联超过 60 分钟记为离线。心跳只含版本、哈希与插件清单等元数据，不含任何请求内容。网关断网期间 ag-guard 按缓存策略执行、高密级默认拦截，恢复后经心跳补报断网期间的审计（只含计数与类别）。",
     channelsTitle:"模型渠道",channelsDesc:"上游模型服务与其可承载的最高数据等级、信任类型；网关按分级策略选路，密钥只加密存储、永不回显。",addChannel:"添加渠道",channelList:"渠道列表",
     name:"名称",models:"模型",maxLevel:"最高数据等级",trustType:"信任类型",health:"健康",addBtn:"添加",
     pricing:"单价",pricingL:"单价（JSON，USD / 每百万 Token）",unpriced:"未定价",
@@ -617,7 +636,7 @@ const I18N = {
     tokensTitle:"Tokens & rate limits",tokensDesc:"Per-token rate limits (RPM / TPM) and this month's usage; 0 means the tier default.",user:"User",tier:"Tier",used:"Used",expires:"Expires",
     tokensHint:"Tier defaults: managed 60 RPM / 100000 TPM, BYOA 20 RPM / 20000 TPM. Changes apply immediately and are audited.",
     attestTitle:"Agent attestation",attestDesc:"A managed agent reports its version / config hash / plugin list at login; the platform verifies it before issuing a managed-tier token. Failures are downgraded to BYOA and alerted.",addAttestPolicy:"Add attestation policy",attestPolicyList:"Attestation policies",attestReports:"Recent attestation records",minVersion:"Min version",requireReport:"Require report",requireGuard:"Require guard",allowedConfigHashes:"Allowed config hashes (comma-separated, empty = any)",allowedPlugins:"Allowed plugins (comma-separated, empty = any)",blockedPlugins:"Blocked plugins (comma-separated)",verdict:"Verdict",attested:"Attested",
-    attestHint:"Agent types without a policy keep the old behaviour (token as requested, marked unverified). Once a policy requires a report, a managed request without a passing report is downgraded to BYOA. This round is self-reported software evidence and does not stop deliberate forgery; see docs/attestation.md.",
+    attestHint:"Agent types without a policy keep the old behaviour (token as requested, marked unverified). Once a policy requires a report, a managed request without a passing report is downgraded to BYOA. This round is self-reported software evidence and does not stop deliberate forgery; see docs/attestation.md.",terminalsTitle:"Terminal inventory",terminalsDesc:"ag-guard reports a periodic heartbeat (version / config hash / plugin list); the platform keeps a live asset view of all terminal agents. Config drift (version / config / plugins failing the attestation policy) is highlighted and alerted.",termFilter:"Filter",filterBtn:"Filter",terminalsList:"Terminals",termVersion:"Version",termStatus:"Status",termLastSeen:"Last heartbeat",termDrift:"Drift",termOffline:"Offline backfill",terminalsHint:"Online: heartbeat within 5 minutes; offline after 60 minutes without one. Heartbeats carry metadata only (version, hashes, plugin list) — no request content. While the gateway is unreachable ag-guard enforces the cached policy and denies high data levels; after recovery the outage is backfilled through the heartbeat (counts and categories only).",
     channelsTitle:"Model channels",channelsDesc:"Upstream model services with the max data level and trust type they may carry; the gateway routes by classification policy. Keys are encrypted at rest and never echoed.",addChannel:"Add channel",channelList:"Channels",
     name:"Name",models:"Models",maxLevel:"Max data level",trustType:"Trust type",health:"Health",addBtn:"Add",
     pricing:"Pricing",pricingL:"Pricing (JSON, USD per million tokens)",unpriced:"unpriced",
@@ -675,7 +694,7 @@ function timeShort(s){ return (s||"").slice(5,19).replace("T"," "); }
 /* ---------- navigation ---------- */
 const NAV = [
   {group:"navOps", items:[["dashboard","◈","dashTitle"],["stats","▦","statsTitle"],["audit","☰","auditTitle"]]},
-  {group:"navAccess", items:[["device","▣","deviceTitle"],["tokens","⚿","tokensTitle"],["attest","✓","attestTitle"],["orgsync","⚭","orgsyncTitle"]]},
+  {group:"navAccess", items:[["device","▣","deviceTitle"],["tokens","⚿","tokensTitle"],["attest","✓","attestTitle"],["terminals","◉","terminalsTitle"],["orgsync","⚭","orgsyncTitle"]]},
   {group:"navModel", items:[["channels","⇄","channelsTitle"]]},
   {group:"navCap", items:[["kb","🗀","foldersTitle"],["skills","✦","skillsTitle"],["prompts","✎","promptsTitle"],["knowpack","🗂","knowpackTitle"],["upstreams","⛓","fedTitle"],["resttools","⇢","restTitle"]]},
   {group:"navSys", items:[["alerts","⚠","alertsTitle"],["packages","▤","packagesTitle"]]}
@@ -691,7 +710,7 @@ function go(id){ current = id; showPage(id); }
 function showPage(id){
   document.querySelectorAll(".page").forEach(p=>p.classList.toggle("active", p.id==="page-"+id));
   document.querySelectorAll(".navItem").forEach(n=>n.classList.toggle("active", n.getAttribute("data-nav")===id));
-  const loaders = {dashboard:loadDashboard, stats:()=>{loadStats(); loadCache(); loadBudgets(); loadOtel();}, audit:loadAudit, device:loadSidecar, tokens:loadTokens, attest:loadAttest, channels:loadChannels,
+  const loaders = {dashboard:loadDashboard, stats:()=>{loadStats(); loadCache(); loadBudgets(); loadOtel();}, audit:loadAudit, device:loadSidecar, tokens:loadTokens, attest:loadAttest, terminals:loadTerminals, channels:loadChannels,
     kb:loadFolders, skills:loadSkills, prompts:loadPrompts, knowpack:loadKnowpacks, upstreams:loadUpstreams, resttools:loadRESTTools, alerts:loadAlerts, packages:loadPackages, orgsync:loadOrgProviders};
   if(loaders[id]) loaders[id]();
 }
@@ -907,6 +926,23 @@ async function addAttestPolicy(){
 }
 async function deleteAttestPolicy(agent){
   try{ await api("/api/attestation/policies/"+encodeURIComponent(agent),{method:"DELETE"}); toast(T("deleted")); loadAttest();
+  }catch(e){ toast(e.message, false); }
+}
+
+/* ---------- terminal inventory ---------- */
+async function loadTerminals(){
+  try{
+    const q = new URLSearchParams();
+    if(tmDept.value.trim()) q.set("department", tmDept.value.trim());
+    if(tmVersion.value.trim()) q.set("version", tmVersion.value.trim());
+    if(tmStatus.value) q.set("status", tmStatus.value);
+    if(tmDrift.value) q.set("drift", tmDrift.value);
+    const d = await api("/api/terminals?"+q.toString());
+    const statusPill = s => s==="online" ? `<span class="pill ok">online</span>` : s==="stale" ? `<span class="pill warn">stale</span>` : `<span class="pill bad">offline</span>`;
+    document.querySelector("#terminals tbody").innerHTML = (d.terminals||[]).map(t=>{
+      const drift = (t.drift_reasons||[]).length ? `<span style="color:var(--bad);font-weight:600">${esc(t.drift_reasons.join(", "))}</span>` : "—";
+      const off = t.last_offline_audit ? `${esc(String(t.last_offline_audit.events||0))} (${T("termOffline")})` : "—";
+      return `<tr><td style="font-weight:600;color:var(--ink)">${esc(t.username)}</td><td>${esc(t.agent_type)}</td><td>${esc(t.version)}</td><td class="muted">${esc(t.department||"—")}</td><td>${statusPill(t.status)}</td><td class="muted">${timeShort(t.last_seen)}</td><td>${drift}</td><td class="muted">${off}</td></tr>`;}).join("") || `<tr><td colspan="8" class="empty">${T("empty")}</td></tr>`;
   }catch(e){ toast(e.message, false); }
 }
 

@@ -77,6 +77,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/seed"
 	"github.com/myjnathan/agentgate/internal/semidx"
 	"github.com/myjnathan/agentgate/internal/store"
+	"github.com/myjnathan/agentgate/internal/terminal"
 	"github.com/myjnathan/agentgate/internal/webui"
 )
 
@@ -230,6 +231,22 @@ func main() {
 	}
 	rest.SetCache(gw.Cache())
 	rest.SetAlertDispatcher(dispatcher)
+	// Terminal inventory (backlog F23): the sidecar policy snapshot
+	// is the gateway's own word lists, so a sidecar that refreshes
+	// from it enforces exactly what the server enforces. The
+	// offline ceiling defaults to internal (fail-closed above it)
+	// and can be raised via AGENTGATE_OFFLINE_MAX_LEVEL.
+	offlineMax := terminal.DefaultOfflineMaxLevel
+	if v := os.Getenv("AGENTGATE_OFFLINE_MAX_LEVEL"); v != "" {
+		if terminal.ParseLevel(v) {
+			offlineMax = v
+		} else {
+			log.Printf("AGENTGATE_OFFLINE_MAX_LEVEL=%q invalid, using default internal", v)
+		}
+	}
+	rest.SetSidecarPolicy(func() terminal.PolicySnapshot {
+		return terminal.NewPolicySnapshot(banned, custom, false, offlineMax)
+	})
 	// Package distribution (backlog F20): install packages are
 	// hosted under <data>/packages, employees download them, and
 	// their hashes feed the F14 attestation baseline.

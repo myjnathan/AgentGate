@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -38,6 +39,10 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "record findings but never block or redact (env AGENTGATE_GUARD_DRY_RUN=1)")
 	banned := flag.String("banned-words", "", "comma-separated banned words (env AGENTGATE_GUARD_BANNED_WORDS)")
 	custom := flag.String("custom-words", "", "comma-separated custom sensitive words (env AGENTGATE_GUARD_CUSTOM_WORDS)")
+	agentType := flag.String("agent-type", "", "agent type reported in heartbeats (env AGENTGATE_GUARD_AGENT_TYPE)")
+	plugins := flag.String("plugins", "", "comma-separated installed plugins reported in heartbeats (env AGENTGATE_GUARD_PLUGINS)")
+	heartbeatSecs := flag.Int("heartbeat-seconds", 0, "terminal heartbeat interval in seconds, 0 = default 60, negative disables (env AGENTGATE_GUARD_HEARTBEAT_SECONDS)")
+	policyCache := flag.String("policy-cache", "", "path of the cached server policy file (env AGENTGATE_GUARD_POLICY_CACHE)")
 	flag.Parse()
 
 	cfg := sidecar.Config{GatewayURL: "http://127.0.0.1:8787", Listen: sidecar.DefaultListen}
@@ -74,8 +79,31 @@ func main() {
 	if v := os.Getenv("AGENTGATE_GUARD_CUSTOM_WORDS"); v != "" {
 		cfg.CustomWords = splitList(v)
 	}
-	if os.Getenv("AGENTGATE_GUARD_DRY_RUN") == "1" || strings.EqualFold(os.Getenv("AGENTGATE_GUARD_DRY_RUN"), "true") {
-		cfg.DryRun = true
+	if v := os.Getenv("AGENTGATE_GUARD_DRY_RUN"); v != "" {
+		cfg.DryRun = v == "1" || strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("AGENTGATE_GUARD_AGENT_TYPE"); v != "" {
+		cfg.AgentType = v
+	}
+	if v := os.Getenv("AGENTGATE_GUARD_PLUGINS"); v != "" {
+		cfg.Plugins = splitList(v)
+	}
+	if v := os.Getenv("AGENTGATE_GUARD_HEARTBEAT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.HeartbeatIntervalSecs = n
+		}
+	}
+	// The policy cache (backlog F23) defaults to next to the guard
+	// config when one was loaded, else ~/.agentgate/policy-cache.json.
+	if cfg.PolicyCachePath == "" {
+		if cfgFile != "" {
+			cfg.PolicyCachePath = filepath.Join(filepath.Dir(cfgFile), "policy-cache.json")
+		} else if home, err := os.UserHomeDir(); err == nil {
+			cfg.PolicyCachePath = filepath.Join(home, ".agentgate", "policy-cache.json")
+		}
+	}
+	if v := os.Getenv("AGENTGATE_GUARD_POLICY_CACHE"); v != "" {
+		cfg.PolicyCachePath = v
 	}
 	// 3. Flag overrides.
 	if *gateway != "" {
@@ -93,16 +121,31 @@ func main() {
 	if *dryRun {
 		cfg.DryRun = true
 	}
+	if *agentType != "" {
+		cfg.AgentType = *agentType
+	}
+	if *plugins != "" {
+		cfg.Plugins = splitList(*plugins)
+	}
+	if *heartbeatSecs != 0 {
+		cfg.HeartbeatIntervalSecs = *heartbeatSecs
+	}
+	if *policyCache != "" {
+		cfg.PolicyCachePath = *policyCache
+	}
 
 	srv, err := sidecar.New(cfg)
 	if err != nil {
 		log.Fatalf("invalid config: %v", err)
 	}
+	// Heartbeats + policy cache refresh (backlog F23).
+	srv.StartBackground()
 	httpSrv := &http.Server{Addr: cfg.Listen, Handler: srv.Handler(), ReadHeaderTimeout: 30 * time.Second}
 	go func() {
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
 		<-ch
+		srv.Stop()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = httpSrv.Shutdown(ctx)

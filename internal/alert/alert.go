@@ -89,6 +89,9 @@ func FromEvent(ev audit.Event) (Alert, bool) {
 	case ev.Kind == "attestation" && ev.Action == "attest_downgrade":
 		a.Severity = "warning"
 		a.Title = "Agent 证明未通过，已降级为自带级"
+	case ev.Kind == "terminal" && ev.Action == "terminal_drift":
+		a.Severity = "warning"
+		a.Title = "终端配置漂移（版本/配置/插件不符合证明策略）"
 	case ev.Kind == "auth" && ev.Action == "account_locked":
 		a.Severity = "critical"
 		a.Title = "账号因多次登录失败被锁定"

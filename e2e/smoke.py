@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1280,6 +1281,71 @@ def main():
           and pack["references"][0].get("name") == "onboarding_essentials"
           and "请假须提前在系统提交申请" in pack["references"][0].get("synthesis", "")
           and not pack.get("withheld_references"))
+
+    # ---- F23: terminal inventory + offline policy cache ----
+    s, start23 = call("/api/setup/device/start", {"agent_type": "dsh", "tier": "byoa"})
+    check("F23 device start", s == 200 and start23.get("code", "").startswith("AG-"))
+    s, _ = call("/api/device/approve", {"code": start23["code"], "device_name": "ci-smoke-f23"}, token=sess)
+    s, poll23 = call("/api/setup/device/poll", {"code": start23["code"], "secret": start23["secret"]})
+    tok23 = poll23.get("token", "")
+    check("F23 dsh token issued", s == 200 and tok23.startswith("ag_at_"))
+
+    hb = {"version": "0.1.0", "config_hash": "ab" * 32, "plugins": [], "guard_applied": True, "os": "linux"}
+    s, h1 = call("/api/terminals/heartbeat", hb, token=tok23)
+    term23 = h1.get("terminal_id", "")
+    check("F23 heartbeat registers terminal", s == 200 and h1.get("status") == "online" and term23.startswith("term_"))
+    s, lst = call("/api/terminals", token=admin_tok)
+    check("F23 terminal listed", s == 200 and any(t.get("id") == term23 for t in lst.get("terminals", [])))
+    s, one = call("/api/terminals/" + term23, token=admin_tok)
+    check("F23 terminal detail", s == 200 and one.get("agent_type") == "dsh" and one.get("username") == "lixiaofeng")
+    s, pol23 = call("/api/sidecar/policy", token=tok23)
+    check("F23 sidecar policy snapshot", s == 200 and pol23.get("version") and "test_sensitive" in (pol23.get("banned_words") or []) and pol23.get("offline_max_level") == "internal")
+    s, _ = call("/api/terminals", token=sess)
+    check("F23 employee cannot list terminals", s == 403)
+
+    # Drift: the seeded dsh policy requires >= 0.1.0.
+    hb_bad = dict(hb)
+    hb_bad["version"] = "0.0.9"
+    s, h2 = call("/api/terminals/heartbeat", hb_bad, token=tok23)
+    check("F23 drift flagged", s == 200 and h2.get("drift_reasons") == ["version_below_minimum"])
+    s, lst = call("/api/terminals?drift=true", token=admin_tok)
+    check("F23 drift filter", s == 200 and any(t.get("id") == term23 for t in lst.get("terminals", [])))
+    s, lst = call("/api/terminals?department=" + urllib.parse.quote("研发部"), token=admin_tok)
+    check("F23 department filter", s == 200 and any(t.get("id") == term23 for t in lst.get("terminals", [])))
+    s, lst = call("/api/terminals?status=online", token=admin_tok)
+    check("F23 status filter", s == 200 and any(t.get("id") == term23 for t in lst.get("terminals", [])))
+
+    # Drift clears, and the offline backfill is audited with counts only.
+    now23 = int(time.time())
+    hb_off = dict(hb)
+    hb_off["offline"] = {"events": 2, "blocked": 1, "unreachable": 1,
+                         "window_start": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now23 - 600)),
+                         "window_end": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now23)),
+                         "by_category": {"banned_word": 1}}
+    s, h3 = call("/api/terminals/heartbeat", hb_off, token=tok23)
+    check("F23 drift cleared + backfill accepted", s == 200 and h3.get("drift_reasons") == [])
+    s, audit23 = call("/api/audit?kind=terminal", token=admin_tok)
+    acts = [e.get("action") for e in audit23.get("events", [])]
+    check("F23 terminal audit trail", s == 200 and "terminal_registered" in acts and "terminal_drift" in acts and "terminal_drift_cleared" in acts and "terminal_offline_audit" in acts)
+
+    # The live sidecar (when running) enforces the server's current
+    # policy: either it refreshed it live ("gateway") or it loaded
+    # the cached snapshot ("cached") — either way the version must
+    # match the snapshot the server serves now.
+    if SC:
+        src23 = ""
+        ver23 = ""
+        for _ in range(20):
+            try:
+                s, st23 = scall("/status", method="GET")
+                src23 = st23.get("policy_source", "")
+                ver23 = st23.get("policy_version", "")
+                if ver23 == pol23.get("version") and src23 in ("gateway", "cached"):
+                    break
+            except Exception:
+                pass
+            time.sleep(0.5)
+        check("F23 sidecar enforces current server policy", ver23 == pol23.get("version") and src23 in ("gateway", "cached"))
 
     httpd.shutdown()
     print(f"\n{len(failures)} failure(s)")

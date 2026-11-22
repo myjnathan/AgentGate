@@ -19,6 +19,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/seed"
 	"github.com/myjnathan/agentgate/internal/store"
+	"github.com/myjnathan/agentgate/internal/terminal"
 )
 
 func setupTokensAPI(t *testing.T) (*httptest.Server, *store.Store, string, string) {
@@ -42,6 +43,12 @@ func setupTokensAPI(t *testing.T) (*httptest.Server, *store.Store, string, strin
 	rest.SetRESTAdapter(restadapter.New(st, box))
 	rest.SetFolderKB(folderkb.New(st))
 	rest.SetPackageRegistry(distrib.NewRegistry(filepath.Join(dir, "packages")))
+	// Terminal inventory (backlog F23): the test server serves the
+	// demo policy snapshot, so the sidecar policy endpoint works
+	// here exactly as in production.
+	rest.SetSidecarPolicy(func() terminal.PolicySnapshot {
+		return terminal.NewPolicySnapshot(seed.DemoBannedWords, seed.DemoCustomWords, false, terminal.DefaultOfflineMaxLevel)
+	})
 	mux := http.NewServeMux()
 	rest.Register(mux)
 	srv := httptest.NewServer(mux)
