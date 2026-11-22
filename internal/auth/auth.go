@@ -128,6 +128,19 @@ type OIDCClaims struct {
 	Department        string
 }
 
+// RevokeUserSessions deletes every web session of one user
+// (backlog F21: org sync disables a departed employee, whose open
+// browser sessions must stop working at once).
+func (s *Service) RevokeUserSessions(userID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for tok, sess := range s.sessions {
+		if sess.userID == userID {
+			delete(s.sessions, tok)
+		}
+	}
+}
+
 // SessionUser resolves a web session token.
 func (s *Service) SessionUser(tok string) (userID, username, role string, ok bool) {
 	s.mu.Lock()

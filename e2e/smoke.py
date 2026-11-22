@@ -76,6 +76,58 @@ def main():
     otel_httpd = _S(("127.0.0.1", 4318), OTelCollector)
     _threading.Thread(target=otel_httpd.serve_forever, daemon=True).start()
 
+    # F21: fake DingTalk directory. Phase 1 lists three members; phase 2
+    # drops lisi, whose lookup then reports "not found" (60121), so a
+    # sync with disable_missing on disables her account. u3 has no
+    # email, so the bind provider's sync cannot auto-link it.
+    dt_phase = {"n": 1}
+
+    class FakeDingTalk(_H):
+        def _body(self):
+            n = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(n) if n else b"{}"
+            try:
+                return json.loads(raw or b"{}")
+            except json.JSONDecodeError:
+                return {}
+        def _send(self, obj):
+            data = json.dumps(obj).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        def do_POST(self):
+            body = self._body()
+            if self.path.startswith("/v1.0/oauth2/accessToken"):
+                self._send({"accessToken": "dt-token", "expireIn": 7200})
+            elif self.path.startswith("/topapi/v2/department/listsub"):
+                children = [{"dept_id": 2, "name": "研发部"}] if body.get("dept_id") == 1 else []
+                self._send({"errcode": 0, "errmsg": "ok", "result": children})
+            elif self.path.startswith("/topapi/v2/user/list"):
+                if body.get("dept_id") == 1:
+                    users = [{"userid": "u1", "name": "张三", "org_email": "zhangsan@xinghe.example", "dept_id_list": [1, 2]}]
+                elif dt_phase["n"] == 1:
+                    users = [{"userid": "u2", "name": "李四", "org_email": "lisi@xinghe.example", "dept_id_list": [2]},
+                             {"userid": "u3", "name": "王五", "org_email": "", "dept_id_list": [2]}]
+                else:
+                    users = [{"userid": "u3", "name": "王五", "org_email": "", "dept_id_list": [2]}]
+                self._send({"errcode": 0, "errmsg": "ok", "result": {"has_more": False, "next_cursor": 0, "list": users}})
+            elif self.path.startswith("/topapi/v2/user/get"):
+                if body.get("userid") == "u2" and dt_phase["n"] == 2:
+                    self._send({"errcode": 60121, "errmsg": "user not found", "result": {}})
+                else:
+                    self._send({"errcode": 0, "errmsg": "ok", "result": {"userid": body.get("userid"), "name": "张三", "org_email": "zhangsan@xinghe.example", "dept_id_list": [1]}})
+            else:
+                self.send_response(404)
+                self.end_headers()
+        def log_message(self, *a):
+            pass
+
+    dt_httpd = _S(("127.0.0.1", 0), FakeDingTalk)
+    _threading.Thread(target=dt_httpd.serve_forever, daemon=True).start()
+    dt_base = f"http://127.0.0.1:{dt_httpd.server_address[1]}"
+
     s, login = call("/api/login", {"username": "lixiaofeng", "password": "demo12345"})
     check("employee login", s == 200 and "session" in login)
     sess = login["session"]
@@ -1098,6 +1150,62 @@ def main():
     check("package deleted", s == 200)
     s, _, _ = get_bytes("/api/packages/" + resume_pkg.get("id", "") + "/download", sess)
     check("download after delete is 404", s == 404)
+
+    # F21: org sync (DingTalk) against the fake directory above.
+    s, prov = call("/api/orgsync/providers",
+                   {"provider": "dingtalk", "name": "星河钉钉", "corp_id": "corp-xinghe",
+                    "app_key": "dt-app-key", "app_secret": "smoke-secret-plain",
+                    "base_url": dt_base, "auto_create": True, "disable_missing": True}, token=admin_tok)
+    check("orgsync provider created without echoing secret",
+          s == 201 and "smoke-secret-plain" not in json.dumps(prov)
+          and "secret_masked" in prov.get("provider", {}))
+    pid = prov.get("provider", {}).get("id", "")
+    s, t = call("/api/orgsync/providers/" + pid + "/test", {}, token=admin_tok, method="POST")
+    check("orgsync test counts directory", s == 200 and t.get("users") == 3 and t.get("departments") == 2)
+    s, sync1 = call("/api/orgsync/providers/" + pid + "/sync", {}, token=admin_tok, method="POST")
+    r1 = sync1.get("result", {})
+    check("orgsync sync provisions 3 users", s == 200 and r1.get("ok") is True and r1.get("created") == 3)
+    # Phase 2: lisi leaves the directory; the provider confirms it.
+    dt_phase["n"] = 2
+    s, sync2 = call("/api/orgsync/providers/" + pid + "/sync", {}, token=admin_tok, method="POST")
+    r2 = sync2.get("result", {})
+    check("orgsync second sync disables departed member",
+          s == 200 and r2.get("ok") is True and "lisi" in (r2.get("disabled") or []))
+    s, prov2 = call("/api/orgsync/providers/" + pid, token=admin_tok, method="GET")
+    last = prov2.get("provider", {}).get("last_sync", {})
+    check("orgsync last sync recorded", s == 200 and last.get("ok") is True and len(last.get("disabled") or []) == 1)
+    # Bind flow against a second provider (different corp, so its
+    # subjects do not collide with the synced accounts) with
+    # auto-create off: sync populates the snapshot, creates nobody.
+    s, provb = call("/api/orgsync/providers",
+                    {"provider": "dingtalk", "name": "星河钉钉-只读", "corp_id": "corp-xinghe-ro",
+                     "app_key": "dt-app-key", "app_secret": "smoke-secret-plain",
+                     "base_url": dt_base, "auto_create": False}, token=admin_tok)
+    pidb = provb.get("provider", {}).get("id", "")
+    s, syncb = call("/api/orgsync/providers/" + pidb + "/sync", {}, token=admin_tok, method="POST")
+    check("orgsync bind provider syncs snapshot only",
+          s == 200 and syncb.get("result", {}).get("created") == 0)
+    # u3 has no email, so the bind provider's sync could not
+    # auto-link it: its corp-xinghe-ro subject is still free, while
+    # corp-xinghe:u3 is bound to the account the first sync created.
+    s, bind = call("/api/orgsync/bindings",
+                   {"user_id": "lixiaofeng", "provider": "dingtalk", "external_id": "u3"}, token=admin_tok)
+    check("orgsync bind by snapshot", s == 200 and bind.get("subject") == "dingtalk:corp-xinghe-ro:u3")
+    s, _ = call("/api/orgsync/bindings",
+                {"user_id": "chenjing", "provider": "dingtalk", "external_id": "u3"}, token=admin_tok)
+    check("orgsync double bind refused", s == 409)
+    s, _ = call("/api/orgsync/bindings",
+                {"user_id": "chenjing", "provider": "dingtalk", "external_id": "u99"}, token=admin_tok)
+    check("orgsync bind unknown id refused", s == 409)
+    s, mine = call("/api/orgsync/bindings", token=sess, method="GET")
+    check("orgsync my bindings lists one",
+          s == 200 and len(mine.get("bindings", [])) == 1)
+    s, _ = call("/api/orgsync/bindings/lixiaofeng/dingtalk", token=admin_tok, method="DELETE")
+    s, mine = call("/api/orgsync/bindings", token=sess, method="GET")
+    check("orgsync unbind clears bindings",
+          s == 200 and len(mine.get("bindings", [])) == 0)
+    s, _ = call("/api/orgsync/providers", token=sess, method="GET")
+    check("orgsync employee cannot list providers", s == 403)
 
     httpd.shutdown()
     print(f"\n{len(failures)} failure(s)")

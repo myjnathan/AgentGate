@@ -70,6 +70,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/mcp"
 	"github.com/myjnathan/agentgate/internal/mockllm"
 	"github.com/myjnathan/agentgate/internal/oidc"
+	"github.com/myjnathan/agentgate/internal/orgsync"
 	"github.com/myjnathan/agentgate/internal/otel"
 	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/secretbox"
@@ -233,6 +234,11 @@ func main() {
 	// hosted under <data>/packages, employees download them, and
 	// their hashes feed the F14 attestation baseline.
 	rest.SetPackageRegistry(distrib.NewRegistry(filepath.Join(dataDir, "packages")))
+	// Organisation sync (backlog F21): third-party directories
+	// (DingTalk / Feishu / WeCom) sync into platform accounts; a
+	// departed employee's sessions are revoked when the sync
+	// disables the account.
+	rest.SetOrgSync(orgsync.New(st, au.RevokeUserSessions))
 	for _, src := range fk.Sources() {
 		if !src.Enabled {
 			continue
