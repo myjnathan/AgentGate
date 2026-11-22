@@ -20,6 +20,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/federation"
 	"github.com/myjnathan/agentgate/internal/folderkb"
 	"github.com/myjnathan/agentgate/internal/oidc"
+	"github.com/myjnathan/agentgate/internal/orgsync"
 	"github.com/myjnathan/agentgate/internal/otel"
 	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/secretbox"
@@ -40,6 +41,7 @@ type API struct {
 	semidx     *semidx.Index
 	semModel   *semidx.ModelGenerator
 	pkgs       *distrib.Registry
+	orgsync    *orgsync.Syncer
 	cache      *cache.Cache
 	tracer     *otel.Tracer
 }
@@ -140,6 +142,15 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/packages/{id}/baseline", a.requireAdmin(a.registerBaseline))
 	mux.HandleFunc("POST /api/packages/cleanup", a.requireAdmin(a.cleanupPackages))
 	mux.HandleFunc("POST /api/packages/user-bundle", a.requireAdmin(a.generateUserBundle))
+	mux.HandleFunc("GET /api/orgsync/providers", a.requireAdmin(a.listOrgProviders))
+	mux.HandleFunc("POST /api/orgsync/providers", a.requireAdmin(a.createOrgProvider))
+	mux.HandleFunc("GET /api/orgsync/providers/{id}", a.requireAdmin(a.getOrgProvider))
+	mux.HandleFunc("DELETE /api/orgsync/providers/{id}", a.requireAdmin(a.deleteOrgProvider))
+	mux.HandleFunc("POST /api/orgsync/providers/{id}/sync", a.requireAdmin(a.syncOrgProvider))
+	mux.HandleFunc("POST /api/orgsync/providers/{id}/test", a.requireAdmin(a.testOrgProvider))
+	mux.HandleFunc("POST /api/orgsync/bindings", a.requireAdmin(a.bindOrgIdentity))
+	mux.HandleFunc("DELETE /api/orgsync/bindings/{user_id}/{provider}", a.requireAdmin(a.unbindOrgIdentity))
+	mux.HandleFunc("GET /api/orgsync/bindings", a.requireSession(a.listMyOrgBindings))
 }
 
 // ---- helpers ----

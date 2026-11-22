@@ -2,6 +2,17 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-22 · F21 组织架构同步与 IM 身份绑定
+
+- 本轮按常规规程选条目：体内的 12:26 特别指令（F17 + 蓝图修订稿）早已在 F17 轮执行完毕、执行后作废；待办登记 2–5 均已在 F16/F19 轮执行完毕、作废；P0、P1 全部 done，P2 按清单顺序取 F21（首个剩余 P2 条目）。远端 main 已含 F20（PR #16，HEAD 036b3055），无在途分支需续传。
+- 借鉴 dsh-ee（hikariming/dsh-ee，Apache-2.0，与 AGPL-3.0 兼容）的钉钉 / 飞书组织同步：钉钉 `server/internal/dingtalk/client.go` 与 `directory.go`（应用 token 缓存、`{errcode,errmsg,result}` 信封、根部门广度优先 + cursor 分页、整份目录才生效）与 `server/internal/api/dingtalk_sync.go`（外部主体 `dingtalk:<corpId>:<userId>`、邮箱自动关联、AutoCreate 门控、本地已禁用不恢复、离职禁用前逐个确认、关联身份只解绑、汇总审计、最近同步结果持久化），飞书 `server/internal/feishu/client.go`（tenant token、contact v3 parentchildren / find_by_department、单查错误码 41012/41050）；企业微信是 dsh-ee 没有的平台，按官方通讯录 API 形状（`gettoken` / `department/list` / `user/list?fetch_child=1` / `user/get`，错误码 60111）新写。本轮通过 GitHub 连接器直接读到 dsh-ee 源码（search_code + get_file_contents），不再是只读 PR 标题。
+- 复用检查（Nathan 复用优先指示）：未逐字复制 dsh-ee 代码——其客户端绑定自家 store/OIDC 类型与 TiDB，端点形状、信封处理、分页行走、离职确认与同步规则按上述借鉴点改写为本仓库的 store/secretbox 类型；三客户端 + 同步器约 1400 行纯标准库自研；来源项目、文件与许可证记于 `internal/orgsync` 包注释、backlog F21 条目与此条。
+- 实现：新包 `internal/orgsync`（`Config` + 三客户端 dingtalk/feishu/wecom：token 缓存、信封校验、分页行走、UserState 三态确认；`Syncer`：建号 / 邮箱自动关联 / 刷新 / 离职确认与禁用 / 解绑关联身份 / 同步快照供绑定校验）；`store.User` 增加 `Email` 与 `ExternalIdentities`（`{provider, external_id, subject}`），`store.State` 增加 `OrgProviders`（`SecretEnc json:"-"` + 打码显示，`LastSync` 记最近一次结果）；`auth.RevokeUserSessions`（离职禁用时吊销全部会话）；管理 API（`internal/api/orgsync.go`）：来源 CRUD（仅 admin，密钥加密存储不回显）、`POST .../sync`（返回结果、写汇总审计）、`POST .../test`（只计数、不建号、不写审计）、绑定 / 解绑 / 本人绑定列表（绑定须快照校验、同一身份不许双绑，`user_id` 可填用户名或 ID）；管理台新增「组织同步」页（来源添加 / 列表 / 同步 / 测试 / 删除 + 绑定表单 + 我的身份，中英双语）；详见 docs/org-sync.md。
+- 关键决策：① 审计汇总只含计数，用户名列表只在同步结果（API 返回与来源记录的 `last_sync`）里、不进审计（dsh-ee 的审计含被禁用户名）；② 本轮只做手动同步（管理台按钮 / API），不做每小时定时任务（dsh-ee 为每小时一次），留待后续轮次；③ 绑定须以同步快照为准——快照里没有的第三方 ID 拒绝绑定，同一外部 ID 在多个来源出现时按来源 ID 顺序选尚未被他人绑定的主体；④ 邮箱自动关联不分 AutoCreate 开关——账号已存在时关联不是建号，dsh-ee 的跨来源关联也是这个语义；⑤ 飞书用 `open_id` 作外部 ID（每应用唯一，换应用需重新同步），企业微信用根部门 `fetch_child=1` 一次拉全量。
+- 测试：orgsync 包 13 项 + API 端点 5 项 + 冒烟新增 12 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（orgsync/api/auth/store）全绿；`make smoke` 190 项断言 0 失败（基线 178 + 新增 12）。
+- 本轮实测抓到的真问题：① 绑定初版按平台类型取第一个快照里有该外部 ID 的来源——两个同类型来源（两家企业）都有 u1 时，map 随机顺序会命中已被他人绑定的主体而误报 409。已改为收集全部候选主体（按来源 ID 排序）、跳过已被他人绑定的、选空闲的；全部被占时才 409；回归测试覆盖。② 同一原因的另一面：同步的邮箱自动关联会在第二个来源同步时就把同一人绑过去（dsh-ee 的跨来源关联本就是这个语义），冒烟与回归测试因此改用无邮箱的 u3 覆盖「选空闲主体」分支。③ 解绑初版只认用户 ID、管理台传用户名时 404，已与绑定端统一为用户名或 ID 都接受。
+- 推送结果：（合并后补记）
+
 ## 2026-11-22 · F20 受管 Agent 安装包分发与离线导入
 
 - 本轮按常规规程选条目：体内的 12:26 特别指令（F17 + 蓝图修订稿）早已在 F17 轮执行完毕、执行后作废；待办登记 2–5 均已在 F16/F19 轮执行完毕、作废；P0、P1 全部 done，P2 按清单顺序取 F20（首个剩余 P2 条目）。远端 main 已含 F19（PR #15，HEAD 97de9e2a），无在途分支需续传。
@@ -11,7 +22,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 关键决策：① 未校验包永远不可登记基准值——「未校验」是门禁而不只是展示，避免管理员误把未验文件当作信任锚；② 断点续传的会话与分片都落盘（会话进 state.json，分片进 `<data>/packages/.uploads`），服务端重启后仍可从已收字节数续传；③ 审计事件不记校验和原文（只记包名/类型/状态），与 F14「原因码只记类别、不记哈希值」同款口径，校验和只出现在 API 返回与下载响应头里（那是员工核对下载用的公开值）；④ 生成用户包的 guard.json 是 sidecar 配置的超集（网关地址 + 策略字段），ag-guard 只读 `gateway_url`，其余字段由 Go JSON 解析忽略；⑤ 双包结构落地：管理包仍走现有 `make bundle` 离线通道（本轮只把它登记进同一注册表、统一查看），用户包新增 `make bundle-user` 与管理台生成两条路。
 - 测试：distrib 包 7 项 + attest 1 项 + API 端点 4 项 + 冒烟新增 16 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（distrib/attest/api/store）全绿；`make smoke` 178 项断言 0 失败（基线 162 + 新增 16）。
 - 本轮实测抓到的真问题：① Go ServeMux 拒绝 `GET /api/packages/{id}/download` 与 `GET /api/packages/uploads/{id}` 并存（`/api/packages/uploads/download` 同时匹配两者）——上传状态查询改为 `GET /api/packages/uploads/{id}/status` 子路径；② 冒烟下载断言取 `X-Package-SHA256` 响应头失败——Go 发出的头是规范大小写 `X-Package-Sha256`，Python 字典查找区分大小写，已改为小写化后再取；③ 同段冒烟的匿名下载调用把三元组 `get_bytes` 的返回值只解了两个，已补齐。
-- 推送结果：（待合并后补记）
+- 推送结果：整包快照推送一次成功（push-files，18 个文件一次提交 22572bc8，未触发 contents API 回退；推送前核对同步基点：11 个改动文件远端 blob 与本地父提交一致，DEVLOG.md 仅差本地独有的 F19 推送记录行，6 个新文件在远端 main 不存在；推送后逐文件哈希核对 18/18 一致；核对时发现 get_file_contents 的 `branch` 参数会被忽略、须用 `ref` 指定分支——前两次核对因此全数不符，改用 `ref` 后通过；另记：`pull_request_read` 的 `list_pull_files`/`get_pull` 方法在本环境均报 unknown method，PR 文件清单改由「分支自 main HEAD 建出 + 仅一次快照提交 + 18/18 blob 核对」证明）；PR #16 文件清单与本轮一致，已合并进远端 main，远端 HEAD 036b3055（合并提交），读回验证 distrib.go / package-distribution.md / packages.go 已在 main 上（blob 与本地快照一致）。待删分支新增 loop/f20（共 10 个，需 Nathan 网页端手动删除）。
 
 ## 2026-11-22 · F19 知识库语义索引层
 

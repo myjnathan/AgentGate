@@ -160,6 +160,25 @@ type User struct {
 	// "local" or "oidc" and records how the account was created.
 	OIDCSubject string `json:"oidc_subject,omitempty"`
 	AuthSource  string `json:"auth_source,omitempty"`
+	// Email is the corporate mailbox, filled by OIDC login (F9) or
+	// org sync (F21); it is the key for auto-linking a directory
+	// identity to an existing platform account.
+	Email string `json:"email,omitempty"`
+	// ExternalIdentities are the third-party directory identities
+	// bound to this account (backlog F21): one entry per provider
+	// (dingtalk / feishu / wecom). Bound by org sync (email match
+	// or subject match) or by an admin bind; unbinding only removes
+	// the link, never the account.
+	ExternalIdentities []ExternalIdentity `json:"external_identities,omitempty"`
+}
+
+// ExternalIdentity is one third-party directory identity bound to a
+// platform user (backlog F21). Subject is the provider-scoped
+// stable key, e.g. "dingtalk:<corpID>:<userID>".
+type ExternalIdentity struct {
+	Provider   string `json:"provider"` // dingtalk | feishu | wecom
+	ExternalID string `json:"external_id"`
+	Subject    string `json:"subject"`
 }
 
 type Device struct {
@@ -480,6 +499,52 @@ type State struct {
 	// F20), keyed by upload ID; the partial bytes live on disk, so
 	// a session survives a restart.
 	PackageUploads map[string]*distrib.Upload `json:"package_uploads"`
+	// OrgProviders holds the third-party directory providers
+	// (backlog F21: dingtalk / feishu / wecom), keyed by provider
+	// ID; the app secret is encrypted with the master key and
+	// never echoed back.
+	OrgProviders map[string]*OrgProvider `json:"org_providers"`
+}
+
+// OrgProvider is one third-party directory (org sync) configuration
+// (backlog F21). SecretEnc holds the app secret / corp secret
+// encrypted with the master key (json:"-": it never leaves the
+// store file in plaintext and is never returned by the API);
+// SecretMasked is the display form.
+type OrgProvider struct {
+	ID             string    `json:"id"`
+	Provider       string    `json:"provider"` // dingtalk | feishu | wecom
+	Name           string    `json:"name"`
+	CorpID         string    `json:"corp_id"`
+	AppKey         string    `json:"app_key"`
+	SecretEnc      string    `json:"-"`
+	SecretMasked   string    `json:"secret_masked"`
+	BaseURL        string    `json:"base_url,omitempty"`
+	Enabled        bool      `json:"enabled"`
+	AutoCreate     bool      `json:"auto_create"`
+	DisableMissing bool      `json:"disable_missing"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	// LastSync is the result of the most recent sync run, if any.
+	LastSync *OrgSyncResult `json:"last_sync,omitempty"`
+}
+
+// OrgSyncResult is the outcome of one org sync run (backlog F21).
+// Lists hold usernames (never emails, phone numbers or secrets);
+// the audit event for a run records counts only.
+type OrgSyncResult struct {
+	At         time.Time `json:"at"`
+	OK         bool      `json:"ok"`
+	Error      string    `json:"error,omitempty"`
+	Remote     int       `json:"remote"`
+	Created    int       `json:"created"`
+	Reconciled int       `json:"reconciled"`
+	Linked     int       `json:"linked"`
+	Disabled   []string  `json:"disabled"`
+	Kept       []string  `json:"kept"`
+	Unlinked   []string  `json:"unlinked"`
+	Conflicts  []string  `json:"conflicts"`
+	Skipped    []string  `json:"skipped"`
 }
 
 func newState() *State {
@@ -500,6 +565,7 @@ func newState() *State {
 		AttestationPolicies: map[string]*attest.Policy{},
 		Packages:            map[string]*distrib.Package{},
 		PackageUploads:      map[string]*distrib.Upload{},
+		OrgProviders:        map[string]*OrgProvider{},
 	}
 }
 
@@ -565,6 +631,9 @@ func New(dir string) (*Store, error) {
 		}
 		if st.PackageUploads == nil {
 			st.PackageUploads = map[string]*distrib.Upload{}
+		}
+		if st.OrgProviders == nil {
+			st.OrgProviders = map[string]*OrgProvider{}
 		}
 		s.st = &st
 	} else if !os.IsNotExist(err) {

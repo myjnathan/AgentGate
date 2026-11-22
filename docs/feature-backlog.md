@@ -353,11 +353,21 @@
 - 测试：distrib 包 7 项（元数据校验 10 类拒绝、单次上传已校验/未校验/校验和不符、断点续传：新 Registry 读盘续传、重叠与跳号分片拒绝、超大分片拒绝、未完成拒绝完成、删除与中止、过期筛选、用户包 zip 内容与清单哈希、生成校验 8 类拒绝、StoreBytes 哈希复验）+ attest 1 项（二进制基准值：通过/大小写折叠/未知降级/缺失降级/无基准值保持旧行为、策略校验）+ API 端点 4 项（上传全链路：已校验/未校验/校验 400/员工下载与匿名 401/基准值登记与策略落盘/幂等/删除后 404/员工删除 403、断点续传全链路、用户包生成与 zip 内容/策略/基准值闭环/校验 400/员工 403、过期清理与过去过期时间拒绝）+ 冒烟新增 16 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（distrib/attest/api/store）全绿；`make smoke` 178 项断言 0 失败（基线 162 + 新增 16）。
 - 已知注意点：校验只验 SHA-256（内容完整性），不验厂商签名；组件包本身不校验「确实是 ag-guard/ag-setup 二进制」（平台只保证 zip 里装的就是管理员指定的两个文件）；证明仍是软件自报证据，基准值保证「装的是平台发的包」，不防有意伪造（见 docs/attestation.md）。
 
-### F21 组织架构同步与 IM 身份绑定 `todo`
+### F21 组织架构同步与 IM 身份绑定 `done`（2026-11-22）
 - 来源：Nathan 2026-11-22 批准立项（dsh-ee 调研结论）：借鉴 dsh-ee（2026-11-20）的钉钉组织同步与飞书 / 钉钉身份绑定——从钉钉 / 飞书 / 企业微信同步部门与员工目录，登录时把第三方身份绑定到平台账号，与 F9 OIDC 并行；同步只建 / 更新账号与部门映射，不自动授予受管级权限（权限仍走平台策略）。
-- 适配：待立项细化（本条目登记时仅定方向与借鉴策略）。
+- 适配：三个平台统一到一个 `DirectoryClient` 接口 + 一个 `Syncer`；企业微信是 dsh-ee 没有的平台，按官方通讯录 API 形状新写（`gettoken` / `department/list` / `user/list?fetch_child=1` / `user/get`）。
 - 红线：第三方应用密钥只加密存储、不回显；同步与绑定全程审计。
 - 【借鉴策略标注】同 F20：Apache-2.0，借设计为主，复制代码保留版权声明并记 DEVLOG。
+- 借鉴点（dsh-ee 源码，hikariming/dsh-ee，Apache-2.0，2026-11-22 查阅：`server/internal/dingtalk/client.go` 与 `directory.go`、`server/internal/api/dingtalk_sync.go`、`server/internal/feishu/client.go`）：
+  钉钉：`POST /v1.0/oauth2/accessToken` 取应用 token（缓存至过期）→ `POST /topapi/v2/department/listsub`（根部门 1）+ `POST /topapi/v2/user/list`（cursor/size ≤ 100）广度优先拉整份通讯录、`{errcode,errmsg,result}` 信封、token 放 query 且报错信息里打码；`POST /topapi/v2/user/get` 单查，60121 为离职、50002/50004/60011 为权限范围外。
+  飞书：`POST /open-apis/auth/v3/tenant_access_token/internal` 取 tenant token → `GET /open-apis/contact/v3/departments/parentchildren` + `GET /open-apis/contact/v3/users/find_by_department`（page_token 分页）；单查错误码 41012 查不到、41050 权限范围外。
+  同步应用层（`dingtalk_sync.go`）：整份目录才生效（拉取失败或目录为空整轮不生效）、外部主体 `dingtalk:<corpId>:<userId>`、邮箱自动关联已有账号（企业邮箱优先）、`AutoCreate` 门控建号、本地已禁用不自动恢复、离职禁用前逐个向平台确认（目录里没看到 ≠ 离职）、关联在另一来源账号上的身份只解除关联不禁用账号、每轮记一条汇总审计、最近一次同步结果持久化、每小时定时同步（带租约）。
+  我们照此实现，但做四处改动：① 三个平台统一接口与同步器，企业微信新增（dsh-ee 没有）；② 审计汇总只含计数，用户名列表只在同步结果里、不进审计（dsh-ee 的审计含被禁用户名）；③ 本轮只做手动同步，不做每小时定时任务（留待后续轮次）；④ 绑定须以同步快照为准（快照里没有的第三方 ID 拒绝绑定），dsh-ee 的绑定走登录时的 OAuth 换码，我们的绑定走同步后的快照校验 + 管理员手动绑定。
+- 复用检查（Nathan 复用优先指示）：未逐字复制 dsh-ee 代码——其客户端绑定自家 store/OIDC 类型与 TiDB，端点形状、信封处理、分页行走、离职确认与同步规则按上述借鉴点改写为本仓库的 store/secretbox 类型（约 1400 行，三客户端 + 同步器均为纯标准库）；来源项目、文件与许可证记于 `internal/orgsync` 包注释、backlog 本条与 DEVLOG。
+- 实现：新包 `internal/orgsync`（`Config` + 三客户端 dingtalk/feishu/wecom：token 缓存、信封校验、分页行走、UserState 三态；`Syncer`：建号/邮箱自动关联/刷新/离职确认与禁用/解绑关联身份/快照）；`store.User` 增加 `Email` 与 `ExternalIdentities`（`{provider, external_id, subject}`），`store.State` 增加 `OrgProviders`（`SecretEnc json:"-"` + 打码显示）；`auth.RevokeUserSessions`（离职禁用时吊销会话）；管理 API（`internal/api/orgsync.go`）：来源 CRUD（仅 admin，密钥加密存储不回显）、`POST .../sync`（返回结果、写汇总审计）、`POST .../test`（只计数、不建号、不写审计）、绑定/解绑/本人绑定列表（绑定须快照校验、同一身份不许双绑）；管理台新增「组织同步」页（来源添加/列表/同步/测试/删除 + 绑定表单 + 我的身份，中英双语）；详见 docs/org-sync.md。
+- 测试：orgsync 包 13 项（钉钉：目录分页 + 去重 + 排序 + token 缓存 1 次、业务错误不泄漏 token、三态确认；飞书：目录分页 + 企业邮箱优先、三态确认；企微：扁平部门 + fetch_child + token 缓存、三态确认；配置校验 7 组；同步器：建号与再同步对账、自动建号关时跳过、邮箱自动关联、已禁用不恢复、空目录中止、拉取失败零改动、离职禁用三态：确认离职禁用 + 吊销会话、关联身份只解绑、范围外保留、LastSync 落盘）+ API 端点 5 项（来源 CRUD 全链路、密钥永不回显、403/404/400；同步全链路：测试只计数不建号、同步建号 3 人 + 再同步对账 + LastSync + 汇总审计只含计数；停用来源同步 400；绑定全链路：快照校验、双绑 409、未知 ID 409、本人绑定列表与解绑；双来源同外部 ID 时绑定选空闲主体）+ 冒烟新增 12 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（orgsync/api/auth/store）全绿；`make smoke` 190 项断言 0 失败（基线 178 + 新增 12）。
+- 本轮实测抓到的真问题：① 绑定初版按平台类型取第一个快照里有该外部 ID 的来源——两个同类型来源（两家企业）都有 u1 时，map 随机顺序会命中已被他人绑定的主体而误报 409。已改为收集全部候选主体（按来源 ID 排序）、跳过已被他人绑定的、选空闲的；全部被占时才 409。② 同一原因的另一面：同步的邮箱自动关联会在第二个来源同步时就把同一人绑过去（dsh-ee 的跨来源关联本就是这个语义），冒烟与回归测试因此改用无邮箱的 u3 覆盖「选空闲主体」分支。③ 解绑初版只认用户 ID、管理台传用户名时 404，已与绑定端统一为用户名或 ID 都接受。
+- 已知注意点：本轮只做手动同步，无定时任务；飞书用 `open_id`（每应用唯一，换应用需重新同步）；企微用根部门 `fetch_child=1` 一次拉全量，超大通讯录后续可改分页；同步不授予任何权限，能力授权仍以令牌等级与策略为准。
 
 ### F22 专题知识包 `todo`
 - 来源：Nathan 2026-11-22 批准立项（Liner 调研结论）：借鉴 Liner（linersh，liner.sh）的调研包形态——管理员或部门专家围绕一个具体工作问题，把若干文件精选成一个『知识包』：来源清单（配方）+ 综合说明（用途 / 证据用法 / 边界）+ 密级与授权范围，审批发布后 Agent 经 MCP 按包取用（目录 → 综合 → 原文下钻），综合中每条结论必须带原文回指（文件 + 章节 + 页码）。维护走 Agent 起草 → 管理员审批 → 变更回执进审计；包可引用其他已发布包的综合稿，但密级只能向下引用（低密级包不得嵌入高密级内容）；包的密级取所含文件最高密级。
