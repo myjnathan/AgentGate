@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 BASE = os.environ.get("AGENTGATE_BASE", "http://127.0.0.1:8787")
@@ -662,6 +663,50 @@ def main():
     s, rs = call("/api/kb/folders/" + fid + "/rescan", {}, token=admin_tok, method="POST")
     check("folder rescan no-op when unchanged", s == 200 and rs.get("stats", {}).get("unchanged") == 1
           and rs.get("stats", {}).get("added") == 0)
+
+    # F19: semantic index — one FRAS entry per section over the folder
+    # index, each with tag coordinates and a source back-reference,
+    # served under the same level gate. Model generation against the
+    # demo gateway falls back to extractive entries (the mock upstream
+    # echoes the prompt, which is not entries JSON) and reports it.
+    s, cov = call("/api/kb/semantic/coverage", token=admin_tok, method="GET")
+    c = cov.get("coverage", {})
+    check("semantic coverage indexes both demo folders", s == 200 and c.get("docs_total") == 2
+          and c.get("docs_indexed") == 2 and not c.get("stale_docs")
+          and c.get("chapters_indexed", 0) >= 4)
+    s, _ = call("/api/kb/semantic/coverage", token=sess, method="GET")
+    check("semantic coverage forbidden for employee", s == 403)
+    docs_cov = c.get("documents", [])
+    int_doc = next(d for d in docs_cov if d.get("title") == "考勤与请假制度")
+    conf_doc = next(d for d in docs_cov if d.get("title") == "供应商准入要求")
+    s, ents = call("/api/kb/semantic/entries?doc_id=" + urllib.parse.quote(int_doc["doc_id"], safe=""), token=admin_tok, method="GET")
+    en = ents.get("entries", [])
+    check("semantic entries carry FRAS + tags + back-reference", s == 200 and len(en) >= 3
+          and all(e.get("function") and e.get("relations") and e.get("applicability") and e.get("constraints")
+                  and e.get("tags", {}).get("department") == "人力部"
+                  and e.get("source", {}).get("file", "").endswith(".md")
+                  and e.get("source", {}).get("chapter") and e.get("source", {}).get("pages")
+                  for e in en))
+    s, _ = call("/api/kb/semantic/entries?doc_id=folder:nope:x.md", token=admin_tok, method="GET")
+    check("semantic entries 404 for unknown doc", s == 404)
+    e_text, _ = mcp_text(tok, "kb_entries", {"doc_id": int_doc["doc_id"]})
+    check("MCP kb_entries returns internal doc entries for BYOA",
+          len(json.loads(e_text).get("entries", [])) >= 3)
+    e_text, is_err = mcp_text(tok, "kb_entries", {"doc_id": conf_doc["doc_id"]})
+    check("MCP kb_entries hides confidential doc from BYOA", is_err)
+    e_text, _ = mcp_text(tok2, "kb_entries", {"doc_id": conf_doc["doc_id"]})
+    check("MCP kb_entries returns confidential doc for managed",
+          len(json.loads(e_text).get("entries", [])) >= 1)
+    s, regen = call("/api/kb/folders/" + fid + "/semantic",
+                    {"model": True, "model_url": BASE, "model_token": tok2, "model_name": "mock-eco"},
+                    token=admin_tok, method="POST")
+    check("semantic model regeneration falls back to extractive on echo", s == 200
+          and regen.get("model_fallback") is True
+          and regen.get("documents", [{}])[0].get("generated_by") == "extractive"
+          and regen.get("documents", [{}])[0].get("model_error"))
+    s, regen = call("/api/kb/folders/" + fid + "/semantic", {}, token=admin_tok, method="POST")
+    check("semantic extractive regeneration clears fallback", s == 200
+          and regen.get("model_fallback") is False)
 
     # F11: exact-match response cache. Only clean public/internal
     # non-streaming calls are cached; a hit serves the stored body

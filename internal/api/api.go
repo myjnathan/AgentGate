@@ -22,6 +22,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/otel"
 	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/secretbox"
+	"github.com/myjnathan/agentgate/internal/semidx"
 	"github.com/myjnathan/agentgate/internal/store"
 )
 
@@ -35,6 +36,8 @@ type API struct {
 	restAd     *restadapter.Adapter
 	oidc       *oidc.Provider
 	fk         *folderkb.Registry
+	semidx     *semidx.Index
+	semModel   *semidx.ModelGenerator
 	cache      *cache.Cache
 	tracer     *otel.Tracer
 }
@@ -113,6 +116,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/kb/folders", a.requireAdmin(a.createFolderSource))
 	mux.HandleFunc("DELETE /api/kb/folders/{id}", a.requireAdmin(a.deleteFolderSource))
 	mux.HandleFunc("POST /api/kb/folders/{id}/rescan", a.requireAdmin(a.rescanFolderSource))
+	mux.HandleFunc("GET /api/kb/semantic/coverage", a.requireAdmin(a.semanticCoverage))
+	mux.HandleFunc("GET /api/kb/semantic/entries", a.requireAdmin(a.semanticEntries))
+	mux.HandleFunc("POST /api/kb/folders/{id}/semantic", a.requireAdmin(a.regenerateSemantic))
 	mux.HandleFunc("POST /api/setup/device/start", a.deviceStart)
 	mux.HandleFunc("POST /api/setup/device/poll", a.devicePoll)
 	mux.HandleFunc("POST /api/setup/device/attest", a.deviceAttest)

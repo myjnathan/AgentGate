@@ -174,12 +174,14 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 		if abs, ok := demoFolderPath("公司制度"); ok {
 			s.KBFolderSources["kbf_demo_folders"] = &store.KBFolderSource{
 				ID: "kbf_demo_folders", Name: "公司制度", Path: abs,
-				Level: store.LevelInternal, Enabled: true, CreatedAt: time.Now()}
+				Level: store.LevelInternal, Department: "人力部",
+				Enabled: true, CreatedAt: time.Now()}
 		}
 		if abs, ok := demoFolderPath("机密资料"); ok {
 			s.KBFolderSources["kbf_demo_confidential"] = &store.KBFolderSource{
 				ID: "kbf_demo_confidential", Name: "机密资料", Path: abs,
-				Level: store.LevelConfidential, Enabled: true, CreatedAt: time.Now()}
+				Level: store.LevelConfidential, Department: "采购部",
+				Enabled: true, CreatedAt: time.Now()}
 		}
 	})
 	return st.Save()

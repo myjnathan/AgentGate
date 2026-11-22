@@ -440,12 +440,13 @@ type KBDoc struct {
 // at this level. The index itself lives in memory (internal/folderkb);
 // only the registration is persisted here.
 type KBFolderSource struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Path      string    `json:"path"`
-	Level     DataLevel `json:"level"`
-	Enabled   bool      `json:"enabled"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	Path       string    `json:"path"`
+	Level      DataLevel `json:"level"`
+	Department string    `json:"department,omitempty"` // owning department; feeds the F19 semantic-entry tag (empty = folder name)
+	Enabled    bool      `json:"enabled"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type State struct {

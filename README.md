@@ -21,7 +21,7 @@ AgentGate 是一个**不绑定任何单一桌面 Agent** 的企业级平台（�
 | 防护管线 | 敏感词（Aho-Corasick）→ DLP 检测（凭据/PII/企业自定义词）→ 数据分级 → 拦截 / 脱敏（可逆占位符，响应还原）/ 分级路由；`tool_calls` 参数与正文同权过管线；流式响应同样还原占位符（分片切断的占位符经缓冲还原，不会半截泄漏） |
 | Agent 分级信任 | 受管级 / 自带级分级令牌；自带级禁止发送机密数据；设备码登录（`ag-setup` 一条命令接入）；企业 OIDC 登录（IdP 只认身份不授权限，新用户一律 employee，本地账号保留兜底，见 [docs/oidc-sso.md](docs/oidc-sso.md)）；Agent 证明（受管 Agent 登录时上报版本/配置哈希/插件清单，平台校验后才发受管级令牌，不符降级为自带级并告警，见 [docs/attestation.md](docs/attestation.md)） |
 | MCP 网关 `/mcp` | 远程 MCP，工具级授权（如 kb_get 仅受管级），工具返回过 DLP，每次调用审计；上游 MCP 服务器可联邦进来，其工具以 `命名空间.工具名` 出现在 tools/list 中；存量 REST 接口可按「方法 + 路径模板 + 参数 schema」注册为工具，以 `rest.工具名` 出现，调用前做参数 schema 校验、等级授权与 DLP（凭据服务端加密托管） |
-| 知识库 | 关键词多轮检索 + 读原文 + 引用，不用向量库；按等级控制可见范围；共享文件夹即知识库（指定文件夹自动索引 .md/.txt/.docx/.pdf，按文件夹映射密级，增量更新；Agent 按「目录 → 章节树 → 章节原文」渐进式取用，引用精确到文件 + 章节 + 页码，见 [docs/folder-kb.md](docs/folder-kb.md)） |
+| 知识库 | 关键词多轮检索 + 读原文 + 引用，不用向量库；按等级控制可见范围；共享文件夹即知识库（指定文件夹自动索引 .md/.txt/.docx/.pdf，按文件夹映射密级，增量更新；Agent 按「目录 → 语义条目 → 章节树 → 章节原文」渐进式取用，语义条目为每章节一行 FRAS（职责 / 关联 / 适用范围 / 硬约束）加标签坐标、每条带原文回指，见 [docs/semantic-index.md](docs/semantic-index.md)；引用精确到文件 + 章节 + 页码，见 [docs/folder-kb.md](docs/folder-kb.md)） |
 | 能力中枢 | 技能（SKILL.md）提交 → 审核 → 签名校验和 → 按部门范围下发；Prompt 模板同样走提交 → 审核 → 发布，版本不可变，Agent 经 `/mcp` `prompts/get` 只读已发布版（参数与渲染结果均过 DLP） |
 | 审计 | 哈希链防篡改审计日志，可验证完整性；原文与敏感值不落日志；`GET /api/audit/export` 按时间段导出 NDJSON（响应头附链校验结果），`POST /api/audit/archive` 把超保留期的事件归档为 gzip + 清单（默认保留 180 天，见 [docs/audit-retention.md](docs/audit-retention.md)） |
 | 用量统计 | `GET /api/stats` 按用户/部门/渠道/模型/Agent 类型/数据密级/处置聚合调用数与 tokens（被拦截调用计入 blocked）；直接聚合审计日志，数字与审计天然对账；支持 `since`/`until` 时间范围；每次调用按渠道配置的模型单价（输入/输出每百万 Token，USD）折算成本记进审计，统计含 `cost_usd` 与未定价调用数（见 [docs/cost-budgets.md](docs/cost-budgets.md)） |

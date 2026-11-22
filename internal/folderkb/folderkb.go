@@ -396,6 +396,58 @@ func (r *Registry) document(id string) (*Document, bool) {
 	return d, ok
 }
 
+// DocSnapshot is the immutable view of one indexed document handed to
+// consumers that build derived indexes (backlog F19 semantic entries):
+// the cloned section tree plus the scalars they need, so callers never
+// touch the registry's live documents.
+type DocSnapshot struct {
+	ID          string
+	SourceID    string
+	SourceName  string
+	Department  string // owning department of the folder, when configured
+	RelPath     string
+	Title       string
+	Level       store.DataLevel
+	Pages       int
+	Fingerprint string
+	Tree        *Node
+}
+
+// Snapshot returns one document's snapshot, or false.
+func (r *Registry) Snapshot(id string) (DocSnapshot, bool) {
+	r.mu.RLock()
+	d, ok := r.docs[id]
+	r.mu.RUnlock()
+	if !ok {
+		return DocSnapshot{}, false
+	}
+	return r.snapshotLocked(d), true
+}
+
+// Snapshots returns a snapshot of every indexed document.
+func (r *Registry) Snapshots() []DocSnapshot {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []DocSnapshot
+	for _, d := range r.docs {
+		out = append(out, r.snapshotLocked(d))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+func (r *Registry) snapshotLocked(d *Document) DocSnapshot {
+	var name, dept string
+	r.st.Read(func(st *store.State) {
+		if s, ok := st.KBFolderSources[d.SourceID]; ok {
+			name, dept = s.Name, s.Department
+		}
+	})
+	return DocSnapshot{ID: d.ID, SourceID: d.SourceID, SourceName: name,
+		Department: dept, RelPath: d.RelPath, Title: d.Title, Level: d.Level,
+		Pages: d.Pages, Fingerprint: d.Fingerprint, Tree: cloneNode(d.Tree)}
+}
+
 // Catalog lists the documents visible at maxLevel: the Wiki home
 // (layer 1 of progressive disclosure).
 func (r *Registry) Catalog(maxLevel store.DataLevel) []CatalogEntry {
