@@ -206,6 +206,15 @@
         </div>
         <p class="hint" data-i18n="cacheHint">仅缓存公开/内部、无敏感内容的非流式回答（精确匹配整份请求）；命中不计上游用量，审计记为 cache_hit；缓存只在内存中，重启即清空。</p>
       </div>
+      <div class="card"><h3 data-i18n="otelTitle">OpenTelemetry 导出</h3>
+        <div class="row" style="margin-bottom:10px">
+          <button class="btn ghost small" onclick="loadOtel()" data-i18n="refresh">刷新</button>
+          <span id="otelStats" class="muted"></span><span style="flex:1"></span>
+          <button class="btn ghost small" onclick="testOtel()" data-i18n="test">测试</button>
+          <span id="otelMsg" class="msg"></span>
+        </div>
+        <p class="hint" data-i18n="otelHint">网关与 MCP 调用产生脱敏的 trace 与指标（OTLP/HTTP JSON），默认关闭；设置 OTEL_EXPORTER_OTLP_ENDPOINT（如 http://localhost:4318）后导出到 Jaeger / Tempo / Phoenix 等后端。Span 只含模型、渠道、密级、处置、Token 数等元数据，绝不含提示词、工具参数或模型回复。</p>
+      </div>
     </section>
 
     <!-- audit -->
@@ -448,6 +457,7 @@ const I18N = {
     statsTitle:"用量统计",statsDesc:"基于审计日志聚合：按部门、模型、渠道统计调用量、Token 与拦截。",byModel:"按模型",byChannel:"按渠道",dept:"部门",model:"模型",channel:"渠道",calls:"调用",blocked:"拦截",
     costUsd:"成本 (USD)",budgetsTitle:"部门月度预算",budgetCap:"月度上限 (USD)",budgetSpent:"本月已花",budgetRemaining:"剩余",budgetUsed:"已用",budgetThreshold:"告警阈值 (0–1)",budgetsHint:"预算是硬上限：部门本月花费达到上限后，网关以 429 拒绝后续模型调用，到下月 1 日 0 点（UTC）自动重置；花费达到告警阈值时每月发一次提醒。成本按渠道配置的模型单价（输入/输出每百万 Token）计价，未定价的调用不计成本、另行统计。",
     cacheTitle:"响应缓存",clearBtn:"清空",cacheHint:"仅缓存公开/内部、无敏感内容的非流式回答（精确匹配整份请求）；命中不计上游用量，审计记为 cache_hit；缓存只在内存中，重启即清空。",
+    otelTitle:"OpenTelemetry 导出",otelHint:"网关与 MCP 调用产生脱敏的 trace 与指标（OTLP/HTTP JSON），默认关闭；设置 OTEL_EXPORTER_OTLP_ENDPOINT（如 http://localhost:4318）后导出到 Jaeger / Tempo / Phoenix 等后端。Span 只含模型、渠道、密级、处置、Token 数等元数据，绝不含提示词、工具参数或模型回复。",
     auditTitle:"审计日志",auditDesc:"全量事件以哈希链追加写入，任何篡改都会使链校验失败；可导出 NDJSON 或按保留期归档。",exportBtn:"导出 NDJSON",archiveBtn:"归档 180 天前",
     exportHint:"导出文件可直接喂给 jq / SIEM，响应头附带哈希链校验结果；归档把超过保留期（默认 180 天）的事件移入 gzip 压缩包并留校验锚点。",
     time:"时间",actor:"操作者",action:"动作",level:"等级",decision:"处置",
@@ -486,6 +496,7 @@ const I18N = {
     statsTitle:"Usage stats",statsDesc:"Aggregated from the audit log: calls, tokens and blocks by department, model and channel.",byModel:"By model",byChannel:"By channel",dept:"Department",model:"Model",channel:"Channel",calls:"Calls",blocked:"Blocked",
     costUsd:"Cost (USD)",budgetsTitle:"Department monthly budgets",budgetCap:"Monthly cap (USD)",budgetSpent:"Spent this month",budgetRemaining:"Remaining",budgetUsed:"Used",budgetThreshold:"Alert threshold (0–1)",budgetsHint:"Budgets are hard caps: once a department's spend this month reaches its cap, the gateway rejects further model calls with 429 until the 1st of next month, 00:00 UTC; crossing the alert threshold sends one warning per month. Cost is priced from each channel's per-model price (input/output per million tokens); unpriced calls carry no cost and are counted separately.",
     cacheTitle:"Response cache",clearBtn:"Clear",cacheHint:"Only clean public/internal non-streaming answers are cached (exact match on the full request); hits do not count toward upstream usage and are audited as cache_hit; the cache lives in memory and resets on restart.",
+    otelTitle:"OpenTelemetry export",otelHint:"Gateway and MCP calls produce desensitized traces and metrics (OTLP/HTTP JSON), off by default; set OTEL_EXPORTER_OTLP_ENDPOINT (e.g. http://localhost:4318) to export to Jaeger / Tempo / Phoenix. Spans carry only metadata (model, channel, data level, decision, token counts) — never prompts, tool arguments or model replies.",
     auditTitle:"Audit log",auditDesc:"All events are appended to a hash chain; any tampering breaks verification. Export NDJSON or archive by retention.",exportBtn:"Export NDJSON",archiveBtn:"Archive older than 180d",
     exportHint:"Feed the export to jq / your SIEM; response headers carry the chain check. Archiving moves events older than the retention period (default 180 days) into a gzip bundle with a verification anchor.",
     time:"Time",actor:"Actor",action:"Action",level:"Level",decision:"Decision",
@@ -563,7 +574,7 @@ function go(id){ current = id; showPage(id); }
 function showPage(id){
   document.querySelectorAll(".page").forEach(p=>p.classList.toggle("active", p.id==="page-"+id));
   document.querySelectorAll(".navItem").forEach(n=>n.classList.toggle("active", n.getAttribute("data-nav")===id));
-  const loaders = {dashboard:loadDashboard, stats:()=>{loadStats(); loadCache(); loadBudgets();}, audit:loadAudit, device:loadSidecar, tokens:loadTokens, attest:loadAttest, channels:loadChannels,
+  const loaders = {dashboard:loadDashboard, stats:()=>{loadStats(); loadCache(); loadBudgets(); loadOtel();}, audit:loadAudit, device:loadSidecar, tokens:loadTokens, attest:loadAttest, channels:loadChannels,
     kb:loadFolders, skills:loadSkills, prompts:loadPrompts, upstreams:loadUpstreams, resttools:loadRESTTools, alerts:loadAlerts};
   if(loaders[id]) loaders[id]();
 }
@@ -666,6 +677,21 @@ async function loadCache(){
     document.getElementById("cacheStats").textContent = `enabled ${d.enabled} · hits ${d.hits} · misses ${d.misses} · entries ${d.entries} · ttl ${d.ttl_seconds}s`;
     document.getElementById("cacheToggleBtn").textContent = d.enabled ? (lang==="zh"?"停用":"Disable") : (lang==="zh"?"启用":"Enable");
   }catch(e){ const el=document.getElementById("cacheStats"); if(el) el.textContent = e.message; }
+}
+
+/* ---------- OpenTelemetry export (F16) ---------- */
+async function loadOtel(){
+  try{ const d = await api("/api/otel");
+    document.getElementById("otelStats").textContent =
+      (d.enabled?("✓ "+(d.endpoint||"")):(lang==="zh"?"未启用":"disabled"))+
+      " · spans "+fmtNum(d.spans_exported||0)+" · dropped "+fmtNum(d.spans_dropped||0)+" · errors "+fmtNum(d.export_errors||0)+
+      (d.last_error?(" · "+d.last_error):"");
+  }catch(e){ const el=document.getElementById("otelStats"); if(el) el.textContent = e.message; }
+}
+async function testOtel(){
+  try{ const d = await api("/api/otel/test",{method:"POST"});
+    setMsg("otelMsg", "✓ exported "+(d.spans_exported||0)+" spans"); loadOtel();
+  }catch(e){ setMsg("otelMsg", e.message, false); }
 }
 async function toggleCache(){
   try{ const d = await api("/api/cache",{method:"POST",body:JSON.stringify({enabled:!cacheEnabled})});

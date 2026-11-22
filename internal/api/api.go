@@ -19,6 +19,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/federation"
 	"github.com/myjnathan/agentgate/internal/folderkb"
 	"github.com/myjnathan/agentgate/internal/oidc"
+	"github.com/myjnathan/agentgate/internal/otel"
 	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/store"
@@ -35,10 +36,17 @@ type API struct {
 	oidc       *oidc.Provider
 	fk         *folderkb.Registry
 	cache      *cache.Cache
+	tracer     *otel.Tracer
 }
 
 func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log) *API {
 	return &API{st: st, auth: au, box: box, audit: al}
+}
+
+// SetTracer wires the OpenTelemetry exporter (backlog F16) used by
+// the /api/otel status and test endpoints.
+func (a *API) SetTracer(tr *otel.Tracer) {
+	a.tracer = tr
 }
 
 // SetAlertDispatcher wires the alert dispatcher (backlog F5) used by
@@ -71,6 +79,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/audit/archive", a.requireAdmin(a.archiveAudit))
 	mux.HandleFunc("GET /api/stats", a.requireAdmin(a.getStats))
 	mux.HandleFunc("GET /api/sidecar/stats", a.requireAdmin(a.sidecarStats))
+	mux.HandleFunc("GET /api/otel", a.requireAdmin(a.otelStatus))
+	mux.HandleFunc("POST /api/otel/test", a.requireAdmin(a.otelTest))
 	mux.HandleFunc("GET /api/budgets", a.requireAdmin(a.listBudgets))
 	mux.HandleFunc("POST /api/budgets", a.requireAdmin(a.createBudget))
 	mux.HandleFunc("PATCH /api/budgets/{id}", a.requireAdmin(a.updateBudget))

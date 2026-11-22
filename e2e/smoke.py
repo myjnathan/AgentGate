@@ -49,6 +49,31 @@ def main():
     s, health = call("/healthz", method="GET")
     check("healthz", s == 200)
 
+    # F16: fake OTLP/HTTP collector on the standard port (the server
+    # is started with OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+    # by the Makefile). Started before any model/MCP call so every
+    # span of the run is captured; assertions are at the end.
+    import threading as _threading
+    from http.server import BaseHTTPRequestHandler as _H, ThreadingHTTPServer as _S
+    otel_traces = []
+    otel_metrics = []
+
+    class OTelCollector(_H):
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(n)
+            if self.path == "/v1/traces":
+                otel_traces.append(raw)
+            elif self.path == "/v1/metrics":
+                otel_metrics.append(raw)
+            self.send_response(200)
+            self.end_headers()
+        def log_message(self, *a):
+            pass
+
+    otel_httpd = _S(("127.0.0.1", 4318), OTelCollector)
+    _threading.Thread(target=otel_httpd.serve_forever, daemon=True).start()
+
     s, login = call("/api/login", {"username": "lixiaofeng", "password": "demo12345"})
     check("employee login", s == 200 and "session" in login)
     sess = login["session"]
@@ -878,6 +903,38 @@ def main():
         except Exception:
             pass
     check("downgrade alert delivered to webhook", downgrade_alert)
+
+    # F16: OpenTelemetry export. The collector above has been
+    # receiving spans all run; one last marked call proves request
+    # content never reaches it, then the status + test endpoints
+    # prove the operator surface works.
+    s, otel = call("/api/otel", token=admin_tok, method="GET")
+    check("otel status reports enabled endpoint",
+          s == 200 and otel.get("enabled") is True
+          and otel.get("endpoint") == "http://127.0.0.1:4318"
+          and otel.get("spans_exported", 0) > 0)
+    s, _ = call("/api/otel", token=sess, method="GET")
+    check("otel status forbidden for employee", s == 403)
+    marker = "OTELSMOKE-7f3a9"
+    before = len(otel_traces)
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-eco", "messages": [{"role": "user", "content": "请写请假条 " + marker}]}, token=tok2)
+    check("otel marker call allowed", s == 200 and "choices" in chat)
+    for _ in range(150):
+        if len(otel_traces) > before:
+            break
+        _time.sleep(0.1)
+    trace_text = b"\n".join(otel_traces).decode(errors="replace")
+    check("otel spans exported for gateway + mcp",
+          "gateway.chat_completions" in trace_text and "mcp.tools.call" in trace_text)
+    check("otel span carries model + decision attrs",
+          "agentgate.model" in trace_text and "agentgate.decision" in trace_text)
+    check("otel spans carry no request content", marker not in trace_text)
+    check("otel metrics exported",
+          any("agentgate.gateway.calls" in m.decode(errors="replace") for m in otel_metrics))
+    s, tst = call("/api/otel/test", {}, token=admin_tok, method="POST")
+    check("otel test endpoint exports a span", s == 200 and tst.get("ok") is True)
+    otel_httpd.shutdown()
 
     httpd.shutdown()
     print(f"\n{len(failures)} failure(s)")

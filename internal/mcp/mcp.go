@@ -8,6 +8,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/folderkb"
 	"github.com/myjnathan/agentgate/internal/guard"
 	"github.com/myjnathan/agentgate/internal/kb"
+	"github.com/myjnathan/agentgate/internal/otel"
 	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/store"
 )
@@ -34,8 +36,17 @@ type Server struct {
 	fed   *federation.Registry
 	rest  *restadapter.Adapter
 	fk    *folderkb.Registry
+	// tracer is the OpenTelemetry exporter (F16); nil or disabled
+	// means no tracing. Spans carry metadata only — never tool
+	// arguments or results (see docs/opentelemetry.md).
+	tracer *otel.Tracer
 	// ToolMinTier: minimum tier required per tool (default BYOA).
 	ToolMinTier map[string]store.Tier
+}
+
+// SetTracer wires the OpenTelemetry exporter (backlog F16).
+func (s *Server) SetTracer(tr *otel.Tracer) {
+	s.tracer = tr
 }
 
 // SetFolderKB wires the folder knowledge-base registry (backlog
@@ -135,14 +146,120 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeRPCResult(w, req.ID, map[string]any{})
 	case "tools/list":
 		writeRPCResult(w, req.ID, map[string]any{"tools": s.listTools(r.Context(), tok)})
-	case "tools/call":
-		s.callTool(w, r.Context(), req, tok, user)
+	case "tools/call", "prompts/get":
+		// Traced calls (F16): the response is buffered so the
+		// deferred span end can tell success from a JSON-RPC error
+		// (MCP errors ride on HTTP 200).
+		s.serveTraced(w, r, req, tok, user)
 	case "prompts/list":
 		writeRPCResult(w, req.ID, map[string]any{"prompts": s.listPrompts(tok, user)})
-	case "prompts/get":
-		s.getPrompt(w, req, tok, user)
 	default:
 		writeRPCError(w, req.ID, -32601, "method not found")
+	}
+}
+
+// rpcRecorder buffers one MCP JSON-RPC response. WriteHeader is
+// swallowed and replayed by flush; responses are small single JSON
+// objects, never a stream.
+type rpcRecorder struct {
+	http.ResponseWriter
+	status int
+	body   bytes.Buffer
+}
+
+func (r *rpcRecorder) WriteHeader(code int) {
+	if r.status == 0 {
+		r.status = code
+	}
+}
+
+func (r *rpcRecorder) Write(b []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return r.body.Write(b)
+}
+
+func (r *rpcRecorder) flush() {
+	r.ResponseWriter.WriteHeader(r.status)
+	_, _ = r.ResponseWriter.Write(r.body.Bytes())
+}
+
+func toolNameFromParams(params json.RawMessage) string {
+	var p struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return ""
+	}
+	return p.Name
+}
+
+// serveTraced runs a tool or prompt call behind one server span.
+func (s *Server) serveTraced(w http.ResponseWriter, r *http.Request, req rpcRequest, tok *store.APIToken, user *store.User) {
+	rec := &rpcRecorder{ResponseWriter: w}
+	span := s.startTrace(r, req, tok, user)
+	defer func() {
+		s.endTrace(span, req, rec)
+		rec.flush()
+	}()
+	switch req.Method {
+	case "tools/call":
+		s.callTool(rec, r.Context(), req, tok, user)
+	case "prompts/get":
+		s.getPrompt(rec, req, tok, user)
+	}
+}
+
+func (s *Server) startTrace(r *http.Request, req rpcRequest, tok *store.APIToken, user *store.User) *otel.Span {
+	if s.tracer == nil {
+		return nil
+	}
+	parent, _ := otel.ParseTraceParent(r.Header.Get("traceparent"))
+	return s.tracer.Start("mcp."+strings.Replace(req.Method, "/", ".", 1), parent,
+		otel.StringAttr("agentgate.actor_id", user.ID),
+		otel.StringAttr("agentgate.agent_type", tok.AgentType),
+		otel.StringAttr("agentgate.tier", string(tok.Tier)),
+		otel.StringAttr("agentgate.method", req.Method),
+		otel.StringAttr("agentgate.tool", toolNameFromParams(req.Params)))
+}
+
+// endTrace finishes the span from the buffered JSON-RPC response:
+// a body with an "error" member is an error span, anything else is
+// OK. The tool name is metadata; arguments and results are never
+// span attributes.
+func (s *Server) endTrace(span *otel.Span, req rpcRequest, rec *rpcRecorder) {
+	if span == nil {
+		return
+	}
+	decision, status, msg := "allow", 1, ""
+	var rpcErrCode int64
+	var body struct {
+		Error *struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.body.Bytes(), &body); err == nil && body.Error != nil {
+		decision, status, msg = "error", 2, "rpc_error"
+		rpcErrCode = int64(body.Error.Code)
+	}
+	tool := toolNameFromParams(req.Params)
+	attrs := []otel.Attr{
+		otel.StringAttr("agentgate.tool", tool),
+		otel.StringAttr("agentgate.decision", decision),
+	}
+	if body.Error != nil {
+		attrs = append(attrs, otel.IntAttr("agentgate.rpc_error_code", rpcErrCode))
+	}
+	span.SetAttrs(attrs...)
+	span.End(status, msg)
+	if tr := s.tracer; tr != nil {
+		switch req.Method {
+		case "tools/call":
+			tr.AddCounter("agentgate.mcp.tool_calls", 1, map[string]string{"tool": tool, "decision": decision})
+		case "prompts/get":
+			tr.AddCounter("agentgate.mcp.prompt_gets", 1, map[string]string{"decision": decision})
+		}
 	}
 }
 

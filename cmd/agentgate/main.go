@@ -32,6 +32,13 @@
 //	                     60). Admins can toggle/clear it at runtime
 //	                     from the console; the cache is in-memory and
 //	                     resets on restart.
+//	OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_SERVICE_NAME /
+//	OTEL_EXPORTER_OTLP_PROTOCOL
+//	                     OpenTelemetry export (backlog F16): set the
+//	                     endpoint to an OTLP/HTTP collector (e.g.
+//	                     http://localhost:4318) to export desensitized
+//	                     traces and metrics; unset = tracing disabled.
+//	                     Protocol must be http/json when set.
 package main
 
 import (
@@ -54,6 +61,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/mcp"
 	"github.com/myjnathan/agentgate/internal/mockllm"
 	"github.com/myjnathan/agentgate/internal/oidc"
+	"github.com/myjnathan/agentgate/internal/otel"
 	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/seed"
@@ -128,11 +136,26 @@ func main() {
 			log.Printf("AGENTGATE_CACHE_TTL_SECONDS=%q invalid, using default 3600", v)
 		}
 	}
+	// OpenTelemetry export (backlog F16): disabled unless an OTLP
+	// endpoint is configured; a bad config only logs, never stops
+	// the server — observability must not take down the gateway.
+	otelCfg := otel.ConfigFromEnv(os.Getenv)
+	otelCfg.ServiceVersion = version
+	otelTracer := otel.New(otelCfg)
+	if otelTracer.Enabled() {
+		log.Printf("OpenTelemetry enabled: OTLP/HTTP endpoint %s service %s", otelCfg.Endpoint, otelCfg.ServiceNameOrDefault())
+	} else if err := otelCfg.Validate(); err != nil {
+		log.Printf("OpenTelemetry disabled: %v", err)
+	}
+	otelTracer.Run()
+	defer otelTracer.Shutdown()
+
 	gw := gateway.New(st, au, box, al, gateway.Policy{
 		BannedWords:   banned,
 		CustomWords:   custom,
 		RedactForTier: map[store.Tier]bool{store.TierManaged: true},
 		CacheTTL:      cacheTTL,
+		Tracer:        otelTracer,
 	})
 	if v := os.Getenv("AGENTGATE_CACHE_ENABLED"); v == "0" || strings.EqualFold(v, "false") {
 		gw.Cache().SetEnabled(false)
@@ -177,7 +200,9 @@ func main() {
 	fk := folderkb.New(st)
 	mcpSrv := mcp.New(st, au, al, det, fed, restAd)
 	mcpSrv.SetFolderKB(fk)
+	mcpSrv.SetTracer(otelTracer)
 	rest := api.New(st, au, box, al)
+	rest.SetTracer(otelTracer)
 	rest.SetOIDC(oidcProvider)
 	rest.SetFederation(fed)
 	rest.SetRESTAdapter(restAd)

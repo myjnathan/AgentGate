@@ -290,18 +290,78 @@
 - 测试：sidecar 包 9 项（配置校验六类拒绝、干净请求直通、PII 上游只见占位符/下游还原/状态计数无原文泄漏、违禁词本地拦截且网关零调用、dry-run 只记录不拦截不脱敏、流式逐字节分片还原、tool_calls 参数共享占位符编号、models 直通、healthz）+ 流式还原白盒 2 项（逐字节读取下双占位符还原、空映射原样直通）+ 网关 3 项（sidecar 标识进 model_call 审计、cache_hit 同样记录、无标识不记）+ API 端点 1 项（计数口径：2 次调用 + 1 次缓存命中、直接调用与 violation 不计、员工 403）+ 冒烟新增 9 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 145 项断言 0 失败。
 - 已知注意点：本轮只做规则检测，本地小模型检测留待后续轮次；只代理模型流量（`/v1/chat/completions`、`/v1/models`），MCP 仍直连网关、由服务端工具授权与 DLP 管控；映射只在内存中，sidecar 重启会中断进行中的请求；流式还原依赖模型原样回传占位符；网关侧词表改动不自动同步到端侧配置，网关二次检测是兜底。
 
-### F16 OpenTelemetry 导出 `todo`
+### F16 OpenTelemetry 导出 `done`（2026-11-22）
 - 来源：ContextForge 的 OTel 可观测（Phoenix/Jaeger 等）。
 - 适配：网关与 MCP 调用产生 trace/metric，字段脱敏后导出。
+- 借鉴点（ContextForge 官方文档 ibm.github.io/mcp-context-forge，2026-11-22 查阅；OTLP/HTTP JSON 协议说明，2026-11-22 查阅）：
+  ContextForge 的 OTel 形态是厂商中立的 OTLP 导出：Phoenix/Jaeger/Zipkin/Tempo 等后端都接，
+  网关操作与工具/提示词调用自动产生 trace，LLM 指标（token 用量、成本、模型性能）单独记，
+  关闭时零开销、优雅降级；配置用标准变量（`OTEL_ENABLE_OBSERVABILITY` / `OTEL_SERVICE_NAME` /
+  `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_PROTOCOL`）。OTLP/HTTP JSON 的线形是公开规范：
+  POST `/v1/traces`（`/v1/metrics` 同理），`Content-Type: application/json`，
+  `resourceSpans → scopeSpans → spans` 三层嵌套，traceId 32 位 hex、spanId 16 位 hex，
+  时间戳为纳秒十进制字符串，kind/status 为整数枚举，属性是带类型包装的 AnyValue。
+  我们照此实现，但做三处改动：① 不拉 OpenTelemetry Go SDK——纯标准库手写 OTLP/HTTP JSON 导出器，
+  与 F9 不拉 oauth2/oidc 依赖的取舍一致，零依赖单二进制不变；② 属性只取 allowlist 元数据
+  （模型/渠道/密级/处置/Token 数/工具名等），提示词、工具参数、模型响应、DLP 命中值永不进 span
+  （ContextForge 的 LLM 追踪默认会记 prompt， 我们按分级红线收紧）；③ 导出失败只计数不重试、
+  不阻塞请求（遥测不值得为一次失败拖慢网关），关闭时 tracer 为 no-op（零开销）。
+- 实现：新包 `internal/otel`（`Config` 读标准环境变量 + `Validate` 说明关闭原因；
+  `Tracer`：span 队列上限 1000（满了丢弃计数）、5 秒批量导出（满 100 提前导出）、
+  `traceparent` 入站加入/出站传播、累计 Sum 计数器；`Stats()` 供管理 API）；
+  网关 `ChatCompletions` 每调用一个 SERVER span（`gateway.chat_completions`，经 statusRecorder
+  取 HTTP 状态、defer 收尾，`traceparent` 透传给模型上游）+ 计数器
+  `agentgate.gateway.calls{decision}` / `agentgate.gateway.tokens{channel}`；
+  MCP `tools/call` 与 `prompts/get` 各一个 span（响应缓冲后判 JSON-RPC error，参数与结果
+  永不进属性）+ 计数器 `agentgate.mcp.tool_calls{tool,decision}` /
+  `agentgate.mcp.prompt_gets{decision}`；管理 API `GET /api/otel`（状态与计数）+
+  `POST /api/otel/test`（发合成 span 同步导出验证连通性，未启用 503、导出失败 502，
+  仅 admin/security）；`cmd/agentgate` 从环境变量建 tracer 并接线三处
+  （网关/MCP/管理 API），配置错误只记日志、不阻止启动；管理台用量统计页新增
+  OpenTelemetry 卡片（状态 + 测试按钮，中英双语）；详见 docs/opentelemetry.md。
+- 测试：otel 包 8 项（配置解析与协议拒绝、traceparent 解析 6 类拒绝、nil/禁用 tracer
+  no-op、导出 payload 形状：resource/scope 三层、纳秒时间戳、AnyValue 类型、累计 Sum、
+  失败计数不致命、队列满丢弃计数、根 span 新 trace）+ 网关集成 4 项（干净调用 span
+  含模型/处置/Token 数且请求标志串不出现在导出体中、上游收到同 trace 的 traceparent、
+  违禁词拦截为 ERROR span 且违禁词不泄漏、入站 traceparent 被加入、指标含 calls+tokens）
+  + MCP 集成 3 项（kb_search span 含工具名且参数不泄漏、受管工具拒自带级为 ERROR span
+  含 RPC 错误码、tools/list 不产生 span）+ API 端点 4 项（未启用状态/员工 403、测试端点
+  收到合成 span、未启用 503、collector 宕机 502 且失败计数）；另修一个测试自死锁：
+  otel 测试曾在断言区持 collector 锁的同时调 counts/Flush（锁不可重入），改为快照后释放。
+  `gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 153 项断言 0 失败（新增 8 项 F16 断言）。
+- 已知注意点：只支持 OTLP/HTTP JSON，不支持 gRPC（4317）与 http/protobuf（需协议转换时中间放
+  OpenTelemetry Collector）；导出失败的 span 直接丢弃不重试；无采样（调用量不大时全量导出），
+  无直方图与日志信号。
 
 ### F19 知识库语义索引层 `todo`
 - 来源：Nathan 2026-11-22 批准立项（AOCI-CODE 调研结论）：aoci-spec/aoci-code 是给编码 Agent 用的代码库认知索引（Go 本地 MCP，模型逐文件写 FRAS 语义条目）。
 - 适配：把「每对象一行语义条目（职责/关联/契约/约束）+ 标签坐标 + 索引治理（校验/漂移/覆盖率）」方法用于优化 F18 文件夹知识库的弱摘要（现为章节首句抽取式）；语义条目须模型生成，必须走网关分级路由/脱敏，绝密只给标题。
 - 借鉴策略（只借方法不抄代码）：AOCI-CODE 许可证为 FSL-1.1-MIT（Fair Source，非 OSI 开源、有竞品限制），与本项目 AGPL-3.0 不兼容，代码禁止复制；只借鉴其方法设计，自研实现，并在条目与 DEVLOG 写明来源与许可证不兼容原因。
 - 验收：待立项细化（本条目登记时仅定方向与借鉴策略）。
+- 约束补充（2026-11-22）：语义条目必须带原文回指（文件 + 章节 + 页码），不许只保留模型生成的文字（借鉴 Liner 的引用可回指原则）。
+
+### F20 受管 Agent 安装包分发与离线导入 `todo`
+- 来源：Nathan 2026-11-22 批准立项（dsh-ee 调研结论）：借鉴 dsh-ee（hikariming/dsh-ee，PR #309）的离线安装包导入与分发——管理员在线上传或离线导入受管 Agent 安装包，平台托管、员工自助下载；SHA-256 校验和验证并明确区分已校验 / 未校验；导入中断可恢复、过期包清理；分发包的哈希自动登记为 F14 证明的基准值来源，形成『平台分发 → 平台证明』闭环。
+- 适配：待立项细化（本条目登记时仅定方向与借鉴策略）。
+- 交付形态补充（Nathan 2026-11-22 要求，待办登记 4）：明确区分双包（对齐 IP-guard 分法）——管理包给 IT（agentgate 服务端，现有 Docker / 离线 bundle / systemd 形态），用户包给员工（ag-guard + ag-setup 在管理台按策略生成、装一次零配置常驻、包哈希作 F14 证明基准值）；F20 的分发与离线导入同时覆盖两个包。现状：三个二进制已分开，但打包未分（make 一锅烩、离线包只有服务端），F20 补齐。
+- 【借鉴策略标注】dsh-ee 为 Apache-2.0，与 AGPL-3.0 兼容，可借鉴设计与代码（复制须保留原版权声明并在 DEVLOG 记录来源项目、文件与许可证）；其实现与 DSH 插件绑定较深，本项目按自身架构实现为主。
+
+### F21 组织架构同步与 IM 身份绑定 `todo`
+- 来源：Nathan 2026-11-22 批准立项（dsh-ee 调研结论）：借鉴 dsh-ee（2026-11-20）的钉钉组织同步与飞书 / 钉钉身份绑定——从钉钉 / 飞书 / 企业微信同步部门与员工目录，登录时把第三方身份绑定到平台账号，与 F9 OIDC 并行；同步只建 / 更新账号与部门映射，不自动授予受管级权限（权限仍走平台策略）。
+- 适配：待立项细化（本条目登记时仅定方向与借鉴策略）。
+- 红线：第三方应用密钥只加密存储、不回显；同步与绑定全程审计。
+- 【借鉴策略标注】同 F20：Apache-2.0，借设计为主，复制代码保留版权声明并记 DEVLOG。
+
+### F22 专题知识包 `todo`
+- 来源：Nathan 2026-11-22 批准立项（Liner 调研结论）：借鉴 Liner（linersh，liner.sh）的调研包形态——管理员或部门专家围绕一个具体工作问题，把若干文件精选成一个『知识包』：来源清单（配方）+ 综合说明（用途 / 证据用法 / 边界）+ 密级与授权范围，审批发布后 Agent 经 MCP 按包取用（目录 → 综合 → 原文下钻），综合中每条结论必须带原文回指（文件 + 章节 + 页码）。维护走 Agent 起草 → 管理员审批 → 变更回执进审计；包可引用其他已发布包的综合稿，但密级只能向下引用（低密级包不得嵌入高密级内容）；包的密级取所含文件最高密级。
+- 适配：F18 之上的策展层（图书馆 vs 案卷之别，价值在口径受控、经验沉淀、责任可追溯）。
+- 验收：待立项细化（本条目登记时仅定方向与借鉴策略）。
+- 【借鉴策略标注】Liner 为 MIT 许可证，与 AGPL-3.0 兼容；借其形态与策展流程（配方 / 编译分离、审批关口、变更回执），代码按本项目架构自研为主，复制须保留版权声明并记 DEVLOG。Liner 本身是个人单机工具，无多用户 / 分级 / 审计，治理层全部自研。
 
 ## 调研来源（持续更新）
 - LiteLLM / Portkey / Kong / Cloudflare AI Gateway 对比（genaimaturity.net、devopsness.com，2026-11 查阅）
 - IBM ContextForge（MCP 网关/注册中心，Apache-2.0，ibm.github.io/mcp-context-forge）
 - New API 及其生态分叉（防护插件管线、合规归档）、AstrLink（端侧隐私网关）
 - hikariming/dsh-ee（能力中枢闭环）、WorkBuddy 企业版安全白皮书（终端管控与审计）
+
+备忘：IM（飞书 / 钉钉）机器人消息中继：Nathan 2026-11-22 决定暂不做——与受管级准入标准（能碰加密文件的 Agent 不开 IM 远程分发通道）冲突，不立项。
