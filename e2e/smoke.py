@@ -154,6 +154,11 @@ def main():
                 {"name": "x", "url": hook_url, "kind": "generic"}, token=sess)
     check("webhook create forbidden for employee", s == 403)
     s, start2 = call("/api/setup/device/start", {"agent_type": "dsh", "tier": "managed"})
+    # F14: the managed dsh login attests first; without a passing
+    # report the token would be downgraded to BYOA and the streaming
+    # assertions below (managed behaviour) would fail.
+    s, att2 = call("/api/setup/device/attest", {"code": start2["code"], "secret": start2["secret"], "report": {"version": "0.1.0", "guard_applied": False, "plugins": []}})
+    check("attestation pass for managed dsh", s == 200 and att2.get("verdict", {}).get("status") == "pass")
     s, _ = call("/api/device/approve", {"code": start2["code"], "device_name": "ci-smoke-alert"}, token=admin_tok)
     s, poll2 = call("/api/setup/device/poll", {"code": start2["code"], "secret": start2["secret"]})
     tok2 = poll2.get("token", "")
@@ -178,7 +183,12 @@ def main():
     check("webhook receives structured alert without sensitive text", alert_ok)
     s, tst = call("/api/alerts/webhooks/" + wh.get("id", "") + "/test", {}, token=admin_tok, method="POST")
     check("webhook test endpoint delivers", s == 200 and tst.get("delivered") is True)
-    httpd.shutdown()
+    # NOTE: do not shut the receiver down here. Later sections keep
+    # delivering alerts to this webhook (F6 tool_call_denied, F14
+    # attest_downgrade); shutting it down early leaves the dispatcher
+    # posting into a dead listener until its 10s timeout, the queue
+    # fills up and later alerts are dropped. It is shut down at the
+    # end of main() instead.
 
     # F3: per-token RPM. The smoke token already made 3 chat calls
     # above (allowed + 2 blocked — all counted at the gateway door),
@@ -753,6 +763,51 @@ def main():
     s, _ = call("/api/budgets/" + nb.get("id", ""), token=admin_tok, method="DELETE")
     check("budget deleted", s == 200)
 
+    # F14: agent attestation. A managed dsh login must attest first;
+    # an old version is downgraded to BYOA and alerts.
+    s, pols = call("/api/attestation/policies", token=admin_tok, method="GET")
+    check("seeded dsh attestation policy listed",
+          s == 200 and len(pols.get("policies", [])) == 1
+          and pols["policies"][0].get("agent_type") == "dsh"
+          and pols["policies"][0].get("min_version") == "0.1.0"
+          and pols["policies"][0].get("require_report") is True)
+    s, _ = call("/api/attestation/policies", token=sess, method="GET")
+    check("attestation policies forbidden for employee", s == 403)
+    s, np = call("/api/attestation/policies",
+                 {"agent_type": "codex", "min_version": "1.0.0", "require_report": True}, token=admin_tok)
+    check("attestation policy created for codex", s == 200 and np.get("policy", {}).get("agent_type") == "codex")
+    s, _ = call("/api/attestation/policies/codex", token=admin_tok, method="DELETE")
+    check("attestation policy deleted", s == 200)
+    s, start4 = call("/api/setup/device/start", {"agent_type": "dsh", "tier": "managed"})
+    s, att = call("/api/setup/device/attest", {"code": start4["code"], "secret": start4["secret"], "report": {"version": "0.0.1"}})
+    check("old version attestation downgraded",
+          s == 200 and att.get("verdict", {}).get("status") == "downgraded"
+          and att["verdict"].get("reasons") == ["version_below_minimum"])
+    s, appr = call("/api/device/approve", {"code": start4["code"], "device_name": "ci-smoke-f14"}, token=admin_tok)
+    check("failed attestation approves as byoa",
+          s == 200 and appr.get("issued_tier") == "byoa")
+    s, poll4 = call("/api/setup/device/poll", {"code": start4["code"], "secret": start4["secret"]})
+    tok4 = poll4.get("token", "")
+    check("downgraded token issued", s == 200 and tok4.startswith("ag_at_"))
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-eco", "messages": [{"role": "user", "content": "请分析 XH-200 项目的进展"}]}, token=tok4)
+    check("downgraded token cannot send confidential data",
+          s == 403 and chat.get("error", {}).get("code") == "data_level_forbidden")
+    for _ in range(100):
+        if any("attest_downgrade" in r.decode(errors="replace") for r in received):
+            break
+        _time.sleep(0.1)
+    downgrade_alert = False
+    for raw in received:
+        try:
+            payload = json.loads(raw)
+            if payload.get("action") == "attest_downgrade" and payload.get("severity") == "warning":
+                downgrade_alert = True
+        except Exception:
+            pass
+    check("downgrade alert delivered to webhook", downgrade_alert)
+
+    httpd.shutdown()
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1 if failures else 0)
 

@@ -86,6 +86,9 @@ func FromEvent(ev audit.Event) (Alert, bool) {
 	case ev.Kind == "budget" && ev.Action == "budget_threshold":
 		a.Severity = "warning"
 		a.Title = "部门月度预算将达上限"
+	case ev.Kind == "attestation" && ev.Action == "attest_downgrade":
+		a.Severity = "warning"
+		a.Title = "Agent 证明未通过，已降级为自带级"
 	case ev.Kind == "auth" && ev.Action == "account_locked":
 		a.Severity = "critical"
 		a.Title = "账号因多次登录失败被锁定"

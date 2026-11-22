@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/myjnathan/agentgate/internal/attest"
 	"github.com/myjnathan/agentgate/internal/store"
 )
 
@@ -260,9 +261,65 @@ func (s *Service) StartDeviceCode(agentType string, tier store.Tier) *store.Devi
 	return &cp
 }
 
+// SubmitAttestation attaches an attestation report to a pending
+// device code and evaluates it against the current policy for that
+// agent type (backlog F14). The report is bound to this code (code +
+// polling secret, single use, 10-minute expiry), which plays the RATS
+// freshness role: a report cannot be replayed against a later login.
+// The returned verdict is a preview; approval re-evaluates against
+// the policy in force at that moment. A missing policy means no
+// attestation requirement: the verdict is "unverified".
+func (s *Service) SubmitAttestation(code, secret string, report attest.Report) (attest.Verdict, error) {
+	if err := report.Validate(); err != nil {
+		return attest.Verdict{}, err
+	}
+	var verdict attest.Verdict
+	var err error
+	s.st.WithLock(func(st *store.State) {
+		dc, ok := st.DeviceCodes[code]
+		if !ok || dc.Secret != secret || dc.Status != "pending" || time.Now().After(dc.ExpiresAt) {
+			err = fmt.Errorf("device code invalid or expired")
+			return
+		}
+		report.AgentType = dc.AgentType // the code, not the client, decides the agent type
+		cp := report
+		dc.Attestation = &cp
+		if pol, ok := st.AttestationPolicies[dc.AgentType]; ok && pol != nil {
+			verdict = attest.Evaluate(&cp, *pol)
+		} else {
+			verdict = attest.Verdict{Status: attest.VerdictUnverified}
+		}
+		dc.AttestVerdict = verdict.Status
+		dc.AttestReasons = verdict.Reasons
+	})
+	if err == nil {
+		_ = s.st.Save()
+	}
+	return verdict, err
+}
+
+// evaluateAttestation is the approval-time appraisal: the stored
+// report (if any) against the policy in force now. No policy means
+// "unverified"; no report means the policy's RequireReport decides
+// between "downgraded" (report_missing) and "unverified".
+func evaluateAttestation(dc *store.DeviceCode, policies map[string]*attest.Policy) attest.Verdict {
+	pol, ok := policies[dc.AgentType]
+	if !ok || pol == nil {
+		return attest.Verdict{Status: attest.VerdictUnverified}
+	}
+	return attest.Evaluate(dc.Attestation, *pol)
+}
+
 // ApproveDeviceCode is called from the web UI by a signed-in user.
-func (s *Service) ApproveDeviceCode(code string, user *store.User, deviceName string) (string, error) {
+// It returns the plaintext token (delivered once, on poll) and the
+// tier actually issued. A managed-tier request is only honoured when
+// attestation passes (backlog F14): a failed or missing-required
+// attestation downgrades the token to BYOA instead of refusing the
+// login — the employee keeps working with general capabilities, and
+// the downgrade is audited and alerted by the caller.
+func (s *Service) ApproveDeviceCode(code string, user *store.User, deviceName string) (string, store.Tier, error) {
 	var plain string
+	var issued store.Tier
 	var err error
 	s.st.WithLock(func(st *store.State) {
 		dc, ok := st.DeviceCodes[code]
@@ -270,13 +327,33 @@ func (s *Service) ApproveDeviceCode(code string, user *store.User, deviceName st
 			err = fmt.Errorf("device code invalid or expired")
 			return
 		}
+		verdict := evaluateAttestation(dc, st.AttestationPolicies)
+		dc.AttestVerdict = verdict.Status
+		dc.AttestReasons = verdict.Reasons
+		issued = dc.Tier
+		attested := false
+		if dc.Tier == store.TierManaged {
+			switch verdict.Status {
+			case attest.VerdictPass:
+				attested = true
+			case attest.VerdictDowngraded:
+				issued = store.TierBYOA
+			case attest.VerdictUnverified:
+				// No applicable policy, or the policy does not
+				// require a report: honour the requested tier but
+				// mark the token unverified.
+			}
+		} else if verdict.Status == attest.VerdictPass {
+			attested = true
+		}
 		dev := &store.Device{ID: store.NewID("dev"), UserID: user.ID, Name: deviceName, LastSeen: time.Now()}
 		st.Devices[dev.ID] = dev
 		plain = store.NewSecret("ag_at_")
 		tok := &store.APIToken{
 			ID: store.NewID("tok"), Hash: HashToken(plain), UserID: user.ID,
-			DeviceID: dev.ID, AgentType: dc.AgentType, Tier: dc.Tier,
+			DeviceID: dev.ID, AgentType: dc.AgentType, Tier: issued,
 			ExpiresAt: time.Now().Add(30 * 24 * time.Hour), CreatedAt: time.Now(),
+			Attested: attested, AttestVerdict: verdict.Status,
 		}
 		st.Tokens[tok.ID] = tok
 		dc.Status = "approved"
@@ -286,7 +363,7 @@ func (s *Service) ApproveDeviceCode(code string, user *store.User, deviceName st
 	if err == nil {
 		_ = s.st.Save()
 	}
-	return plain, err
+	return plain, issued, err
 }
 
 // PollDeviceCode is called by the setup tool. The plaintext token is

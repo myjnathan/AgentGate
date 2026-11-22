@@ -15,12 +15,16 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 )
 
@@ -28,6 +32,12 @@ func main() {
 	server := flag.String("server", "http://127.0.0.1:8787", "AgentGate server base URL")
 	agent := flag.String("agent", "dsh", "agent type: dsh | claude-code | codex | workbuddy | other")
 	tier := flag.String("tier", "byoa", "requested tier: byoa | managed")
+	// Attestation (backlog F14): the evidence this agent reports with
+	// its login. The config hash covers the gateway configuration
+	// below (never the token); the binary hash covers this executable.
+	version := flag.String("version", "0.1.0", "agent version reported for attestation")
+	plugins := flag.String("plugins", "", "installed plugins, comma-separated")
+	guard := flag.Bool("guard", false, "report that egress guard rules are applied")
 	flag.Parse()
 
 	// 1. Start device code.
@@ -39,6 +49,12 @@ func main() {
 		fatal("start device login: %v", err)
 	}
 	fmt.Printf("请打开 AgentGate 网页并登录，在「批准设备码」处输入: %s\n", start.Code)
+
+	// 1b. Submit attestation, bound to this device code. A failed
+	// submission does not stop the login: the platform decides at
+	// approval time (a managed request without a passing report is
+	// downgraded to BYOA, not refused).
+	submitAttestation(*server, start.Code, start.Secret, *agent, *tier, *version, *plugins, *guard)
 	fmt.Println("等待批准中…")
 
 	// 2. Poll until approved.
@@ -98,6 +114,61 @@ approved:
 		fmt.Println("  wrote:", p)
 	}
 	fmt.Println("完成。今后在你的 Agent 中：模型地址指向 " + *server + "/v1，MCP 指向 " + *server + "/mcp。")
+}
+
+// submitAttestation reports this agent's evidence for its device-code
+// login (backlog F14). The config hash is taken over the gateway
+// configuration ag-setup is about to write, minus the token (which
+// does not exist yet) — it proves the agent was configured from the
+// enterprise template, and it never contains a secret.
+func submitAttestation(server, code, secret, agent, tier, version, plugins string, guard bool) {
+	cfgHash := configHash(server, agent, tier)
+	var pluginList []string
+	for _, p := range strings.Split(plugins, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			pluginList = append(pluginList, p)
+		}
+	}
+	binHash := ""
+	if exe, err := os.Executable(); err == nil {
+		if b, err := os.ReadFile(exe); err == nil {
+			sum := sha256.Sum256(b)
+			binHash = hex.EncodeToString(sum[:])
+		}
+	}
+	report := map[string]any{
+		"version": version, "config_hash": cfgHash, "binary_hash": binHash,
+		"plugins": pluginList, "guard_applied": guard, "os": runtime.GOOS,
+	}
+	var out struct {
+		Verdict struct {
+			Status  string   `json:"status"`
+			Reasons []string `json:"reasons,omitempty"`
+		} `json:"verdict"`
+	}
+	if err := postJSON(server+"/api/setup/device/attest",
+		map[string]any{"code": code, "secret": secret, "report": report}, &out); err != nil {
+		fmt.Printf("证明提交失败（登录继续，批准时可能被降级为自带级）: %v\n", err)
+		return
+	}
+	fmt.Printf("Agent 证明已提交，裁决: %s", out.Verdict.Status)
+	if len(out.Verdict.Reasons) > 0 {
+		fmt.Printf("（%s）", strings.Join(out.Verdict.Reasons, ","))
+	}
+	fmt.Println()
+}
+
+// configHash is the SHA-256 of the canonical gateway configuration
+// (server / model_base / mcp_url / agent_type / tier), the same
+// values ag-setup writes into the agent config file, minus the
+// token. json.Marshal sorts map keys, so the hash is deterministic.
+func configHash(server, agent, tier string) string {
+	b, _ := json.Marshal(map[string]any{
+		"server": server, "model_base": server + "/v1", "mcp_url": server + "/mcp",
+		"agent_type": agent, "tier": tier,
+	})
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 func postJSON(url string, in, out any) error {

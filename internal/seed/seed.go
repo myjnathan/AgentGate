@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/myjnathan/agentgate/internal/attest"
 	"github.com/myjnathan/agentgate/internal/auth"
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/store"
@@ -108,6 +109,15 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 		s.Budgets["bud_demo_rd"] = &store.DepartmentBudget{
 			ID: "bud_demo_rd", Department: "研发部", MonthlyCapUSD: 50,
 			AlertThreshold: 0.8, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		}
+		// Demo attestation policy (F14): the managed DSH build must
+		// report at least version 0.1.0; the demo does not pin a
+		// config hash or require guard rules (the managed package is
+		// not yet distributed with a pinned config). Agent types
+		// without a policy keep the pre-F14 behaviour: managed on
+		// request, marked unverified.
+		s.AttestationPolicies["dsh"] = &attest.Policy{
+			AgentType: "dsh", MinVersion: "0.1.0", RequireReport: true,
 		}
 		s.KBDocs["kb_reimburse"] = &store.KBDoc{
 			ID: "kb_reimburse", Title: "差旅报销制度（2026 版）", Department: "财务部",

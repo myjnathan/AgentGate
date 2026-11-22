@@ -186,7 +186,7 @@ func setup(t *testing.T) *testEnv {
 			t.Fatalf("seed user %q not found", username)
 		}
 		dc := au.StartDeviceCode("workbuddy", tier)
-		if _, err := au.ApproveDeviceCode(dc.Code, user, "test device"); err != nil {
+		if _, _, err := au.ApproveDeviceCode(dc.Code, user, "test device"); err != nil {
 			t.Fatal(err)
 		}
 		_, plain := au.PollDeviceCode(dc.Code, dc.Secret)

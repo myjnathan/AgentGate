@@ -24,6 +24,8 @@ func TestFromEventClassification(t *testing.T) {
 		{"channel key disabled alerts", audit.Event{Kind: "channel", Action: "channel_key_disabled"}, true, "warning"},
 		{"channel fallback does not alert", audit.Event{Kind: "channel", Action: "channel_fallback"}, false, ""},
 		{"budget threshold warns", audit.Event{Kind: "budget", Action: "budget_threshold"}, true, "warning"},
+		{"attestation downgrade warns", audit.Event{Kind: "attestation", Action: "attest_downgrade"}, true, "warning"},
+		{"attestation submit does not alert", audit.Event{Kind: "attestation", Action: "attest_submit", Decision: "warn"}, false, ""},
 		{"account lockout alerts", audit.Event{Kind: "auth", Action: "account_locked", Decision: "block"}, true, "critical"},
 		{"plain login failure does not alert", audit.Event{Kind: "auth", Action: "login_failed", Decision: "block"}, false, ""},
 		{"rate limit does not alert", audit.Event{Kind: "rate_limit", Action: "rate_limited", Decision: "block"}, false, ""},

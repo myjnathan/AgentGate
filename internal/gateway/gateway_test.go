@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/myjnathan/agentgate/internal/attest"
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
 	"github.com/myjnathan/agentgate/internal/gateway"
@@ -79,7 +80,14 @@ func setupWithPolicy(t *testing.T, pol gateway.Policy) *testEnv {
 			}
 		})
 		dc := au.StartDeviceCode("dsh", tier)
-		if _, err := au.ApproveDeviceCode(dc.Code, user, "test device"); err != nil {
+		if tier == store.TierManaged {
+			// The seeded dsh policy requires a report (backlog F14);
+			// a managed test token attests first, like a real agent.
+			if _, err := au.SubmitAttestation(dc.Code, dc.Secret, attest.Report{Version: "0.1.0"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, _, err := au.ApproveDeviceCode(dc.Code, user, "test device"); err != nil {
 			t.Fatal(err)
 		}
 		_, plain := au.PollDeviceCode(dc.Code, dc.Secret)
