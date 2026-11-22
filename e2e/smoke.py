@@ -699,6 +699,78 @@ def main():
           and cache1.get("hits", 0) - cache0.get("hits", 0) >= 2
           and cache1.get("misses", 0) - cache0.get("misses", 0) >= 3)
 
+    # F15: local privacy gateway sidecar (ag-guard). The Makefile
+    # starts it against this server (AGENTGATE_SIDECAR); skip the
+    # section when it is not running. Placed before F13 on purpose:
+    # F13 lowers the department budget cap to just above spend, and
+    # these calls must land before that.
+    SC = os.environ.get("AGENTGATE_SIDECAR", "")
+    if SC:
+        def scall(path, data=None, token=None, method=None):
+            req = urllib.request.Request(SC + path, method=method or ("POST" if data is not None else "GET"))
+            if data is not None:
+                req.data = json.dumps(data).encode()
+                req.add_header("Content-Type", "application/json")
+            if token:
+                req.add_header("Authorization", "Bearer " + token)
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.loads(r.read() or b"{}")
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read() or b"{}")
+
+        s, sc_health = scall("/healthz", method="GET")
+        check("sidecar healthz", s == 200 and sc_health.get("status") == "ok")
+
+        # Fresh BYOA token for the sidecar calls (the shared smoke
+        # token is RPM-limited by the F3 section).
+        s, start15 = call("/api/setup/device/start", {"agent_type": "claude-code", "tier": "byoa"})
+        check("sidecar device start", s == 200 and start15.get("code", "").startswith("AG-"))
+        s, _ = call("/api/device/approve", {"code": start15["code"], "device_name": "ci-smoke-sidecar"}, token=admin_tok)
+        s, poll15 = call("/api/setup/device/poll", {"code": start15["code"], "secret": start15["secret"]})
+        tok15 = poll15.get("token", "")
+        check("sidecar token issued", s == 200 and tok15.startswith("ag_at_"))
+
+        mail = "lixiaofeng@xinghe.example"
+        s, chat = scall("/v1/chat/completions",
+                        {"model": "mock-eco", "messages": [{"role": "user", "content": "我的邮箱是 " + mail + "，请帮我写封邮件"}]},
+                        token=tok15)
+        reply = json.dumps(chat, ensure_ascii=False)
+        check("sidecar redacts PII upstream and restores it downstream",
+              s == 200 and mail in reply and "<PII_" not in reply)
+
+        s, chat = scall("/v1/chat/completions",
+                        {"model": "mock-eco", "messages": [{"role": "user", "content": "包含 test_sensitive 内容"}]},
+                        token=tok15)
+        check("sidecar blocks banned word locally",
+              s == 400 and chat.get("error", {}).get("code") == "sidecar_blocked")
+
+        # Streaming through the sidecar: the mock echoes the redacted
+        # prompt, the sidecar restores the placeholder across chunks.
+        req = urllib.request.Request(SC + "/v1/chat/completions",
+            data=json.dumps({"model": "mock-eco", "stream": True,
+                             "messages": [{"role": "user", "content": "我的邮箱是 " + mail}]}).encode())
+        req.add_header("Authorization", "Bearer " + tok15)
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req) as r:
+            stream_text = r.read().decode()
+        check("sidecar restores placeholders in streams",
+              mail in stream_text and "<PII_" not in stream_text and "[DONE]" in stream_text)
+
+        s, sc_status = scall("/status", method="GET")
+        check("sidecar status reports local counters",
+              s == 200 and sc_status.get("counters", {}).get("redacted_requests", 0) >= 2
+              and sc_status.get("counters", {}).get("blocked_local", 0) >= 1
+              and sc_status.get("counters", {}).get("restored_values", 0) >= 2
+              and mail not in json.dumps(sc_status))
+
+        s, sc_stats = call("/api/sidecar/stats", token=admin_tok, method="GET")
+        check("gateway counts sidecar-routed calls",
+              s == 200 and sc_stats.get("sidecar_calls", 0) >= 2
+              and any(b.get("agent_type") == "claude-code" for b in sc_stats.get("by_agent", [])))
+        s, _ = call("/api/sidecar/stats", token=sess, method="GET")
+        check("sidecar stats forbidden for employee", s == 403)
+
     # F13: model pricing + department monthly budgets. The demo seed
     # prices mock-eco at $0.50/$1.50 per million tokens and carries a
     # $50/month budget for 研发部 (80% threshold). The crossing call

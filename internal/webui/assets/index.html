@@ -237,6 +237,16 @@
         <span id="dmsg" class="msg"></span>
         <p class="hint" style="margin-top:12px" data-i18n="deviceHint">批准后员工端会自动拿到统一令牌（30 天有效），令牌绑定员工、设备与 Agent 等级，全部调用经网关审计。</p>
       </div>
+      <div class="card"><h3 data-i18n="sidecarTitle">本地隐私网关 sidecar</h3>
+        <div class="row" style="gap:18px;flex-wrap:wrap">
+          <span><span class="muted" data-i18n="sidecarCalls">经 sidecar 的调用</span> <b id="scCalls">—</b></span>
+          <span><span class="muted" data-i18n="sidecarCacheHits">其中缓存命中</span> <b id="scCacheHits">—</b></span>
+          <span><span class="muted" data-i18n="sidecarLastSeen">最近一次</span> <b id="scLastSeen">—</b></span>
+        </div>
+        <div id="scAgents" class="muted" style="margin-top:6px"></div>
+        <p class="hint" style="margin-top:10px" data-i18n="sidecarHint">员工本机运行 ag-guard（默认 127.0.0.1:18765），Agent 的模型地址指过去：ag-guard -gateway http://网关地址；ag-setup --sidecar 可自动写好该配置。请求离机前本地检测：违禁词直接拦下、PII/凭据脱敏成占位符（映射只存本机），响应回程本地还原；网关侧二次检测兜底。本地拦截只记在员工本机（ag-guard /status），不上报——此处只统计经 sidecar 到达网关的调用。</p>
+        <span id="scMsg" class="msg"></span>
+      </div>
     </section>
 
     <!-- tokens -->
@@ -443,6 +453,8 @@ const I18N = {
     time:"时间",actor:"操作者",action:"动作",level:"等级",decision:"处置",
     deviceTitle:"设备接入",deviceDesc:"员工在终端运行 ag-setup 获得设备码，管理员在此批准后，该设备上的 Agent 即接入企业网关。",deviceApprove:"批准设备码",deviceCode:"设备码",deviceName:"设备名称",approveBtn:"批准",
     deviceHint:"批准后员工端会自动拿到统一令牌（30 天有效），令牌绑定员工、设备与 Agent 等级，全部调用经网关审计。",
+    sidecarTitle:"本地隐私网关 sidecar",sidecarCalls:"经 sidecar 的调用",sidecarCacheHits:"其中缓存命中",sidecarLastSeen:"最近一次",
+    sidecarHint:"员工本机运行 ag-guard（默认 127.0.0.1:18765），Agent 的模型地址指过去：ag-guard -gateway http://网关地址；ag-setup --sidecar 可自动写好该配置。请求离机前本地检测：违禁词直接拦下、PII/凭据脱敏成占位符（映射只存本机），响应回程本地还原；网关侧二次检测兜底。本地拦截只记在员工本机（ag-guard /status），不上报——此处只统计经 sidecar 到达网关的调用。",
     tokensTitle:"令牌与限流",tokensDesc:"每个接入令牌的速率限制（RPM / TPM）与本月用量；0 表示使用等级默认值。",user:"用户",tier:"等级",used:"已用",expires:"过期",
     tokensHint:"等级默认：受管级 60 RPM / 100000 TPM，自带级 20 RPM / 20000 TPM。修改后即时生效并写入审计。",
     attestTitle:"Agent 证明",attestDesc:"受管 Agent 登录时上报版本 / 配置哈希 / 插件清单，平台校验后才发受管级令牌；不符自动降级为自带级并告警。",addAttestPolicy:"添加证明策略",attestPolicyList:"证明策略",attestReports:"最近证明记录",minVersion:"最低版本",requireReport:"要求证明",requireGuard:"要求守卫",allowedConfigHashes:"允许的配置哈希（逗号分隔，空为不限）",allowedPlugins:"允许的插件（逗号分隔，空为不限）",blockedPlugins:"禁用的插件（逗号分隔）",verdict:"裁决",attested:"证明",
@@ -479,6 +491,8 @@ const I18N = {
     time:"Time",actor:"Actor",action:"Action",level:"Level",decision:"Decision",
     deviceTitle:"Device access",deviceDesc:"An employee runs ag-setup and gets a device code; once an admin approves it here, that device's agents join the enterprise gateway.",deviceApprove:"Approve device code",deviceCode:"Device code",deviceName:"Device name",approveBtn:"Approve",
     deviceHint:"Approval issues a unified token (30 days) bound to the employee, device and agent tier; all calls are audited by the gateway.",
+    sidecarTitle:"Local privacy gateway sidecar",sidecarCalls:"Calls via sidecar",sidecarCacheHits:"of which cache hits",sidecarLastSeen:"Last seen",
+    sidecarHint:"Employees run ag-guard on their machine (default 127.0.0.1:18765) and point the agent's model URL at it: ag-guard -gateway http://gateway-address; ag-setup --sidecar writes that config automatically. Before a request leaves the machine it is scanned locally: banned words are blocked on the spot, PII/credentials are replaced with placeholders (the mapping never leaves the machine), and responses are restored on the way back; the gateway re-scans as a second layer. Local blocks are only recorded on the employee machine (ag-guard /status) and are not reported — this card counts only calls that reached the gateway through a sidecar.",
     tokensTitle:"Tokens & rate limits",tokensDesc:"Per-token rate limits (RPM / TPM) and this month's usage; 0 means the tier default.",user:"User",tier:"Tier",used:"Used",expires:"Expires",
     tokensHint:"Tier defaults: managed 60 RPM / 100000 TPM, BYOA 20 RPM / 20000 TPM. Changes apply immediately and are audited.",
     attestTitle:"Agent attestation",attestDesc:"A managed agent reports its version / config hash / plugin list at login; the platform verifies it before issuing a managed-tier token. Failures are downgraded to BYOA and alerted.",addAttestPolicy:"Add attestation policy",attestPolicyList:"Attestation policies",attestReports:"Recent attestation records",minVersion:"Min version",requireReport:"Require report",requireGuard:"Require guard",allowedConfigHashes:"Allowed config hashes (comma-separated, empty = any)",allowedPlugins:"Allowed plugins (comma-separated, empty = any)",blockedPlugins:"Blocked plugins (comma-separated)",verdict:"Verdict",attested:"Attested",
@@ -549,7 +563,7 @@ function go(id){ current = id; showPage(id); }
 function showPage(id){
   document.querySelectorAll(".page").forEach(p=>p.classList.toggle("active", p.id==="page-"+id));
   document.querySelectorAll(".navItem").forEach(n=>n.classList.toggle("active", n.getAttribute("data-nav")===id));
-  const loaders = {dashboard:loadDashboard, stats:()=>{loadStats(); loadCache(); loadBudgets();}, audit:loadAudit, tokens:loadTokens, attest:loadAttest, channels:loadChannels,
+  const loaders = {dashboard:loadDashboard, stats:()=>{loadStats(); loadCache(); loadBudgets();}, audit:loadAudit, device:loadSidecar, tokens:loadTokens, attest:loadAttest, channels:loadChannels,
     kb:loadFolders, skills:loadSkills, prompts:loadPrompts, upstreams:loadUpstreams, resttools:loadRESTTools, alerts:loadAlerts};
   if(loaders[id]) loaders[id]();
 }
@@ -701,6 +715,14 @@ async function approve(){
   try{ await api("/api/device/approve",{method:"POST",body:JSON.stringify({code:dcode.value.trim(),device_name:dname.value})});
     setMsg("dmsg", "✓ approved"); toast("✓ approved"); loadAudit();
   }catch(e){ setMsg("dmsg", e.message, false); }
+}
+async function loadSidecar(){
+  try{ const d = await api("/api/sidecar/stats");
+    document.getElementById("scCalls").textContent = fmtNum(d.sidecar_calls||0);
+    document.getElementById("scCacheHits").textContent = fmtNum(d.sidecar_cache_hits||0);
+    document.getElementById("scLastSeen").textContent = d.last_seen ? timeShort(d.last_seen) : "—";
+    document.getElementById("scAgents").textContent = (d.by_agent||[]).map(a=>a.agent_type+" × "+fmtNum(a.calls)).join(" · ");
+  }catch(e){ setMsg("scMsg", e.message, false); }
 }
 async function loadTokens(){
   try{ const d = await api("/api/tokens");

@@ -18,12 +18,15 @@ build:
 	mkdir -p dist
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/agentgate ./cmd/agentgate
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w" -o dist/ag-setup ./cmd/ag-setup
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w" -o dist/ag-guard ./cmd/ag-guard
 	@echo "dist/agentgate ($(VERSION))"
 
 release:
 	mkdir -p dist
 	for arch in amd64 arm64; do \
 	  CGO_ENABLED=0 GOOS=linux GOARCH=$$arch $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/agentgate-linux-$$arch ./cmd/agentgate || exit 1; \
+	  CGO_ENABLED=0 GOOS=linux GOARCH=$$arch $(GO) build -trimpath -ldflags "-s -w" -o dist/ag-guard-linux-$$arch ./cmd/ag-guard || exit 1; \
+	  CGO_ENABLED=0 GOOS=linux GOARCH=$$arch $(GO) build -trimpath -ldflags "-s -w" -o dist/ag-setup-linux-$$arch ./cmd/ag-setup || exit 1; \
 	done
 
 test:
@@ -31,7 +34,10 @@ test:
 
 smoke: build
 	@AGENTGATE_MASTER_KEY=make-smoke-master-key AGENTGATE_DEMO=1 AGENTGATE_DATA=$$(mktemp -d) AGENTGATE_ADDR=127.0.0.1:8799 ./dist/agentgate & \
-	SRV=$$!; sleep 2; AGENTGATE_BASE=http://127.0.0.1:8799 python3 e2e/smoke.py; RC=$$?; kill $$SRV; exit $$RC
+	SRV=$$!; sleep 2; \
+	AGENTGATE_GATEWAY=http://127.0.0.1:8799 AGENTGATE_GUARD_BANNED_WORDS=test_sensitive ./dist/ag-guard -listen 127.0.0.1:18765 & \
+	GUARD=$$!; sleep 1; \
+	AGENTGATE_BASE=http://127.0.0.1:8799 AGENTGATE_SIDECAR=http://127.0.0.1:18765 python3 e2e/smoke.py; RC=$$?; kill $$SRV $$GUARD; exit $$RC
 
 image:
 	docker build --build-arg VERSION=$(VERSION) -t agentgate:$(VERSION) .

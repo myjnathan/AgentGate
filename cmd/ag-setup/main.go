@@ -11,6 +11,10 @@
 // The platform contract never depends on these adapters; they only
 // write configuration. Any agent can also be configured manually:
 // model base URL = <server>/v1, MCP URL = <server>/mcp, token = ag_at_…
+//
+// With --sidecar, the agent's model base URL points at the local
+// privacy gateway (ag-guard, backlog F15) instead of the enterprise
+// gateway directly; ag-guard must be running on the machine.
 package main
 
 import (
@@ -38,7 +42,22 @@ func main() {
 	version := flag.String("version", "0.1.0", "agent version reported for attestation")
 	plugins := flag.String("plugins", "", "installed plugins, comma-separated")
 	guard := flag.Bool("guard", false, "report that egress guard rules are applied")
+	// Sidecar (backlog F15): route model traffic through the local
+	// privacy gateway instead of talking to the enterprise gateway
+	// directly. Implies -guard (the sidecar IS the guard) and writes
+	// the sidecar URL as the agent's model base URL.
+	sidecar := flag.Bool("sidecar", false, "route model traffic through the local privacy gateway (ag-guard)")
+	sidecarURL := flag.String("sidecar-url", "http://127.0.0.1:18765", "local sidecar base URL")
 	flag.Parse()
+
+	// The model base the agent will use: the sidecar when requested,
+	// the gateway directly otherwise.
+	modelBase := *server + "/v1"
+	guardApplied := *guard
+	if *sidecar {
+		modelBase = strings.TrimSuffix(*sidecarURL, "/") + "/v1"
+		guardApplied = true
+	}
 
 	// 1. Start device code.
 	var start struct {
@@ -54,7 +73,7 @@ func main() {
 	// submission does not stop the login: the platform decides at
 	// approval time (a managed request without a passing report is
 	// downgraded to BYOA, not refused).
-	submitAttestation(*server, start.Code, start.Secret, *agent, *tier, *version, *plugins, *guard)
+	submitAttestation(*server, start.Code, start.Secret, *agent, *tier, *version, *plugins, guardApplied, modelBase)
 	fmt.Println("等待批准中…")
 
 	// 2. Poll until approved.
@@ -85,7 +104,7 @@ approved:
 	home, _ := os.UserHomeDir()
 	cfg := map[string]any{
 		"server":        *server,
-		"model_base":    *server + "/v1",
+		"model_base":    modelBase,
 		"mcp_url":       *server + "/mcp",
 		"token":         token,
 		"agent_type":    *agent,
@@ -113,7 +132,10 @@ approved:
 	for _, p := range wrote {
 		fmt.Println("  wrote:", p)
 	}
-	fmt.Println("完成。今后在你的 Agent 中：模型地址指向 " + *server + "/v1，MCP 指向 " + *server + "/mcp。")
+	fmt.Println("完成。今后在你的 Agent 中：模型地址指向 " + modelBase + "，MCP 指向 " + *server + "/mcp。")
+	if *sidecar {
+		fmt.Println("模型流量经本地隐私网关 ag-guard 脱敏后才离开本机；请确认 ag-guard 正在运行（ag-guard -gateway " + *server + "），否则模型调用会失败。")
+	}
 }
 
 // submitAttestation reports this agent's evidence for its device-code
@@ -121,8 +143,8 @@ approved:
 // configuration ag-setup is about to write, minus the token (which
 // does not exist yet) — it proves the agent was configured from the
 // enterprise template, and it never contains a secret.
-func submitAttestation(server, code, secret, agent, tier, version, plugins string, guard bool) {
-	cfgHash := configHash(server, agent, tier)
+func submitAttestation(server, code, secret, agent, tier, version, plugins string, guard bool, modelBase string) {
+	cfgHash := configHash(server, agent, tier, modelBase)
 	var pluginList []string
 	for _, p := range strings.Split(plugins, ",") {
 		if p = strings.TrimSpace(p); p != "" {
@@ -162,9 +184,9 @@ func submitAttestation(server, code, secret, agent, tier, version, plugins strin
 // (server / model_base / mcp_url / agent_type / tier), the same
 // values ag-setup writes into the agent config file, minus the
 // token. json.Marshal sorts map keys, so the hash is deterministic.
-func configHash(server, agent, tier string) string {
+func configHash(server, agent, tier, modelBase string) string {
 	b, _ := json.Marshal(map[string]any{
-		"server": server, "model_base": server + "/v1", "mcp_url": server + "/mcp",
+		"server": server, "model_base": modelBase, "mcp_url": server + "/mcp",
 		"agent_type": agent, "tier": tier,
 	})
 	sum := sha256.Sum256(b)
