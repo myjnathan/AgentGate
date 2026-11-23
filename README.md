@@ -18,7 +18,7 @@ AgentGate 是一个**不绑定任何单一桌面 Agent** 的企业级平台（�
 | 模块 | 说明 |
 |---|---|
 | 模型网关 `/v1` | OpenAI 兼容；多渠道、按**数据密级**选路（密级不够的渠道根本收不到数据）；渠道带**信任类型**（签约云 / 专有云-VPC / 本地小模型）：机密默认脱敏后上云、绝密仅走本地模型、无合规通道时明确拦截；月度配额；上游 5xx/429 自动同级故障转移，连续失败 3 次熔断冷却 60s（分级约束高于可用性，绝不向更高密级渠道升级）；令牌级 RPM/TPM 限流，超限 429 + `Retry-After`；精确匹配响应缓存（仅公开/内部、无敏感内容的非流式回答，命中不计上游用量，`X-AgentGate-Cache: HIT/MISS`，管理台可关）；渠道可配多把上游密钥（上限 10 把），按轮询分摊调用，上游 401 时自动摘除该 key 并告警，同一请求用下一 key 继续（管理台可增/停用/恢复/删除） |
-| 防护管线 | 敏感词（Aho-Corasick）→ DLP 检测（凭据/PII/企业自定义词）→ 数据分级 → 拦截 / 脱敏（可逆占位符，响应还原）/ 分级路由；检测前先做归一化（全角/大小写/分隔符/零宽字符），`机 密`、`ＸＨ－２００`、`138-0000-0000` 这类变形内容仍能命中，只增命中、不减命中（见 [docs/dlp-normalization.md](docs/dlp-normalization.md)）；`tool_calls` 参数与正文同权过管线；流式响应同样还原占位符（分片切断的占位符经缓冲还原，不会半截泄漏） |
+| 防护管线 | 敏感词（Aho-Corasick）→ DLP 检测（凭据/PII/企业自定义词）→ 数据分级 → 拦截 / 脱敏（可逆占位符，响应还原）/ 分级路由；检测前先做归一化（全角/大小写/分隔符/零宽字符），`机 密`、`ＸＨ－２００`、`138-0000-0000` 这类变形内容仍能命中，只增命中、不减命中（见 [docs/dlp-normalization.md](docs/dlp-normalization.md)）；`tool_calls` 参数与正文同权过管线；流式响应同样还原占位符（分片切断的占位符经缓冲还原，不会半截泄漏）；规则 DLP 之上再加可选的语义复核层：本地样本匹配识别越狱 / 诱导 / 伪装 / 拆分外发等风险意图，可选深层调用自托管审核小模型（Qwen3Guard 式），绝密永不送审、复核先脱敏再送审，关闭后行为与此前完全一致（见 [docs/semantic-review.md](docs/semantic-review.md)） |
 | Agent 分级信任 | 受管级 / 自带级分级令牌；自带级禁止发送机密数据；设备码登录（`ag-setup` 一条命令接入）；企业 OIDC 登录（IdP 只认身份不授权限，新用户一律 employee，本地账号保留兜底，见 [docs/oidc-sso.md](docs/oidc-sso.md)）；Agent 证明（受管 Agent 登录时上报版本/配置哈希/插件清单，平台校验后才发受管级令牌，不符降级为自带级并告警，见 [docs/attestation.md](docs/attestation.md)）；终端持续盘点（ag-guard 每 60 秒心跳上报版本/配置哈希/插件清单，管理台「终端清单」页按部门/版本/在线状态筛选、配置漂移标红并告警；网关断网时 ag-guard 按缓存策略执行、高密级默认拦截，恢复后补报断网审计，见 [docs/terminal-inventory.md](docs/terminal-inventory.md)）；高密级调用例外审批（员工申请、管理员审批后发一次性放行凭证，仅限一次调用，违禁词拦截永不例外，绝密默认不可例外，见 [docs/exception-approval.md](docs/exception-approval.md)） |
 | 安装包分发 | 管理员上传或离线导入受管 Agent 安装包，平台托管、员工自助下载；SHA-256 校验并区分已校验 / 未校验，导入中断可断点续传，过期包一键清理；分发包的哈希可登记为 Agent 证明的基准值（未校验包不可登记）；双包结构：管理包（agentgate 服务端，`make bundle`）与用户包（ag-guard + ag-setup，按策略生成，`make bundle-user` 或管理台生成，见 [docs/package-distribution.md](docs/package-distribution.md)） |
 | 组织同步 | 从钉钉 / 飞书 / 企业微信同步部门与员工目录（与 OIDC 并行）；同步只建 / 更新账号与部门映射，不授予受管级权限；邮箱自动关联已有账号，本地已禁用不自动恢复，目录里没看到 ≠ 离职（只有平台明确说找不到时才禁用并吊销会话）；第三方身份可手动绑定（须以同步快照为准），应用密钥只加密存储、不回显（见 [docs/org-sync.md](docs/org-sync.md)） |
@@ -32,7 +32,7 @@ AgentGate 是一个**不绑定任何单一桌面 Agent** 的企业级平台（�
 | 部门预算 | 部门月度预算硬上限（自然月 UTC）：本月花费达到上限后网关以 `429 department_budget_exceeded` 拒绝后续调用；花费达告警阈值时每月发一次提醒（见 [docs/cost-budgets.md](docs/cost-budgets.md)） |
 | 告警 Webhook | 拦截、密级越权、渠道熔断、账号锁定、Agent 证明降级触发结构化告警，可推送到企业微信/钉钉/飞书机器人与通用 Webhook；签名可选（通用：`X-AgentGate-Signature` HMAC 头；企微/钉钉/飞书：`timestamp` + `sign` 查询参数）；投递失败最多重试 3 次后放弃并记审计；管理台可配、可测 |
 | 可观测性 | 网关与 MCP 调用产生脱敏的 trace 与指标（OTLP/HTTP JSON），默认关闭；设置 `OTEL_EXPORTER_OTLP_ENDPOINT`（如 `http://localhost:4318`）后导出到 Jaeger / Tempo / Phoenix 等后端；Span 只含模型、渠道、密级、处置、Token 数等元数据，绝不含提示词、工具参数或模型回复；管理台可查看导出状态并一键测试连通性（见 [docs/opentelemetry.md](docs/opentelemetry.md)） |
-| 管理台 `/` | 内嵌 Web UI（中英双语），渠道/健康状态/用量统计/审计/合规报表/设备批准/终端清单/例外审批/令牌限流/告警 Webhook/MCP 联邦上游/REST → MCP 工具/文件夹知识库/专题知识包/安装包分发/组织同步配置/用户与角色 |
+| 管理台 `/` | 内嵌 Web UI（中英双语），渠道/健康状态/用量统计/审计/合规报表/设备批准/终端清单/例外审批/令牌限流/告警 Webhook/MCP 联邦上游/REST → MCP 工具/文件夹知识库/专题知识包/安装包分发/组织同步配置/用户与角色/语义复核 |
 
 ## 快速开始（PoC 演示模式）
 

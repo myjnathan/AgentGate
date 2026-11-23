@@ -254,6 +254,7 @@ func main() {
 			Model: os.Getenv("AGENTGATE_SEMANTIC_MODEL")}, nil))
 	}
 	rest.SetCache(gw.Cache())
+	rest.SetSemReviewStats(gw.SemReviewStats)
 	rest.SetAlertDispatcher(dispatcher)
 	// Terminal inventory (backlog F23): the sidecar policy snapshot
 	// is the gateway's own word lists, so a sidecar that refreshes

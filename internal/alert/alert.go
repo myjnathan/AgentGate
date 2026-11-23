@@ -98,6 +98,9 @@ func FromEvent(ev audit.Event) (Alert, bool) {
 	case ev.Kind == "exception" && ev.Action == "exception_approved":
 		a.Severity = "warning"
 		a.Title = "高密级调用例外申请已批准（一次性放行凭证已发）"
+	case ev.Kind == "semantic_review" && ev.Action == "semantic_review_alert":
+		a.Severity = "warning"
+		a.Title = "语义复核告警：请求疑似风险意图，已放行并记录"
 	case ev.Kind == "auth" && ev.Action == "account_locked":
 		a.Severity = "critical"
 		a.Title = "账号因多次登录失败被锁定"
