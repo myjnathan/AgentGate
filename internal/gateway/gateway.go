@@ -59,6 +59,17 @@ type Policy struct {
 	// default 1h, see cache.DefaultTTL). The cache itself is
 	// in-memory and resets on restart, like channel health (F1).
 	CacheTTL time.Duration
+	// MaxTransientRetries is the same-key retry budget for transient
+	// failures (429/5xx/network error) per key (0 = default 2, so 3
+	// attempts per key before the channel is abandoned — backlog
+	// F33, Bifrost's failure-classified retries). Auth failures
+	// (401/403) never consume this budget: they rotate to the next
+	// key at once. Each fallback channel gets its own full budget.
+	MaxTransientRetries int
+	// RetryBackoff is the base wait before a transient retry
+	// (0 = default 100ms); the wait doubles per retry, capped at 2s,
+	// plus up to 50% jitter.
+	RetryBackoff time.Duration
 	// Tracer is the OpenTelemetry exporter (F16); nil or disabled
 	// means no tracing. Spans carry metadata only — never prompt or
 	// response text (see docs/opentelemetry.md).
@@ -468,14 +479,6 @@ func (g *Gateway) channelsBlockedByTrust(model string, level store.DataLevel, ig
 		}
 	})
 	return blocked
-}
-
-// retryableStatus reports whether an upstream status is worth failing
-// over for: 5xx and 429. Other 4xx (auth, not found, content policy)
-// are the caller's fault and must not trigger a retry — mirroring
-// LiteLLM's per-error-type retry classification.
-func retryableStatus(code int) bool {
-	return code == http.StatusTooManyRequests || code >= 500
 }
 
 // anyChannelForModel reports whether any enabled channel serves model.
@@ -920,14 +923,22 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// ---- Forward, with same-level failover ----
+	// ---- Forward, with failure-classified retries (F33) ----
 	// Failover may only move between channels whose MaxDataLevel is not
 	// higher than the first pick's: data-level constraints beat
 	// availability, so a request never "upgrades" to a more privileged
 	// channel (or "downgrades" to a less privileged one) just because
 	// the first pick failed. Since candidates are sorted least-
 	// privileged first, the chain is the leading run of channels at the
-	// first pick's level.
+	// first pick's level. Classification never changes this rule.
+	//
+	// Per channel, each key gets its own transient-retry budget
+	// (same key, exponential backoff); auth failures rotate to the
+	// next key at once with no backoff and no same-key retry. A
+	// channel is abandoned only when its transient budget is spent
+	// or its keys are all auth-dead — and only then does the F1
+	// failure counter move (one count per failed call, not per wire
+	// attempt, so cooldown still means N consecutive failed calls).
 	firstLevel := candidates[0].MaxDataLevel
 	var chain []*store.Channel
 	for _, ch := range candidates {
@@ -943,12 +954,18 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// because all of its keys are disabled — that deserves an explicit
 	// error (add a key or re-enable one), not a generic 502.
 	noEnabledKey := false
+	// attempts counts wire attempts across the whole call, for the
+	// audit trail numbering and the model_call detail.
+	attempts := 0
 	for i, ch := range chain {
 		// Try this channel's keys in rotation order (F12): a 401 means
 		// this key is dead, not the channel — disable the key and retry
-		// the same in-flight request with the next key. Other failures
-		// keep the existing F1 semantics (channel-level failover):
-		// 429/5xx is the channel or upstream being unwell, not one key.
+		// the same in-flight request with the next key. A 403 rotates
+		// the same way but does not disable the key (it may only lack
+		// scope for this model). Other failures keep the F1 semantics
+		// (channel-level failover), now with same-key retries first:
+		// 429/5xx/network error is the channel or upstream being
+		// unwell, not one key.
 		enabled := ch.EnabledKeyCount()
 		if enabled == 0 {
 			// Every key on this channel is disabled (upstream rejected
@@ -957,6 +974,10 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			noEnabledKey = true
 			continue
 		}
+		// failed is set when this channel had a transient failure
+		// this call; failReason names the hop for the F1 audit event.
+		failed := false
+		failReason := ""
 		tried := 0
 		for tried < enabled {
 			keyIdx, enc, ok := g.nextKey(ch)
@@ -969,63 +990,114 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue // undecryptable key: try the next one
 			}
+			masked := g.keyMasked(ch, keyIdx)
 			upURL := strings.TrimSuffix(ch.BaseURL, "/") + "/chat/completions"
-			upReq, err := http.NewRequestWithContext(context.WithoutCancel(r.Context()), http.MethodPost, upURL, bytes.NewReader(body))
-			if err != nil {
-				writeErr(w, http.StatusBadGateway, "bad_gateway", "cannot build upstream request")
-				return
-			}
-			upReq.Header.Set("Content-Type", "application/json")
-			upReq.Header.Set("Authorization", "Bearer "+apiKey)
-			// Trace context (F16): the upstream joins this call's
-			// trace when tracing is on; a no-op span yields "".
-			if tp := span.TraceParent(); tp != "" {
-				upReq.Header.Set("traceparent", tp)
-			}
-			if req.Stream {
-				upReq.Header.Set("Accept", "text/event-stream")
-			}
-			r2, err := g.client.Do(upReq)
-			if err != nil {
-				g.noteFailure(ch)
-				if i+1 < len(chain) {
-					g.auditFallback(user, tok, req.Model, level, ch, chain[i+1], "upstream_unavailable")
+			// Transient failures retry on this same key with backoff
+			// (F33); the attempt loop only ends early for a served
+			// response, an auth rotation, or a spent budget.
+			var r2 *http.Response
+			abandoned := false
+			for attempt := 0; attempt <= g.maxTransientRetries(); attempt++ {
+				if attempt > 0 {
+					time.Sleep(g.retryBackoff(attempt - 1))
+				}
+				attempts++
+				start := time.Now()
+				upReq, err := http.NewRequestWithContext(context.WithoutCancel(r.Context()), http.MethodPost, upURL, bytes.NewReader(body))
+				if err != nil {
+					writeErr(w, http.StatusBadGateway, "bad_gateway", "cannot build upstream request")
+					return
+				}
+				upReq.Header.Set("Content-Type", "application/json")
+				upReq.Header.Set("Authorization", "Bearer "+apiKey)
+				// Trace context (F16): the upstream joins this call's
+				// trace when tracing is on; a no-op span yields "".
+				if tp := span.TraceParent(); tp != "" {
+					upReq.Header.Set("traceparent", tp)
+				}
+				if req.Stream {
+					upReq.Header.Set("Accept", "text/event-stream")
+				}
+				r2, err = g.client.Do(upReq)
+				if err != nil {
+					// No response started, so retrying is safe: no
+					// bytes have been written to the caller yet.
+					g.auditAttempt(user, tok, req.Model, level, attempts, ch, masked, classTransient, "transport_error", time.Since(start))
+					failed = true
+					failReason = "upstream_unavailable"
+					if attempt < g.maxTransientRetries() {
+						continue
+					}
+					abandoned = true
+					r2 = nil
+					break
+				}
+				class := classifyStatus(r2.StatusCode)
+				g.auditAttempt(user, tok, req.Model, level, attempts, ch, masked, class, strconv.Itoa(r2.StatusCode), time.Since(start))
+				switch class {
+				case classAuth:
+					// The key is the problem, not the channel: a 401
+					// proves the key dead (disable it, F12); a 403
+					// may only be a scope gap, so the key stays
+					// enabled. Either way, never retry the same key.
+					// When it was the last enabled key, return the
+					// upstream auth error itself — the caller sees
+					// the real auth failure, not a rewritten 502.
+					if r2.StatusCode == http.StatusUnauthorized {
+						g.disableKey(ch, keyIdx, "upstream_401")
+					}
+					if tried < enabled {
+						r2.Body.Close()
+						r2 = nil
+					}
+				case classTransient:
+					failed = true
+					failReason = fmt.Sprintf("upstream_%d", r2.StatusCode)
+					if attempt < g.maxTransientRetries() {
+						r2.Body.Close()
+						r2 = nil
+						continue
+					}
+					// Budget spent: abandon the channel for the next
+					// same-level channel — the upstream is the
+					// problem, not this key, so the next key on the
+					// same channel would not help either.
+					r2.Body.Close()
+					r2 = nil
+					abandoned = true
+				default:
+					// Success, or a client error (the request's
+					// fault): the response is returned as-is and the
+					// channel proved healthy, so the F1 consecutive
+					// counter resets.
+					if i > 0 {
+						fallbackFrom = chain[0].Name
+					}
+					g.recordSuccess(ch.ID)
 				}
 				break
 			}
-			if r2.StatusCode == http.StatusUnauthorized {
-				// The key is invalid or revoked: remove just this key
-				// (F12) and retry the same request with the next one.
-				// When it was the last enabled key, return the
-				// upstream 401 itself — the caller sees the real
-				// auth failure, not a rewritten 502.
-				g.disableKey(ch, keyIdx, "upstream_401")
-				if tried < enabled {
-					r2.Body.Close()
-					continue
-				}
+			if r2 != nil {
 				resp = r2
 				channel = ch
 				break
 			}
-			if retryableStatus(r2.StatusCode) {
-				g.noteFailure(ch)
-				if i+1 < len(chain) {
-					g.auditFallback(user, tok, req.Model, level, ch, chain[i+1], fmt.Sprintf("upstream_%d", r2.StatusCode))
-				}
-				r2.Body.Close()
+			if abandoned {
 				break
 			}
-			resp = r2
-			channel = ch
-			if i > 0 {
-				fallbackFrom = chain[0].Name
-			}
-			g.recordSuccess(ch.ID)
-			break
+			// Auth failure with more keys: rotate to the next key.
 		}
 		if resp != nil {
 			break
+		}
+		if failed {
+			// One F1 failure per abandoned channel per call (the
+			// per-attempt trail is already in the audit log), and
+			// one hop event when another channel follows.
+			g.noteFailure(ch)
+			if i+1 < len(chain) {
+				g.auditFallback(user, tok, req.Model, level, ch, chain[i+1], failReason)
+			}
 		}
 	}
 	if resp == nil {
@@ -1091,6 +1163,12 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	if fallbackFrom != "" {
 		detail["fallback_from"] = fallbackFrom
+	}
+	if attempts > 1 {
+		// Retried calls carry their wire-attempt count on the call
+		// event itself; the per-attempt trail is the forward_attempt
+		// events (F33).
+		detail["attempts"] = strconv.Itoa(attempts)
 	}
 	ts.decision, ts.channel, ts.level, ts.tokens = decision, channel.Name, level.String(), usedTokens
 	if v := rec.Header().Get("X-AgentGate-Cache"); v != "" {

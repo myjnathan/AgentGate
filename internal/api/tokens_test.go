@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/myjnathan/agentgate/internal/api"
 	"github.com/myjnathan/agentgate/internal/audit"
@@ -204,5 +205,61 @@ func TestTokensEndpoints(t *testing.T) {
 	}
 	if code, _ := call("PATCH", "/api/tokens/"+tokID, empSess, map[string]any{"rpm_limit": 1}); code != 403 {
 		t.Fatalf("employee patch: %d, want 403", code)
+	}
+}
+
+// TestTokensListOrderIsCreationOrder pins the F33-round baseline
+// repair: GET /api/tokens used to iterate the store map, so its
+// order was random per request — the smoke test's F3 section picks
+// the first claude-code token, and with three such tokens that pick
+// was a 1-in-3 lottery (the "rpm limit enforced at 6th call"
+// failure). The list is now sorted by creation time.
+func TestTokensListOrderIsCreationOrder(t *testing.T) {
+	srv, st, adminSess, _ := setupTokensAPI(t)
+	// The setup minted one token; read its creation time and add two
+	// older tokens with IDs that sort after it, so only a
+	// creation-time sort returns them in the right order.
+	var mintedID string
+	var mintedAt time.Time
+	var liID string
+	st.Read(func(s *store.State) {
+		for _, u := range s.Users {
+			if u.Username == "lixiaofeng" {
+				liID = u.ID
+			}
+		}
+		for id, tk := range s.Tokens {
+			mintedID, mintedAt = id, tk.CreatedAt
+		}
+	})
+	if mintedID == "" || liID == "" {
+		t.Fatal("setup did not mint a token")
+	}
+	st.WithLock(func(s *store.State) {
+		s.Tokens["tok_zz_old"] = &store.APIToken{ID: "tok_zz_old", UserID: liID, AgentType: "dsh", Tier: store.TierManaged, CreatedAt: mintedAt.Add(-2 * time.Minute)}
+		s.Tokens["tok_aa_old"] = &store.APIToken{ID: "tok_aa_old", UserID: liID, AgentType: "dsh", Tier: store.TierManaged, CreatedAt: mintedAt.Add(-time.Minute)}
+	})
+	req, _ := http.NewRequest("GET", srv.URL+"/api/tokens", nil)
+	req.Header.Set("Authorization", "Bearer "+adminSess)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var d struct {
+		Tokens []tokenShape `json:"tokens"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&d)
+	if resp.StatusCode != 200 {
+		t.Fatalf("GET /api/tokens = %d, want 200", resp.StatusCode)
+	}
+	if len(d.Tokens) != 3 {
+		t.Fatalf("tokens = %d, want 3", len(d.Tokens))
+	}
+	want := []string{"tok_zz_old", "tok_aa_old", mintedID}
+	for i, id := range want {
+		if d.Tokens[i].ID != id {
+			t.Fatalf("tokens[%d].ID = %q, want %q (creation order)", i, d.Tokens[i].ID, id)
+		}
 	}
 }

@@ -9,6 +9,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -50,6 +51,17 @@ func (a *API) listTokens(w http.ResponseWriter, r *http.Request, u *store.User) 
 				MonthlyCap: tk.MonthlyCap, UsedTokens: tk.UsedTokens,
 				ExpiresAt: tk.ExpiresAt, Revoked: tk.Revoked, CreatedAt: tk.CreatedAt})
 		}
+	})
+	// Sorted by creation time (ID breaks ties): the store is a map,
+	// so unsorted iteration would hand every caller a different
+	// order — the smoke test's F3 section picks the first
+	// claude-code token, and with three such tokens that pick was a
+	// 1-in-3 lottery until this sort (see DEVLOG, F33 round).
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"tokens": out})
 }

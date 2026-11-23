@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -44,6 +45,17 @@ func textOf(raw json.RawMessage) string {
 	}
 	return ""
 }
+
+// failTwice counts requests carrying the [mock-fail-500-twice]
+// marker, so the smoke test can exercise gateway retries end to
+// end: the first two matching requests fail with 500, later ones
+// succeed. Test hook only — no production path sends this marker,
+// and the counter is process-lifetime (the smoke server starts
+// fresh each run).
+var (
+	failTwiceMu sync.Mutex
+	failTwice   int
+)
 
 func Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -89,6 +101,21 @@ func Handler() http.Handler {
 			}
 			for _, tc := range m.ToolCalls {
 				toolArgs = append(toolArgs, tc.Function.Arguments)
+			}
+		}
+		// Test hook (backlog F33): a request whose last user message
+		// carries [mock-fail-500-twice] fails with 500 the first two
+		// times, then succeeds — the gateway's same-key retry then
+		// serves the third attempt.
+		if strings.Contains(last, "[mock-fail-500-twice]") {
+			failTwiceMu.Lock()
+			failTwice++
+			n := failTwice
+			failTwiceMu.Unlock()
+			if n <= 2 {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"error":{"code":"mock_transient_500"}}`))
+				return
 			}
 		}
 		// The reply echoes the last user message and any tool_calls
