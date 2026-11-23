@@ -172,3 +172,40 @@ func TestKnowledgePackagesMCP(t *testing.T) {
 		t.Fatalf("references = %+v withheld = %v, want the withdrawn reference withheld by name", got.References, got.Withheld)
 	}
 }
+
+// TestKnowledgePackageListGetAgreement (F31): kb_pack_list and
+// kb_pack_get apply the same rule — every package the list advertises
+// to a caller is readable by that caller, and nothing the list hides
+// is readable. The two sides share the published/level/scope
+// predicate, so this test pins that they cannot drift apart.
+func TestKnowledgePackageListGetAgreement(t *testing.T) {
+	e := setup(t)
+	seedTestPackages(t, e)
+	for _, tok := range []string{e.byoaTok, e.mgdTok} {
+		text := resultText(t, e.callTool(t, tok, "kb_pack_list", map[string]any{}))
+		var list packListResult
+		if err := json.Unmarshal([]byte(text), &list); err != nil {
+			t.Fatalf("kb_pack_list is not JSON: %v (%s)", err, text)
+		}
+		for _, p := range list.Packages {
+			if r := e.callTool(t, tok, "kb_pack_get", map[string]any{"name": p.Name}); r.Result == nil || r.Result.IsError {
+				t.Fatalf("listed package %q is not readable: %+v", p.Name, r)
+			}
+		}
+		// And the hidden ones stay hidden at get time too.
+		for _, hidden := range []string{"vendor_onboarding", "draft_pack"} {
+			listed := false
+			for _, p := range list.Packages {
+				if p.Name == hidden {
+					listed = true
+				}
+			}
+			if listed {
+				continue
+			}
+			if r := e.callTool(t, tok, "kb_pack_get", map[string]any{"name": hidden}); r.Result == nil || !r.Result.IsError {
+				t.Fatalf("unlisted package %q is readable at kb_pack_get", hidden)
+			}
+		}
+	}
+}

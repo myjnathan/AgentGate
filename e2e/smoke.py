@@ -438,16 +438,21 @@ def main():
     names = [t["name"] for t in listed.get("result", {}).get("tools", [])]
     check("federated tools listed namespaced for BYOA",
           "hr.leave_balance" in names and "ops.leave_balance" not in names)
+    # F31: the tier-gated built-in tool is hidden from the BYOA list
+    # (same rule as the call), not merely refused at call time.
+    check("BYOA tools/list hides managed-only kb_get", "kb_get" not in names)
     listed2 = mcp_rpc(tok2, "tools/list")
     names2 = [t["name"] for t in listed2.get("result", {}).get("tools", [])]
     check("managed token sees managed-only upstream tools", "ops.leave_balance" in names2)
+    check("managed tools/list includes kb_get", "kb_get" in names2)
 
     res = mcp_rpc(tok, "tools/call", {"name": "hr.leave_balance", "arguments": {}})
     text = res.get("result", {}).get("content", [{}])[0].get("text", "")
     check("federated tool call forwards to upstream", '"balance": 5' in text)
     res = mcp_rpc(tok, "tools/call", {"name": "ops.leave_balance", "arguments": {}})
-    check("BYOA call to managed-only upstream denied",
-          res.get("error", {}).get("code") == -32003)
+    check("BYOA call to managed-only upstream denied as unknown tool",
+          res.get("error", {}).get("code") == -32602
+          and res.get("error", {}).get("message") == "unknown tool")
     res = mcp_rpc(tok, "tools/call", {"name": "hr.leave_balance", "arguments": {"note": "XH-200"}})
     check("confidential args blocked from internal-only upstream",
           res.get("error", {}).get("code") == -32004)
@@ -552,7 +557,9 @@ def main():
     text = res.get("result", {}).get("content", [{}])[0].get("text", "")
     check("REST POST tool forwards JSON body", '"status": "submitted"' in text and '"days": 2' in text)
     res = mcp_rpc(tok, "tools/call", {"name": "rest.fake_request", "arguments": {"employee_id": "li", "days": 1}})
-    check("BYOA call to managed-only REST tool denied", res.get("error", {}).get("code") == -32003)
+    check("BYOA call to managed-only REST tool denied as unknown tool",
+          res.get("error", {}).get("code") == -32602
+          and res.get("error", {}).get("message") == "unknown tool")
     res = mcp_rpc(tok, "tools/call", {"name": "rest.fake_balance", "arguments": {"employee_id": "XH-200"}})
     check("confidential args blocked from internal-only REST tool", res.get("error", {}).get("code") == -32004)
     res = mcp_rpc(tok, "tools/call", {"name": "rest.fake_notice", "arguments": {}})

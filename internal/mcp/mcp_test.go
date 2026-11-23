@@ -310,9 +310,11 @@ func TestKBGetTierAuthorization(t *testing.T) {
 	e := setup(t)
 	// kb_register is a confidential document and kb_get requires the
 	// managed tier at tool level: a BYOA token must be denied outright.
+	// The tool is hidden from the BYOA list (F31), so the denial is
+	// indistinguishable from an unknown tool.
 	r := e.callTool(t, e.byoaTok, "kb_get", map[string]any{"doc_id": "kb_register"})
-	if r.Error == nil || r.Error.Code != -32003 {
-		t.Fatalf("BYOA kb_get: got %+v, want RPC error -32003 (tier insufficient)", r)
+	if r.Error == nil || r.Error.Code != -32602 || r.Error.Message != "unknown tool" {
+		t.Fatalf("BYOA kb_get: got %+v, want RPC error -32602 unknown tool", r)
 	}
 
 	// A managed-tier token may read the confidential document in full.
@@ -402,9 +404,11 @@ func TestFederatedToolCallForwards(t *testing.T) {
 
 func TestFederatedToolCallTierDenied(t *testing.T) {
 	e := setup(t)
+	// The tool is hidden from the BYOA list (F31), so the denial is
+	// indistinguishable from an unknown tool.
 	r := e.callTool(t, e.byoaTok, "ops.restart_service", map[string]any{})
-	if r.Error == nil || r.Error.Code != -32003 {
-		t.Fatalf("BYOA call to managed-only upstream: got %+v, want RPC error -32003", r)
+	if r.Error == nil || r.Error.Code != -32602 || r.Error.Message != "unknown tool" {
+		t.Fatalf("BYOA call to managed-only upstream: got %+v, want RPC error -32602 unknown tool", r)
 	}
 }
 
@@ -491,9 +495,52 @@ func TestRESTToolCallPOSTBody(t *testing.T) {
 
 func TestRESTToolCallTierDenied(t *testing.T) {
 	e := setup(t)
+	// The tool is hidden from the BYOA list (F31), so the denial is
+	// indistinguishable from an unknown tool.
 	r := e.callTool(t, e.byoaTok, "rest.fake_request", map[string]any{"employee_id": "li", "days": float64(1)})
-	if r.Error == nil || r.Error.Code != -32003 {
-		t.Fatalf("BYOA call to managed-only REST tool: got %+v, want RPC error -32003", r)
+	if r.Error == nil || r.Error.Code != -32602 || r.Error.Message != "unknown tool" {
+		t.Fatalf("BYOA call to managed-only REST tool: got %+v, want RPC error -32602 unknown tool", r)
+	}
+}
+
+// ---- F31: tools/list and tools/call apply the same rule ----
+
+func TestToolsListCallSameRule(t *testing.T) {
+	e := setup(t)
+
+	// The tier-gated built-in tool is hidden from the BYOA list
+	// (previously it was listed but refused at call time) and
+	// visible to managed callers.
+	byoa := e.listToolNames(t, e.byoaTok)
+	if hasName(byoa, "kb_get") {
+		t.Fatalf("BYOA tools/list must hide managed-only kb_get: %v", byoa)
+	}
+	mgd := e.listToolNames(t, e.mgdTok)
+	if !hasName(mgd, "kb_get") {
+		t.Fatalf("managed tools/list missing kb_get: %v", mgd)
+	}
+
+	// Every statically hidden tool answers exactly like an unknown
+	// tool when called directly — list filtering leaks nothing.
+	for _, hidden := range []string{"kb_get", "ops.restart_service", "rest.fake_request"} {
+		r := e.callTool(t, e.byoaTok, hidden, map[string]any{})
+		if r.Error == nil || r.Error.Code != -32602 || r.Error.Message != "unknown tool" {
+			t.Fatalf("BYOA call to hidden tool %q: got %+v, want RPC error -32602 unknown tool", hidden, r)
+		}
+	}
+
+	// Invariant: anything the list advertises must pass the static
+	// gate at call time — calling a listed tool with empty arguments
+	// may fail on argument validation, but never as "unknown tool".
+	// (rest.fake_balance with no arguments is the validation case:
+	// -32602 naming the missing field, not "unknown tool".)
+	for _, tok := range []string{e.byoaTok, e.mgdTok} {
+		for _, name := range e.listToolNames(t, tok) {
+			r := e.callTool(t, tok, name, map[string]any{})
+			if r.Error != nil && r.Error.Message == "unknown tool" {
+				t.Fatalf("listed tool %q for this tier is unknown at call time: %+v", name, r)
+			}
+		}
 	}
 }
 
@@ -811,9 +858,11 @@ func TestPromptGetTierDeniedAndUnknown(t *testing.T) {
 			Versions: []store.PromptVersion{{Version: 1, Content: "草稿 {{name}}",
 				Arguments: []store.PromptArgument{{Name: "name", Required: true}}}}}
 	})
+	// A managed-only prompt is hidden from the BYOA list (F31), so
+	// the get is indistinguishable from an unknown prompt.
 	r := e.getPrompt(t, e.byoaTok, "managed_only", map[string]any{"name": "李晓峰"}, "")
-	if r.Error == nil || r.Error.Code != -32003 {
-		t.Fatalf("BYOA get of managed-only prompt: got %+v, want RPC error -32003", r)
+	if r.Error == nil || r.Error.Code != -32602 || r.Error.Message != "unknown prompt" {
+		t.Fatalf("BYOA get of managed-only prompt: got %+v, want RPC error -32602 unknown prompt", r)
 	}
 	// A draft's existence must not leak through prompts/get.
 	r = e.getPrompt(t, e.byoaTok, "draft_one", map[string]any{"name": "李晓峰"}, "")
