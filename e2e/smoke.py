@@ -184,6 +184,26 @@ def main():
     s, stats = call("/api/stats", token=sess, method="GET")
     check("stats forbidden for employee", s == 403)
 
+    # F29: deformed sensitive content is still caught after
+    # normalization. It runs after the F2 stats check on purpose: the
+    # stats totals above are exact counts (3 calls / 2 blocked) for
+    # the smoke token's calls so far. A fresh BYOA token is used so
+    # the F3 RPM count on the smoke token stays exact too.
+    s, start29 = call("/api/setup/device/start", {"agent_type": "claude-code", "tier": "byoa"})
+    s, _ = call("/api/device/approve", {"code": start29["code"], "device_name": "ci-smoke-f29"}, token=sess)
+    s, poll29 = call("/api/setup/device/poll", {"code": start29["code"], "secret": start29["secret"]})
+    tok29 = poll29.get("token", "")
+    check("F29 token issued", s == 200 and tok29.startswith("ag_at_"))
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-eco", "messages": [{"role": "user", "content": "包含 test sensitive 内容"}]}, token=tok29)
+    check("F29 banned word split by space blocked", s == 400 and chat.get("error", {}).get("code") == "request_rejected")
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-eco", "messages": [{"role": "user", "content": "包含 test​sensitive 内容"}]}, token=tok29)
+    check("F29 banned word split by zero-width char blocked", s == 400 and chat.get("error", {}).get("code") == "request_rejected")
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-pro", "messages": [{"role": "user", "content": "XH 200 的进度如何"}]}, token=tok29)
+    check("F29 custom word split by space blocked for BYOA", s == 403 and chat.get("error", {}).get("code") == "data_level_forbidden")
+
     # F4: audit export (NDJSON + chain verification headers) and a
     # no-op archive. Export/archive events are Kind "admin", so they
     # do not disturb the stats totals checked above.
@@ -494,6 +514,10 @@ def main():
                    {"model": "mock-pro", "messages": [{"role": "user", "content": "请分析 XH-200 项目的进展"}]}, token=tok2)
     text = json.dumps(chat, ensure_ascii=False)
     check("managed confidential defaults to desensitized cloud", s == 200 and "XH-200" in text)
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-eco", "messages": [{"role": "user", "content": "我的手机号是１３８１２３４５６７８，帮我记下来"}]}, token=tok2)
+    text = json.dumps(chat, ensure_ascii=False)
+    check("F29 fullwidth phone redacted and restored", s == 200 and "１３８１２３４５６７８" in text and "<PII_" not in text)
     # Top-secret data (header-declared) only reaches the local model.
     s, chat = call("/v1/chat/completions",
                    {"model": "mock-pro", "messages": [{"role": "user", "content": "普通内容"}]}, token=tok2,
