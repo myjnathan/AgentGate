@@ -109,6 +109,8 @@ func failoverPolicy(cooldown time.Duration) gateway.Policy {
 		RedactForTier: map[store.Tier]bool{store.TierManaged: true},
 		FailThreshold: 3,
 		Cooldown:      cooldown,
+		// Retries are exercised, not waited on: 1ms base backoff.
+		RetryBackoff: time.Millisecond,
 	}
 }
 
@@ -119,8 +121,10 @@ func TestFailoverToSameLevelBackupOn5xx(t *testing.T) {
 	if code != 200 || !strings.Contains(body, "[upstream-b]") {
 		t.Fatalf("expected 200 from backup upstream b, got %d %s", code, body)
 	}
-	if got := up.hitCount("a"); got != 1 {
-		t.Fatalf("expected primary a hit once, got %d", got)
+	// F33: a transient 500 is retried on the same key first (3
+	// attempts: initial + 2 retries) and only then fails over to b.
+	if got := up.hitCount("a"); got != 3 {
+		t.Fatalf("expected primary a hit 3 times (same-key retries), got %d", got)
 	}
 }
 
@@ -133,16 +137,18 @@ func TestChannelCooldownAfterConsecutiveFailures(t *testing.T) {
 			t.Fatalf("request %d: expected failover success, got %d", i+1, code)
 		}
 	}
-	if got := up.hitCount("a"); got != 3 {
-		t.Fatalf("expected a hit 3 times, got %d", got)
+	// Each request retried a 3 times (F33) but counts as one F1
+	// failure: 3 failed calls cool a down, 9 wire attempts in all.
+	if got := up.hitCount("a"); got != 9 {
+		t.Fatalf("expected a hit 9 times (3 calls x 3 attempts), got %d", got)
 	}
 	// a is now in cooldown: the next request must skip it entirely.
 	code, body := e.chat(t, e.byoaTok, "mock-eco", "你好")
 	if code != 200 || !strings.Contains(body, "[upstream-b]") {
 		t.Fatalf("expected direct backup success, got %d %s", code, body)
 	}
-	if got := up.hitCount("a"); got != 3 {
-		t.Fatalf("expected a still at 3 hits while cooling down, got %d", got)
+	if got := up.hitCount("a"); got != 9 {
+		t.Fatalf("expected a still at 9 hits while cooling down, got %d", got)
 	}
 	// After the cooldown expires, a becomes eligible again.
 	time.Sleep(350 * time.Millisecond)
@@ -150,8 +156,8 @@ func TestChannelCooldownAfterConsecutiveFailures(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("expected success after cooldown expiry, got %d", code)
 	}
-	if got := up.hitCount("a"); got != 4 {
-		t.Fatalf("expected a hit again after cooldown expiry, got %d hits", got)
+	if got := up.hitCount("a"); got != 12 {
+		t.Fatalf("expected a hit again after cooldown expiry (3 same-key attempts), got %d hits", got)
 	}
 }
 
@@ -229,9 +235,11 @@ func TestNonRetryable4xxNotRetriedAndNotCounted(t *testing.T) {
 func TestSuccessResetsConsecutiveFailures(t *testing.T) {
 	e, up := setupFailover(t, failoverPolicy(300*time.Millisecond),
 		map[string][]int{"a": {500, 500, 200, 500, 500, 500}, "b": {200}, "p": {200}})
-	// a fails twice, succeeds (reset), then fails 3 times in a row and
-	// cools down; the 7th request must skip it.
-	for i := 0; i < 6; i++ {
+	// Request 1 succeeds on its 3rd same-key attempt (F33): the two
+	// transient failures are followed by a success, so the F1
+	// consecutive counter resets. Requests 2-4 then fail outright
+	// (3 attempts each) and cool a down; the 5th request must skip it.
+	for i := 0; i < 4; i++ {
 		code, _ := e.chat(t, e.byoaTok, "mock-eco", "你好")
 		if code != 200 {
 			t.Fatalf("request %d: expected 200, got %d", i+1, code)
@@ -241,7 +249,7 @@ func TestSuccessResetsConsecutiveFailures(t *testing.T) {
 	if code != 200 || !strings.Contains(body, "[upstream-b]") {
 		t.Fatalf("expected backup success with a cooling down, got %d %s", code, body)
 	}
-	if got := up.hitCount("a"); got != 6 {
-		t.Fatalf("expected a hit 6 times (not re-tried while cooling), got %d", got)
+	if got := up.hitCount("a"); got != 12 {
+		t.Fatalf("expected a hit 12 times (not re-tried while cooling), got %d", got)
 	}
 }

@@ -596,6 +596,27 @@ def main():
     text = json.dumps(chat, ensure_ascii=False)
     check("F32 same phone in two forms shares one placeholder",
           s == 200 and text.count("138-0000-0000") == 2 and "13800000000" not in text and "<PII_" not in text)
+    # F33: failure-classified retries — the mock fails the first two
+    # attempts with 500 (marker [mock-fail-500-twice]); the gateway
+    # retries the same key with backoff and serves the third attempt,
+    # and the audit trail records each attempt's class and result.
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-eco", "messages": [{"role": "user", "content": "重试冒烟：请复述 [mock-fail-500-twice]"}]}, token=tok2)
+    text = json.dumps(chat, ensure_ascii=False)
+    check("F33 transient 500s retried on the same key, third attempt serves",
+          s == 200 and "[mock-fail-500-twice]" in text and "choices" in chat)
+    s, aud33 = call("/api/audit?kind=channel", token=admin_tok, method="GET")
+    att33 = [e for e in aud33.get("events", []) if e.get("action") == "forward_attempt"]
+    classes33 = [e.get("detail", {}).get("class") for e in att33[:3]]
+    check("F33 attempt trail records transient retries then success",
+          s == 200 and len(att33) >= 3 and classes33.count("transient") >= 2
+          and "success" in classes33
+          and all(e.get("detail", {}).get("key_masked") for e in att33[:3])
+          and all(e.get("detail", {}).get("duration_ms") is not None for e in att33[:3]))
+    s, aud33b = call("/api/audit?kind=model_call", token=admin_tok, method="GET")
+    mc33 = (aud33b.get("events", []) or [{}])[0]
+    check("F33 retried call carries its attempt count",
+          s == 200 and mc33.get("detail", {}).get("attempts") == "3")
     # Top-secret data (header-declared) only reaches the local model.
     s, chat = call("/v1/chat/completions",
                    {"model": "mock-pro", "messages": [{"role": "user", "content": "普通内容"}]}, token=tok2,
