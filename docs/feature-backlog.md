@@ -440,10 +440,16 @@
 - 已知注意点：谐音 / 拼音 / 拆字识别不在本轮（需拼音词典，后续单独评估）；兼容字符（`①`、`²`）不折叠（需 NFKC，暂不引入 `x/text` 依赖）；归一化可能多命中（两个词被分隔符连起来恰好拼成违禁词时也会拦，是变形检测的固有代价）；`Scan` 最多跑三遍匹配，检测对象是聊天消息与工具参数，量级很小。冒烟调试中发现并处理：F2 的 stats 断言是精确计数（3 调用 / 2 拦截），F29 的 3 次拦截断言须放在该断言之后，另用新令牌以免干扰 F3 的 RPM 计数。
 - 排序：排在 F26 之后、F28 之前。
 
-### F30 复杂度智能路由 `todo`
+### F30 复杂度智能路由 `done`（2026-11-23）
 - 来源：Nathan 2026-11-22 批准立项（1Panel AI 网关调研结论，待办登记 7）：1Panel 的智能路由按复杂度分发（model=auto，简单问题走便宜模型组）。
 - 适配：与治理路由正交、可叠加——复杂度只决定在同一密级与信任梯度内选哪个模型组，不改变分级约束；优先级不高。
-- 验收：待立项细化。
+- 验收：客户端请求 `model=auto` 时，简单问题解析到便宜模型组、复杂问题解析到强模型组；机密/绝密请求仍受分级路由约束（简单组模型无合规渠道时回落到复杂组，两组都无合规渠道时按分级路由显式拒绝）；每次判定写入审计（层级、来源、置信度、回落）；关闭本层后 `model=auto` 返回 `model_not_available`。
+- 借鉴点（1Panel AI 网关官方文档 1panel.pro/docs/v2/user_manual/ai/gateway，2026-11-23 查阅；Performance Hub Model Router 文档 docs.performancehub.co，2026-11-23 查阅，旁证）：
+  1Panel 的智能路由只在客户端请求 `model=auto` 时触发，其他模型名走正常转发；先配简单与复杂两个模型组（组内模型顺序即选路优先级，组内不做负载均衡），再在「设置 → Embedding」配向量服务、路由阈值与 TopK，在「智能路由 → 样本」维护简单 / 复杂请求样本并生成向量；网关把请求转成语义向量、与预置样本算相似度，样本无法明确命中时再通过规则兜底判断，最终分发到对应模型组；决策日志记录每次判定的简单 / 复杂占比。Performance Hub 的 `auto` 同样是无定价的虚拟模型 ID，按提示复杂度在 Fast / Medium / Complex / Reasoning 四档中选模型、按解析出的模型计费，选路逻辑集中在网关侧。
+  我们照此实现，但做三处改动：① 向量层用确定性 n-gram 向量代替神经网络 embedding（与 F28 同款，另加字符 bigram 层——短中文问句 trigram 太少）；② 模型组是模型名列表（与渠道解耦），组内第一个有合规渠道的模型服务，而不是 1Panel 的账号池直连；③ 某层无合规渠道时回落到另一层（仍在合规集合内），两层都无合规渠道时按分级路由的显式错误拒绝。
+- 实现：新包 `internal/autorouter`（`Classifier`：样本匹配复用 `semreview.Vectorize`/`Cosine` + 字符 bigram 增强，≥3 共享 n-gram 才算匹配、包含分支防长请求稀释、平局倾向复杂；规则兜底：≥2000 字 / ≥6 轮 / 带 tool_calls → 复杂，否则简单；`ValidateConfig`/`DefaultConfig`：默认启用、阈值 0.35、简单组 `mock-eco`、复杂组 `mock-pro`、12 条种子样本）；`store.AutoRouteConfig` + `AutoRouteSample`（`State.AutoRoute`，未配置时走内置默认值）；网关 `internal/gateway/autoroute.go`（`resolveAutoModel`：分类 → 组内按序找第一个有合规候选渠道的模型 → 无合规渠道回落另一层 → 两层都无时按组模型并集报显式错误；`rewriteModel` 改写请求体 model 字段；`AutoRouteStats` 运行时计数 6 项）；`ChatCompletions` 在分级与自带级拦截之后、渠道解析之前接入（解析后 `req.Model`/请求体/Trace 均为具体模型，`detail` 带 `auto_route` / `auto_route_confidence` / `auto_route_requested` / `auto_route_sample` / `auto_route_fallback`）；`GET /v1/models` 启用时列出虚拟模型 `auto`；管理 API `GET/POST /api/auto-route` + 样本增删（仅 admin/security，`unresolved_models` 列出组里暂无渠道提供的模型）；管理台新增「智能路由」页（策略表单 + 计数 + 样本库增删，中英双语）；详见 docs/auto-routing.md。
+- 测试：autorouter 包 10 项（种子样本全命中、改写 8 例、普通提示 5 例落规则、规则兜底 4 信号、停用、空库、阈值翻转、样本与配置校验、默认值）+ 网关集成 10 项（简单→mock-eco、复杂→mock-pro、规则兜底两向、停用 400、层级回落 + 审计字段、审计明细 + 运行时计数、机密回落复杂组、绝密走本地模型、两组都无合规渠道 403、models 列表含/不含 auto）+ API 端点 1 项（默认值/员工 403/匿名 401、三类校验 400、组更新与未解析模型提示、停用、样本增删全链路）；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（autorouter/gateway/api/store）全绿；`make smoke` 276 项断言 0 失败（基线 266 + 新增 10，三次运行均稳定）。
+- 已知注意点：只有简单 / 复杂两档（1Panel 同款两档）；规则兜底不看代码特征（表面标记太嘈杂，代码类请求靠样本库覆盖）；短主题词（如只发「供应商报价单」）可能因共享名词短语匹配复杂样本，代价是一次强模型调用、不是错误答案；缓存按解析后的模型名做键。
 - 排序：排在 F28 之后、F27 之前。
 
 ### F31 MCP 列表/调用同规则过滤 `todo`

@@ -23,6 +23,7 @@ import (
 
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
+	"github.com/myjnathan/agentgate/internal/autorouter"
 	"github.com/myjnathan/agentgate/internal/billing"
 	"github.com/myjnathan/agentgate/internal/cache"
 	"github.com/myjnathan/agentgate/internal/guard"
@@ -87,6 +88,10 @@ type Gateway struct {
 	// review layer (F28), process-lifetime only, never persisted.
 	semMu    sync.Mutex
 	semStats semreview.Stats
+	// autoMu guards autoStats: the runtime counters for smart
+	// routing (F30), process-lifetime only, never persisted.
+	autoMu    sync.Mutex
+	autoStats autorouter.Stats
 }
 
 func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log, pol Policy) *Gateway {
@@ -335,6 +340,12 @@ func (g *Gateway) Models(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	})
+	// Smart routing (F30): "auto" is a virtual model name. It is
+	// listed only when the layer is enabled, and only when no real
+	// channel already serves a model literally named "auto".
+	if g.autoRouteConfig().Enabled && !g.anyChannelForModel("auto") {
+		data = append(data, map[string]any{"id": "auto", "object": "model", "owned_by": "agentgate"})
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
 }
@@ -647,60 +658,141 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if !g.anyChannelForModel(req.Model) {
-		ts.decision = "error"
-		writeErr(w, http.StatusBadRequest, "model_not_available", "model is not available on this gateway")
-		return
-	}
-	candidates := g.pickCandidates(req.Model, level, false)
-	if len(candidates) == 0 && grant != nil {
-		// No compliant channel for this level, but a valid grant
-		// waives the trust rule for this one call: fall back to the
-		// least-privileged channel that may receive the level at
-		// all. Compliant routing is always preferred — the waiver
-		// only fires when the policy would otherwise block.
-		if repicked := g.pickCandidates(req.Model, level, true); len(repicked) > 0 {
-			candidates = repicked
-			grantWaived = true
-		}
-	}
-	if len(candidates) == 0 {
-		// Model exists but no channel is allowed to receive this data
-		// level — or every eligible channel is cooling down.
-		if grantPresented {
-			// The caller presented a grant that does not cover this
-			// call (unknown, expired, used, another employee's, or
-			// for a lower level): fail closed with an explicit
-			// reason instead of a misleading policy block.
-			ts.decision, ts.level = "block", level.String()
-			g.rejectInvalidGrant(w, user, tok, req.Model, level, detail)
+	// ---- Model resolution: direct model, or smart routing (F30) ----
+	// model=auto resolves to a concrete model before any channel
+	// lookup: "auto" names no channel. Classification runs on the
+	// request text (local-only: sample matching + rules, nothing
+	// leaves the process) and picks a tier; the tier's model group
+	// is walked in priority order and the first model with a
+	// compliant candidate channel serves. The data level and trust
+	// rules are unchanged — pickCandidates applies them per model,
+	// so complexity routing can only choose inside the compliant
+	// set, never widen it. The resolved model replaces "auto" in
+	// the forwarded body, the trace and every later audit event;
+	// the decision itself is recorded on the detail map, so the
+	// model_call event carries the full decision log.
+	var candidates []*store.Channel
+	if req.Model == "auto" {
+		cfg := g.autoRouteConfig()
+		if !cfg.Enabled {
+			ts.decision = "error"
+			writeErr(w, http.StatusBadRequest, "model_not_available", "smart routing is disabled; request a concrete model name")
 			return
 		}
-		if g.channelsCoolingDown(req.Model, level, false) {
-			writeErr(w, http.StatusServiceUnavailable, "channels_in_cooldown",
-				"all eligible model channels are temporarily cooling down after repeated failures")
-			return
+		hasToolCalls := false
+		for _, m := range req.Messages {
+			if len(m.ToolCalls) > 0 {
+				hasToolCalls = true
+			}
 		}
-		// F17: channels exist that could serve this model at this level,
-		// but none has a compliant trust type (e.g. secret data and no
-		// local-model channel). Block with an explicit reason instead of
-		// the generic no-channel error — the operator can see exactly
-		// which kind of channel is missing.
-		if g.channelsBlockedByTrust(req.Model, level, false) {
+		res := g.resolveAutoModel(cfg, fullText.String(), len(req.Messages), hasToolCalls, level, false)
+		if res.model == "" && grant != nil {
+			// Same waiver as a direct model request (F24): a valid
+			// grant waives the trust rule for this one call.
+			res = g.resolveAutoModel(cfg, fullText.String(), len(req.Messages), hasToolCalls, level, true)
+			if res.model != "" {
+				grantWaived = true
+			}
+		}
+		if res.model == "" {
+			// No tier has a compliant channel: mirror the direct
+			// model's explicit errors over the union of group models.
+			if grantPresented {
+				ts.decision, ts.level = "block", level.String()
+				g.rejectInvalidGrant(w, user, tok, req.Model, level, detail)
+				return
+			}
+			if g.autoChannelsCoolingDown(cfg, level, false) {
+				writeErr(w, http.StatusServiceUnavailable, "channels_in_cooldown",
+					"all eligible model channels are temporarily cooling down after repeated failures")
+				return
+			}
+			if g.autoChannelsBlockedByTrust(cfg, level, false) {
+				ts.decision, ts.level = "block", level.String()
+				g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
+					Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
+					Detail: mergeDetail(detail, "reason", "no_compliant_channel")})
+				writeErr(w, http.StatusForbidden, "no_compliant_channel", noCompliantChannelMessage(level))
+				return
+			}
 			ts.decision, ts.level = "block", level.String()
 			g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 				Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
-				Detail: mergeDetail(detail, "reason", "no_compliant_channel")})
-			writeErr(w, http.StatusForbidden, "no_compliant_channel", noCompliantChannelMessage(level))
+				Detail: mergeDetail(detail, "reason", "no_channel_for_data_level")})
+			writeErr(w, http.StatusForbidden, "no_channel_for_data_level",
+				fmt.Sprintf("no configured model channel may receive %s data", level.String()))
 			return
 		}
-		ts.decision, ts.level = "block", level.String()
-		g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
-			Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
-			Detail: mergeDetail(detail, "reason", "no_channel_for_data_level")})
-		writeErr(w, http.StatusForbidden, "no_channel_for_data_level",
-			fmt.Sprintf("no configured model channel may receive %s data", level.String()))
-		return
+		candidates = res.candidates
+		req.Model = res.model
+		body = rewriteModel(body, res.model)
+		ts.model = res.model
+		g.recordAutoRoute(res.dec, res.servedTier, res.tierFallback)
+		detail["auto_route"] = res.dec.Tier + ":" + res.dec.Source
+		detail["auto_route_confidence"] = fmt.Sprintf("%.2f", res.dec.Confidence)
+		detail["auto_route_requested"] = "auto"
+		if res.dec.SampleID != "" {
+			detail["auto_route_sample"] = res.dec.SampleID
+		}
+		if res.tierFallback {
+			detail["auto_route_fallback"] = res.servedTier
+		}
+	} else {
+		if !g.anyChannelForModel(req.Model) {
+			ts.decision = "error"
+			writeErr(w, http.StatusBadRequest, "model_not_available", "model is not available on this gateway")
+			return
+		}
+		candidates = g.pickCandidates(req.Model, level, false)
+		if len(candidates) == 0 && grant != nil {
+			// No compliant channel for this level, but a valid grant
+			// waives the trust rule for this one call: fall back to the
+			// least-privileged channel that may receive the level at
+			// all. Compliant routing is always preferred — the waiver
+			// only fires when the policy would otherwise block.
+			if repicked := g.pickCandidates(req.Model, level, true); len(repicked) > 0 {
+				candidates = repicked
+				grantWaived = true
+			}
+		}
+		if len(candidates) == 0 {
+			// Model exists but no channel is allowed to receive this data
+			// level — or every eligible channel is cooling down.
+			if grantPresented {
+				// The caller presented a grant that does not cover this
+				// call (unknown, expired, used, another employee's, or
+				// for a lower level): fail closed with an explicit
+				// reason instead of a misleading policy block.
+				ts.decision, ts.level = "block", level.String()
+				g.rejectInvalidGrant(w, user, tok, req.Model, level, detail)
+				return
+			}
+			if g.channelsCoolingDown(req.Model, level, false) {
+				writeErr(w, http.StatusServiceUnavailable, "channels_in_cooldown",
+					"all eligible model channels are temporarily cooling down after repeated failures")
+				return
+			}
+			// F17: channels exist that could serve this model at this level,
+			// but none has a compliant trust type (e.g. secret data and no
+			// local-model channel). Block with an explicit reason instead of
+			// the generic no-channel error — the operator can see exactly
+			// which kind of channel is missing.
+			if g.channelsBlockedByTrust(req.Model, level, false) {
+				ts.decision, ts.level = "block", level.String()
+				g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
+					Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
+					Detail: mergeDetail(detail, "reason", "no_compliant_channel")})
+				writeErr(w, http.StatusForbidden, "no_compliant_channel", noCompliantChannelMessage(level))
+				return
+			}
+			ts.decision, ts.level = "block", level.String()
+			g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
+				Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
+				Detail: mergeDetail(detail, "reason", "no_channel_for_data_level")})
+			writeErr(w, http.StatusForbidden, "no_channel_for_data_level",
+				fmt.Sprintf("no configured model channel may receive %s data", level.String()))
+			return
+		}
 	}
 	// Note: pickCandidates already chose the least-privileged channel
 	// that may receive this data level; when the level forced a

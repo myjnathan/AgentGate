@@ -533,6 +533,11 @@ type State struct {
 	// the gateway falls back to the built-in defaults
 	// (semreview.DefaultConfig) instead of an empty library.
 	SemanticReview *SemanticReviewConfig `json:"semantic_review,omitempty"`
+	// AutoRoute holds the smart-routing policy and complexity
+	// sample library (backlog F30). Nil means never configured:
+	// the gateway falls back to the built-in defaults
+	// (autorouter.DefaultConfig) instead of an empty library.
+	AutoRoute *AutoRouteConfig `json:"auto_route,omitempty"`
 }
 
 // OrgProvider is one third-party directory (org sync) configuration
