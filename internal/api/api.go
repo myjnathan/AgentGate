@@ -26,6 +26,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/roles"
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/semidx"
+	"github.com/myjnathan/agentgate/internal/semreview"
 	"github.com/myjnathan/agentgate/internal/store"
 	"github.com/myjnathan/agentgate/internal/terminal"
 )
@@ -49,6 +50,10 @@ type API struct {
 	// sidecarPolicy returns the policy snapshot a sidecar caches
 	// (backlog F23); nil when the server was started without one.
 	sidecarPolicyFn func() terminal.PolicySnapshot
+	// semReviewStats returns the gateway's semantic-review runtime
+	// counters (backlog F28); nil when the server was started
+	// without a gateway wired in.
+	semReviewStats func() semreview.Stats
 	// allowTopSecretExceptions is the operator opt-in for
 	// top-secret exceptions (backlog F24); default false.
 	allowTopSecretExceptions bool
@@ -191,6 +196,12 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/reports/{id}", a.requirePerm(roles.ReportsWrite, a.getReport))
 	mux.HandleFunc("GET /api/reports/{id}/export", a.requirePerm(roles.AuditExport, a.exportReport))
 	mux.HandleFunc("DELETE /api/reports/{id}", a.requirePerm(roles.ReportsDelete, a.deleteReport))
+	// Semantic review (F28): policy and risk-sample library are
+	// admin/security policy (roles.Policy).
+	mux.HandleFunc("GET /api/semantic-review", a.requirePerm(roles.Policy, a.getSemanticReview))
+	mux.HandleFunc("POST /api/semantic-review", a.requirePerm(roles.Policy, a.updateSemanticReview))
+	mux.HandleFunc("POST /api/semantic-review/samples", a.requirePerm(roles.Policy, a.addSemanticSample))
+	mux.HandleFunc("DELETE /api/semantic-review/samples/{id}", a.requirePerm(roles.Policy, a.deleteSemanticSample))
 }
 
 // ---- helpers ----

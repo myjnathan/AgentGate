@@ -528,6 +528,11 @@ type State struct {
 	// (backlog F25), keyed by report ID; at most
 	// report.MaxStoredReports are retained.
 	Reports map[string]*report.Report `json:"reports"`
+	// SemanticReview holds the semantic-review policy and risk
+	// sample library (backlog F28). Nil means never configured:
+	// the gateway falls back to the built-in defaults
+	// (semreview.DefaultConfig) instead of an empty library.
+	SemanticReview *SemanticReviewConfig `json:"semantic_review,omitempty"`
 }
 
 // OrgProvider is one third-party directory (org sync) configuration

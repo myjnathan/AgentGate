@@ -2,6 +2,17 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-23 · F28 语义复核层
+
+- 本轮按常规规程选条目：P0、P1 全部 done，P2 按清单顺序取 F28（首个剩余 P2 条目）。体内的 12:26 特别指令与待办登记 1–8 均已在先前轮次执行完毕、作废。本地另有一条 docs 提交 583a41e（F29 推送结果记录）随本轮整包快照一并带上。
+- 借鉴点（2026-11-23 查阅一手来源）：① 1Panel AI 网关（飞致云论坛 bbs.fit2cloud.com/t/topic/19664 与官方博客 v1.6.0，2026-11-06）：内容合规是「敏感词 + 语义审核 + 内容审计」三层；向量语义审核把请求转语义向量、与预置样本库算相似度，样本未命中时规则兜底，判定写入决策日志；v1.6.0 接入 Qwen3Guard 安全围栏模型（Safe / Controversial / Unsafe，「有争议」与「不安全」视为风险命中），三层审核可独立启停、组合使用；「阻断」模式下审核服务不可用时不放行未审核内容。② Higress + Qwen3Guard（阿里云博客）：Qwen3Guard-Gen 以 Wasm 插件接入网关，默认调用 `Qwen/Qwen3Guard-Gen-4B`，暴露 OpenAI 兼容 `POST /v1/chat/completions`，三档风险级别映射为两档网关策略（只拦 Unsafe / 连 Controversial 也拦），模型自托管部署。③ API7 文档：Qwen3Guard 为 Apache-2.0，Gen 家族 0.6B/4B/8B，回答为 `Safety: Unsafe` / `Categories:` 纯文本。
+- 复用检查（Nathan 复用优先指示）：未复制代码——1Panel 为闭源商业产品、Qwen3Guard 只借其 OpenAI 兼容的调用与回答格式，深层客户端与样本匹配器约 630 行纯标准库自研（`internal/semreview`）；复用本仓已有 `internal/guard` 的脱敏、`store.Channel` 的渠道与密钥轮询、F17 的信任梯度校验、F5 的告警、F14 的审计事件。
+- 实现：新包 `internal/semreview`（`Matcher`：字符 trigram + 词 unigram 向量化，余弦相似度 + 包含分支（长请求里原样嵌入的越狱仍命中），默认阈值 0.35；`DeepClient`：OpenAI 兼容端点调用，解析 `Safety:` / `Categories:`，Unsafe 拦截、Controversial 按策略处置、Safe 放行）；新存储 `internal/store/semreview.go`（`SemanticReviewSample` + `SemanticReviewConfig`，默认策略 enabled=true、阈值 0.35、超时 3000ms、争议=告警、深层关闭，未配置时返回内置默认值，种子样本 9 条：越狱 4 / 拆分外发 2 / 诱导 2 / 伪装 1，其中诱导类「委婉地问怎么绕过审批流程」为告警样本）；网关接入点在 `ChatCompletions` 脱敏之后、缓存之前（被拦的请求永不进缓存，例外凭证不豁免复核拦截、不消耗凭证，DryRun 只记事件不拦截）；复核文本是脱敏后的副本（自带级未脱敏与 DryRun 也先脱敏再送审）；深层调用前校验渠道存在 / 启用 / 未冷却 + `trustAllowed` + 密钥轮询，绝密跳过整个复核层；审计：拦截 `violation`/`model_call_blocked`（`semantic_review_blocked` + `semantic_source`/`semantic_sample`/`semantic_similarity`，不含请求原文）→ F5 关键告警，告警记 `semantic_review` 事件 → F5 警告告警，放行记 `model_call` 的 `detail.semantic_review`，DryRun 记 `semantic_review_dry_run`；运行时计数 8 项经 `GET /api/semantic-review` 返回；管理 API 四条（策略查 / 改、样本增 / 删，admin/security）；管理台新增「语义复核」页（策略表单 + 计数 + 样本库增删，中英双语）；详见 docs/semantic-review.md。
+- 关键决策：① 默认层用确定性 n-gram 向量而非神经网络 embedding——单二进制零依赖定位装不下 embedding 模型，`Vectorize` 是可替换的函数，F30 复用同一向量化器，诚实边界写进 docs/semantic-review.md；② 阈值 0.35 来自实测调参（应命中改写 0.38–0.69、正常提示最高 0.28，重度改写 0.21–0.33 留给深层）；③ 深层只审输入不审输出（输出审核需在流式与非流式回程加缓冲，留待后续轮次）；④ 超时与深层故障按密级分流（机密以上拦截、低密级告警放行）而非一律不放行——低密级一律拦截会把可用性交给审核端点的可用性；⑤ 复核在缓存之前——被拦的请求永不进缓存；⑥ 例外凭证不豁免复核拦截——复核是安全层不是分级豁免，与违禁词同款。
+- 测试：semreview 包 12 项 + 网关集成 9 项 + API 1 项；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（semreview/gateway/api/store/alert）全绿；`make smoke` 266 项断言 0 失败（基线 258 + 新增 8）。
+- 本轮实测抓到的真问题：① 全量 `go test ./...` 首跑时 sidecar 包 `TestPolicyCacheSurvivesRestart` 失败（policy-cache.json 未写出），单跑 3 次 + 整包重跑全绿——与 F23 轮 DEVLOG 记的同款已知偶发抖动（1 秒心跳 ticker 测试在并行负载下的时序问题），非本轮改动所致（本轮未碰 sidecar 代码）；重跑全绿后继续。② 阈值调参初版用「重叠率」作包含分支，正常提示「本周的供应商报价单汇总」误报 0.500——已改为「≥10 个共享 trigram 且覆盖较小一方 80%」的双条件包含分支，误报消失。③ `make smoke` 首次在 Makefile 内报 `go: not found`——Makefile 用 `GO ?= go`，本机 Go 不在系统 PATH（在 `~/workspace/tools/gosdk/bin`），须 `GO=$HOME/workspace/tools/gosdk/bin/go make smoke`；已在 DEVLOG 记下，下一轮起直接用该形式。④ 冒烟 F28 段的 1 次拦截 + 3 次放行断言须放在 F2 的 stats 精确计数断言之后（与 F29 轮同款坑），并复用 F29 的新令牌 `tok29` 以免干扰 F3 的 RPM 计数；真实变量已逐行核对（`sess` / `tok29` / `alogin["session"]`）。
+- 推送结果：（合并后补记）
+
 ## 2026-11-23 · F29 DLP 归一化管线
 
 - 本轮按常规规程选条目：P0、P1 全部 done，P2 按清单顺序取 F29（首个剩余 P2 条目）。体内的 12:26 特别指令与待办登记 1–8 均已在先前轮次执行完毕、作废。本地另有一条 docs 提交 d319bb0（F26 推送结果记录）随本轮整包快照一并带上。
@@ -11,6 +22,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 关键决策：① 两个视图而非一个——词表要「只留字母数字」（任何插进来的分隔符都是绕过手段），正则要「保留标点」（API Key 要 `-`、邮箱要 `@` 与 `.`），一个视图无法同时满足；② 原文直扫一字不动、归一化只做并集合并，重叠即丢弃——这是「只增命中、不减命中」红线的机械保证，也是 `Redactor` 按偏移替换不损坏文本的前提；③ 归一化不改写任何落盘物：转发正文、审计记录、告警内容均保持原样，`Finding.Value` 恒为原文片段，脱敏替换整个原文片段（含插进来的分隔符），响应还原回原文。
 - 测试：normalize 包 4 项 + guard 4 项 + 网关集成 4 项 + 冒烟新增 5 项断言；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（guard/normalize/gateway）全绿；`make smoke` 258 项断言 0 失败（基线 253 + 新增 5）。
 - 本轮实测抓到的真问题：① 归一化初版的 `Ends` 表用了折叠后 rune 的字节长度（全角 3 字节折叠后是 1 字节），回指偏移错位——已改为按源文字节迭代取原始 rune 长度，`MapByteRange` 的多字节用例即为该 bug 的回归测试。② `password_assignment` 的 `\b密码` 缺陷是写归一化测试时发现的：全角密码赋值在模式视图里明明已折叠仍无命中，根因是 Go 的 `\b` 不认汉字为词字符——已修正则并补回归用例。③ 冒烟初版把 F29 断言放在 F2 的 stats 断言之前，`stats reconcile with audit` 是精确计数（3 调用 / 2 拦截），3 次新增拦截调用把它冲掉——已把 F29 块移到 stats 断言之后，并用新令牌做拦截断言以免干扰 F3 的 RPM 计数（与 F24/F25/F26 轮 DEVLOG 记的同款坑：冒烟里 `token=<redacted>` 是工具输出的脱敏显示，真实变量是 `sess` 与 `tok`/`tok2`，已逐行核对真名）。
+- 推送结果：本地提交 4d1f678（含随带的 d319bb0，即 F26 推送结果记录）；远端建分支 loop/f29（基点远端 main 2203ec5b；推送前核对同步基点：5 个改动文件远端 blob 与本地父提交一致、DEVLOG.md 仅差本地独有的 F26 推送记录行、4 个新文件在远端不存在）；整包快照 10 文件一次推送（提交 ea9fcc84），逐文件哈希核对 10/10 一致，未触发 contents API 回退；PR #25 文件清单与本轮一致，已合并进远端 main，远端 HEAD f7fc1e25（合并提交），读回 main 上 internal/normalize/normalize.go、docs/feature-backlog.md 两文件 blob 与快照一致。待删分支新增 loop/f29（共 17 个，需 Nathan 网页端手动删除）。下一轮为 P2 的 F28（语义复核层）。
 
 ## 2026-11-22 · F26 分级管理员与职责分离
 

@@ -29,6 +29,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/otel"
 	"github.com/myjnathan/agentgate/internal/ratelimit"
 	"github.com/myjnathan/agentgate/internal/secretbox"
+	"github.com/myjnathan/agentgate/internal/semreview"
 	"github.com/myjnathan/agentgate/internal/store"
 )
 
@@ -82,6 +83,10 @@ type Gateway struct {
 	// one alert per call once it crosses its threshold.
 	budgetMu      sync.Mutex
 	budgetAlerted map[string]string // department -> "2006-01" month warned
+	// semMu guards semStats: the runtime counters for the semantic
+	// review layer (F28), process-lifetime only, never persisted.
+	semMu    sync.Mutex
+	semStats semreview.Stats
 }
 
 func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log, pol Policy) *Gateway {
@@ -731,6 +736,53 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	if g.policy.DryRun && len(allFindings) > 0 {
 		decision = "dry_run:" + decision
+	}
+
+	// ---- Semantic review (F28) ----
+	// Second layer above the rule DLP: the local sample-matching
+	// layer catches paraphrased / split / injected requests the
+	// rules missed, and the optional deep layer asks a self-hosted
+	// guard model. The review runs on the desensitized text — when
+	// the request had findings, a redacted copy is built for the
+	// review, so the deep layer never sees raw PII even when the
+	// forwarded body is not redacted (or in DryRun, where the
+	// pipeline observes without redacting). It runs before the
+	// cache, so a blocked request is never served from cache, and
+	// before the grant is spent, so a grant is never consumed by a
+	// call the review blocks. A grant never waives a review block:
+	// like a banned word, this is a safety layer, not a
+	// classification waiver.
+	reviewBody := body
+	if len(allFindings) > 0 {
+		reviewBody, _ = redactBody(body, det)
+	}
+	semDec := g.runSemanticReview(r.Context(), reviewText(reviewBody, fullText.String()), level)
+	if semDec.Action == semreview.DecisionBlock {
+		if g.policy.DryRun {
+			// Observe only: record the would-be block, do not block.
+			g.auditSemanticReview(user, tok, req.Model, level,
+				semreview.Decision{Action: "dry_run", Source: semDec.Source, SampleID: semDec.SampleID,
+					Category: semDec.Category, Similarity: semDec.Similarity, Reason: semDec.Reason})
+			detail["semantic_review"] = "dry_run:would_block"
+		} else {
+			ts.decision, ts.level = "block", level.String()
+			vDetail := mergeDetail(detail, "reason", "semantic_review_blocked")
+			vDetail["semantic_source"] = semDec.Source
+			if semDec.SampleID != "" {
+				vDetail["semantic_sample"] = semDec.SampleID
+				vDetail["semantic_similarity"] = fmt.Sprintf("%.2f", semDec.Similarity)
+			}
+			g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
+				Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
+				Detail: vDetail})
+			writeErr(w, http.StatusForbidden, "semantic_review_blocked", "request blocked by semantic review (suspicious intent)")
+			return
+		}
+	} else if semDec.Action == semreview.DecisionAlert {
+		g.auditSemanticReview(user, tok, req.Model, level, semDec)
+		detail["semantic_review"] = "alert:" + semDec.Source
+	} else if d := semanticReviewDetail(semDec); d != "" {
+		detail["semantic_review"] = d
 	}
 
 	// ---- Exact-match response cache (F11) ----
