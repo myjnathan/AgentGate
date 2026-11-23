@@ -20,6 +20,8 @@ import (
 // Demo credentials (documented, demo only):
 //
 //	admin / agentgate-admin   (platform admin)
+//	auditor / demo12345      (auditor: read-only audit and reports, F26)
+//	ops / demo12345          (operator: channels and tokens, F26)
 //	lixiaofeng / demo12345    (R&D employee)
 //	chenjing / demo12345      (regulatory employee)
 func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
@@ -34,6 +36,8 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 			PasswordHash: h, Department: dept, Role: role}
 	}
 	admin := mkUser("admin", "系统管理员", "IT", "admin", "agentgate-admin")
+	auditor := mkUser("auditor", "审计员", "审计部", "auditor", "demo12345")
+	ops := mkUser("ops", "运维员", "IT", "operator", "demo12345")
 	li := mkUser("lixiaofeng", "李晓峰", "研发部", "employee", "demo12345")
 	chen := mkUser("chenjing", "陈静", "注册部", "employee", "demo12345")
 
@@ -52,6 +56,8 @@ func Demo(st *store.Store, box *secretbox.Box, selfBaseURL string) error {
 	}
 	st.WithLock(func(s *store.State) {
 		s.Users[admin.ID] = admin
+		s.Users[auditor.ID] = auditor
+		s.Users[ops.ID] = ops
 		s.Users[li.ID] = li
 		s.Users[chen.ID] = chen
 		// Public-cloud-like channel: may receive at most internal data.

@@ -155,8 +155,14 @@ type User struct {
 	DisplayName  string `json:"display_name"`
 	PasswordHash string `json:"password_hash"`
 	Department   string `json:"department"`
-	Role         string `json:"role"` // admin | security | operator | employee
-	Disabled     bool   `json:"disabled"`
+	Role         string `json:"role"` // admin | security | auditor | operator | employee
+	// RoleSource records who last set Role: "local" (an admin changed
+	// it in the console) or "oidc" (set by the OIDC group mapping,
+	// backlog F26). Empty on legacy rows means "local" for local
+	// accounts and "oidc" for OIDC-provisioned accounts (they were
+	// JIT-created before this field existed).
+	RoleSource string `json:"role_source,omitempty"`
+	Disabled   bool   `json:"disabled"`
 	// OIDCSubject is the IdP "sub" for users provisioned via OIDC
 	// (backlog F9); empty for local accounts. AuthSource is
 	// "local" or "oidc" and records how the account was created.

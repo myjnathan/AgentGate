@@ -43,17 +43,24 @@ func (a *API) oidcStatus(w http.ResponseWriter, r *http.Request, u *store.User) 
 	}
 	cfg := a.oidc.Config()
 	disc := a.oidc.Discovery()
-	writeJSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"oidc_enabled":           true,
 		"issuer":                 cfg.Issuer,
 		"client_id":              cfg.ClientID,
 		"redirect_url":           cfg.RedirectURL,
 		"scopes":                 cfg.Scopes,
 		"department_claim":       cfg.DepartmentClaim,
+		"groups_claim":           cfg.GroupsClaim,
 		"authorization_endpoint": disc.AuthorizationEndpoint,
 		"token_endpoint":         disc.TokenEndpoint,
 		"userinfo_endpoint":      disc.UserinfoEndpoint,
-	})
+	}
+	// The group -> role mapping is admin configuration, not a
+	// secret: show it so the mapping can be verified in the console.
+	if len(cfg.RoleMap) > 0 {
+		out["role_map"] = cfg.RoleMap
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // oidcLogin starts the authorization-code flow: redirect the browser
@@ -101,6 +108,7 @@ func (a *API) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	user, err := a.auth.LoginOIDC(auth.OIDCClaims{
 		Subject: claims.Subject, PreferredUsername: claims.PreferredUsername,
 		Email: claims.Email, DisplayName: claims.Name, Department: claims.Department,
+		Groups: claims.Groups,
 	})
 	if err != nil {
 		a.audit.Append(audit.Event{Actor: "oidc", Kind: "auth", Action: "oidc_login_failed", Decision: "block"})
