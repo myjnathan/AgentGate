@@ -462,10 +462,16 @@
 - 实现：`internal/mcp/mcp.go` 新增三个共享静态谓词——`builtinToolVisible`（内置工具最低等级）、`upstreamVisible`（F6 联邦上游：启用 + 最低等级）、`restToolVisible`（F7 REST 工具：启用 + 最低等级），`listTools` 与三处调用入口共用；此前唯一的列表/调用不一致是内置 `kb_get`（受管级工具，BYOA 的列表里可见、调用时才拒），本轮列表侧同样过滤；三处调用侧的等级拒绝由 -32003「tool not permitted for this agent tier」改为 -32602「unknown tool」，服务端 `tool_call_denied` 审计事件（reason=tier_insufficient）不变；`prompts/get` 的等级拒绝同步改为 -32602「unknown prompt」，与 prompts/list 的隐藏行为对齐；F22 知识包的列表/读取谓词未动（已共用）。
 - 测试：新增 `TestToolsListCallSameRule`（BYOA 列表无 kb_get、受管级列表有；三类隐藏工具调用均为 -32602 unknown tool；不变量——列表中任一工具以空参数调用永不报 unknown tool）与 `TestKnowledgePackageListGetAgreement`（列表中每个包都可读、列表外的一律不可读）；4 处既有期望随行为变更同步更新（kb_get / 联邦 / REST / 提示词的等级拒绝均改为 -32602，测试本身未删）；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 新增 3 项断言（BYOA 列表无 kb_get、受管级列表有 kb_get、两处隐藏工具调用报 unknown tool）。
 
-### F32 一致占位符脱敏 `todo`
+### F32 一致占位符脱敏 `done`（2026-11-23）
 - 来源：Nathan 2026-11-22 批准立项（同上调研结论，待办登记 8）：借鉴 Kong 的一致占位符——同一敏感值在一次会话内始终得同一占位符，利于模型理解；只借占位符一致性，进程内实现（Kong 的实现是独立 spaCy 容器，不借）。
-- 适配：待立项细化。
+- 适配：同一请求内同一敏感值映射到同一个占位符（现实现按类别计数编号，同一值重复出现会得到不同占位符），保持模型对脱敏文本的指代理解；响应恢复按映射精确还原，流式恢复（F10 回填缓冲）行为不变。红线：映射仍只存于单次请求内存、不落盘；占位符不得携带原文信息。【借鉴策略标注】借设计思想，实现自研；Kong 该功能为企业版闭源，不复制代码，其独立 NLP 容器形态不采用（坚持进程内规则实现）。
 - 排序：排在 F31 之后、F27 之前。
+- 借鉴点（Kong AI PII Sanitizer 官方插件文档 developer.konghq.com/plugins/ai-sanitizer，2026-11-23 查阅）：
+  placeholder 模式用 `PLACEHOLDER{i}`，**identical original values receive the same placeholder**；`recover_redacted` 在响应中把原文恢复回来（仅对输入脱敏生效）；凭据按原长换成 `#`、自定义模式用 `CUSTOM{i}`；检测走独立的 AI PII Anonymizer Service（Docker + 每语言一个 spaCy 模型镜像，需 600MB 以上内存）。
+  我们照此实现，但做三处改动：① 同一性从字面扩展到逻辑值——F10 已让完全相同的字符串共用占位符，本轮让同一值的不同写法（分隔符/大小写/全角，如 `138-0000-0000` 与 `13800000000`）也共用一个占位符，认同键用 F29 的关键词归一化；② 凭据仍只按完全相同认同（密钥区分大小写）；③ 恢复填回首次出现的写法（一个占位符只能对应一种写法，值相同、格式统一为首次出现的形式），不采用 Kong 的独立 NLP 容器（坚持进程内规则实现、单二进制不变）。
+- 实现：`guard.Redactor` 的复用键由原文精确值改为典范键（`canonicalKey`：PII/自定义词用 `normalize.Keywords` 归一化后认同、凭据用原文精确值、类别前缀防跨类碰撞，归一化为空时回落原文）；占位符与恢复原文在首次出现时一次定好（恢复取首次出现的写法）；`MaxPlaceholderLength` 与 `Restore` 未动，流式回填缓冲行为不变；网关 `redactBody`、MCP 工具结果/提示词渲染、sidecar 请求代理三处共用同一套 Redactor，行为同步生效；详见 docs/consistent-placeholders.md，README 防护管线行同步。
+- 测试：guard 包 2 项（`TestRedactorCanonicalIdentity`：电话/邮箱/银行卡/自定义词/身份证校验位大小写五组同值共用占位符、凭据大小写敏感不合并、编号按逻辑值计数；`TestRedactNormalizedRoundTrip` 期望随行为变更同步更新——同一电话两种写法现为 1 个映射条目、恢复为首次出现的写法）+ 网关 1 项（content 用带横线手机号、tool_calls 参数用不带横线同一号：1 个映射条目、两处同为 `<PII_1>`、恢复为首次写法）+ MCP 1 项（联邦工具结果含 `XH 200` 与 `XH-200` 两种写法：BYOA 得 `<CUSTOM_1>` 两次、受管级得原文）+ sidecar 1 项（上游只见 `<PII_1>` 两次、下游恢复为首次写法两次）；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 279 项断言 0 失败（基线 278 + 新增 1）。
+- 已知注意点：恢复只填回首次出现的写法，响应中重复值会被统一格式（值相同）；F29 关键词视图会把纯标点分隔的两个数字连成一串（如 `138-0000-0000，13800000000` 中间只有逗号），这时前一个变形值可能检测不到——占位符一致性只作用于已被检测到的值，检测本身的这个边界不在本轮范围内；映射仍只存单次请求内存，多轮对话里同一值每轮重新编号。
 
 ### F33 失败分类重试 `todo`
 - 来源：Nathan 2026-11-22 批准立项（同上调研结论，待办登记 8）：借鉴 Bifrost 的失败分类重试——密钥级失败立即轮换、瞬时错误同密钥重试；另含分层预算。

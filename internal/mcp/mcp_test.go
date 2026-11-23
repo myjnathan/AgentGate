@@ -117,6 +117,8 @@ func setup(t *testing.T) *testEnv {
 					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}}},
 				{"name": "restart_service", "description": "restart a service",
 					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}}},
+				{"name": "project_brief", "description": "project brief with the code in two spellings",
+					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}}},
 			}}})
 			return
 		}
@@ -126,6 +128,11 @@ func setup(t *testing.T) *testEnv {
 			text = `{"balance": 5, "employee": "lixiaofeng"}`
 		case "project_status":
 			text = "XH-200 进度正常"
+		case "project_brief":
+			// F32: the same custom word in two surface forms (with a
+			// space, as F29 normalized detection finds it, and with
+			// its hyphen) must share one placeholder for BYOA.
+			text = "项目 XH 200（代号 XH-200）进度正常"
 		case "restart_service":
 			text = "restarted"
 		}
@@ -440,6 +447,24 @@ func TestFederatedToolResultRedactedForBYOA(t *testing.T) {
 	// A managed token receives the raw upstream answer.
 	text = resultText(t, e.callTool(t, e.mgdTok, "hr.project_status", map[string]any{}))
 	if !strings.Contains(text, "XH-200") {
+		t.Fatalf("managed result should keep the raw upstream answer, got %s", text)
+	}
+}
+
+// F32: a federated tool result holding the same confidential value in
+// two surface forms is redacted to one placeholder for BYOA, so the
+// model sees one entity; a managed token still receives the raw text.
+func TestFederatedToolResultCanonicalPlaceholders(t *testing.T) {
+	e := setup(t)
+	text := resultText(t, e.callTool(t, e.byoaTok, "hr.project_brief", map[string]any{}))
+	if strings.Contains(text, "XH 200") || strings.Contains(text, "XH-200") {
+		t.Fatalf("BYOA must not receive the confidential word in either spelling, got %s", text)
+	}
+	if strings.Count(text, "<CUSTOM_1>") != 2 {
+		t.Fatalf("both spellings must share one placeholder, got %s", text)
+	}
+	text = resultText(t, e.callTool(t, e.mgdTok, "hr.project_brief", map[string]any{}))
+	if !strings.Contains(text, "XH 200") || !strings.Contains(text, "XH-200") {
 		t.Fatalf("managed result should keep the raw upstream answer, got %s", text)
 	}
 }

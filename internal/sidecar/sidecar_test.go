@@ -425,6 +425,39 @@ func TestToolCallsArgumentsRedactedWithSharedNumbering(t *testing.T) {
 	}
 }
 
+// F32: the same phone in two surface forms is one logical value —
+// the gateway sees one placeholder, and the reply restores both
+// occurrences to the first-seen form.
+func TestCanonicalPlaceholdersAcrossForms(t *testing.T) {
+	gw := &fakeGateway{}
+	s := startSidecar(t, gw, sidecar.Config{})
+	code, body := postChat(t, s.URL, "tok", "mock-eco", "主号 138-0000-0000，备用 13800000000")
+	if code != 200 {
+		t.Fatalf("want 200, got %d: %s", code, body)
+	}
+	var upDecoded struct {
+		Messages []struct {
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(gw.lastBody()), &upDecoded); err != nil {
+		t.Fatalf("upstream body must be valid JSON: %v", err)
+	}
+	upContent := upDecoded.Messages[0].Content
+	if strings.Count(upContent, "<PII_1>") != 2 {
+		t.Fatalf("want one placeholder used twice upstream, got %s", upContent)
+	}
+	if strings.Contains(upContent, "138-0000-0000") || strings.Contains(upContent, "13800000000") {
+		t.Fatalf("original phone reached the gateway: %s", upContent)
+	}
+	if strings.Count(body, "138-0000-0000") != 2 {
+		t.Fatalf("reply must restore the first-seen form twice, got %s", body)
+	}
+	if strings.Contains(body, "13800000000") || strings.Contains(body, "<PII_") {
+		t.Fatalf("reply must not carry the second form or a placeholder: %s", body)
+	}
+}
+
 func TestModelsPassthrough(t *testing.T) {
 	gw := &fakeGateway{}
 	s := startSidecar(t, gw, sidecar.Config{})

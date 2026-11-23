@@ -170,7 +170,12 @@ func TestScanNormalizedPreservesOriginal(t *testing.T) {
 }
 
 // F29: redaction of a normalized-only finding replaces the whole
-// original span (separators included) and restores it exactly.
+// original span (separators included).
+//
+// F32 changed the expectation: the two spans are surface forms of one
+// phone number, so they share one placeholder. Restore therefore
+// returns the first-seen form ("138 0000 0000") in both places —
+// the value is identical, only its formatting is normalized.
 func TestRedactNormalizedRoundTrip(t *testing.T) {
 	d := NewDetector(nil, nil)
 	text := "联系我 138 0000 0000 或 １３８００００００００"
@@ -182,10 +187,106 @@ func TestRedactNormalizedRoundTrip(t *testing.T) {
 	if strings.Contains(red, "138") || strings.Contains(red, "１３８") {
 		t.Fatalf("redaction leaked deformed phone: %s", red)
 	}
-	if strings.Count(red, "<PII_") != 2 {
-		t.Fatalf("expected 2 placeholders, got %q", red)
+	if len(mp) != 1 {
+		t.Fatalf("same phone in two forms must share one mapping entry, got %v", mp)
 	}
-	if restored := Restore(red, mp); restored != text {
-		t.Fatalf("restore mismatch:\n got %q\nwant %q", restored, text)
+	if strings.Count(red, "<PII_1>") != 2 {
+		t.Fatalf("expected one placeholder used twice, got %q", red)
 	}
+	if restored := Restore(red, mp); restored != "联系我 138 0000 0000 或 138 0000 0000" {
+		t.Fatalf("restore must return the first-seen form twice:\n got %q", restored)
+	}
+}
+
+// F32: one logical value, one placeholder — across surface forms.
+// Same phone with/without separators, same email in different case,
+// same bank card with/without spaces, same custom word with
+// separators inserted: each pair shares a placeholder and mints a
+// single mapping entry. Credentials stay exact-match: two keys that
+// differ only in case are different secrets and must not merge.
+func TestRedactorCanonicalIdentity(t *testing.T) {
+	d := NewDetector(nil, []string{"XH-200"})
+	cases := []struct {
+		name  string
+		text  string
+		ph    string // the single placeholder both forms must share
+		forms []string
+	}{
+		{"phone separators", "主号 138-0000-0000，备用 13800000000", "<PII_1>",
+			[]string{"138-0000-0000", "13800000000"}},
+		{"email case", "发给 Li@Xinghe.example 或 li@xinghe.example", "<PII_1>",
+			[]string{"Li@Xinghe.example", "li@xinghe.example"}},
+		{"bank card spaces", "卡号 6222 0000 0000 0000，另一张 6222000000000000", "<PII_1>",
+			[]string{"6222 0000 0000 0000", "6222000000000000"}},
+		{"custom word separators", "XH 200 与 XH-200 的进度", "<CUSTOM_1>",
+			[]string{"XH 200", "XH-200"}},
+		{"id card X case", "证件 11010119900307123X 与 11010119900307123x 无关", "<PII_1>",
+			[]string{"11010119900307123X", "11010119900307123x"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			findings := d.Scan(c.text)
+			if len(findings) != 2 {
+				t.Fatalf("expected 2 findings, got %v", findings)
+			}
+			red, mp := Redact(c.text, findings)
+			if len(mp) != 1 {
+				t.Fatalf("expected 1 mapping entry, got %v", mp)
+			}
+			if strings.Count(red, c.ph) != 2 {
+				t.Fatalf("expected placeholder %s twice, got %q", c.ph, red)
+			}
+			for _, f := range c.forms {
+				if strings.Contains(red, f) {
+					t.Fatalf("redaction leaked %q: %s", f, red)
+				}
+			}
+			// Restore returns the first-seen surface form in both
+			// places and leaves no placeholder behind.
+			restored := Restore(red, mp)
+			if strings.Contains(restored, c.ph) {
+				t.Fatalf("restore left a placeholder: %q", restored)
+			}
+			if got := strings.Count(restored, c.forms[0]); got != 2 {
+				t.Fatalf("expected first-seen form %q twice after restore, got %q", c.forms[0], restored)
+			}
+		})
+	}
+
+	// Credentials are case-sensitive: two keys differing only in case
+	// are different secrets and must mint different placeholders.
+	t.Run("credentials stay case-sensitive", func(t *testing.T) {
+		text := "key1 sk-abcdefghijklmnop key2 sk-ABCDEFGHIJKLMNOP"
+		findings := d.Scan(text)
+		if len(findings) != 2 {
+			t.Fatalf("expected 2 findings, got %v", findings)
+		}
+		red, mp := Redact(text, findings)
+		if len(mp) != 2 {
+			t.Fatalf("different keys must not share a placeholder, got %v", mp)
+		}
+		if restored := Restore(red, mp); restored != text {
+			t.Fatalf("credential restore must be exact:\n got %q\nwant %q", restored, text)
+		}
+	})
+
+	// Numbering counts logical values, not occurrences: the second
+	// distinct phone is _2 even though the first phone appeared twice.
+	// (A letter between the two forms keeps them separate digit runs
+	// in the F29 keyword view; two bare numbers glued by punctuation
+	// alone merge into one run and are not detected — a known F29
+	// edge, not a placeholder issue.)
+	t.Run("numbering counts logical values", func(t *testing.T) {
+		text := "138-0000-0000 与 13800000000，另 13911112222"
+		red, mp := Redact(text, d.Scan(text))
+		if len(mp) != 2 {
+			t.Fatalf("expected 2 mapping entries, got %v", mp)
+		}
+		if strings.Count(red, "<PII_1>") != 2 || !strings.Contains(red, "<PII_2>") {
+			t.Fatalf("expected <PII_1> twice and <PII_2> once, got %q", red)
+		}
+		if strings.Contains(red, "<PII_3>") {
+			t.Fatalf("no third placeholder should be minted: %q", red)
+		}
+	})
 }

@@ -98,6 +98,56 @@ func TestRedactBodySharedPlaceholdersNoCollision(t *testing.T) {
 	}
 }
 
+// TestRedactBodyCanonicalPlaceholders verifies F32 end to end at the
+// gateway layer: the same phone written with dashes in the content
+// and without dashes in a tool_calls argument is one logical value,
+// so it gets one placeholder in both places (the model can corefer),
+// and the response restores both occurrences to the first-seen form.
+func TestRedactBodyCanonicalPlaceholders(t *testing.T) {
+	det := guard.NewDetector(seed.DemoBannedWords, seed.DemoCustomWords)
+	body, _ := json.Marshal(map[string]any{
+		"model": "mock-eco",
+		"messages": []map[string]any{
+			{"role": "user", "content": "主号是 138-0000-0000，帮我记下来"},
+			{"role": "assistant", "tool_calls": []map[string]any{
+				{"id": "call_4", "type": "function", "function": map[string]any{
+					"name":      "send_sms",
+					"arguments": `{"phone":"13800000000","text":"会议改到三点"}`,
+				}},
+			}},
+		},
+	})
+	out, mapping := redactBody(body, det)
+	if len(mapping) != 1 {
+		t.Fatalf("expected 1 mapping entry (one phone, two surface forms), got %v", mapping)
+	}
+	if mapping["<PII_1>"] != "138-0000-0000" {
+		t.Fatalf("mapping must keep the first-seen form, got %v", mapping)
+	}
+	var req chatRequest
+	if err := json.Unmarshal(out, &req); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(contentText(req.Messages[0].Content), "<PII_1>") {
+		t.Fatalf("content not redacted to the shared placeholder: %s", req.Messages[0].Content)
+	}
+	args := req.Messages[1].ToolCalls[0].Function.Arguments
+	if !strings.Contains(args, "<PII_1>") {
+		t.Fatalf("args must reuse the content placeholder <PII_1>, got %s", args)
+	}
+	if strings.Contains(string(out), "13800000000") || strings.Contains(string(out), "138-0000-0000") {
+		t.Fatalf("original phone leaked into forwarded body: %s", out)
+	}
+	restored := guard.Restore(contentText(req.Messages[0].Content), mapping)
+	if restored != "主号是 138-0000-0000，帮我记下来" {
+		t.Fatalf("restore mismatch: %q", restored)
+	}
+	restoredArgs := guard.Restore(args, mapping)
+	if !strings.Contains(restoredArgs, "138-0000-0000") {
+		t.Fatalf("args restore must return the first-seen form, got %s", restoredArgs)
+	}
+}
+
 // TestRedactBodyNoFindingsLeavesBodyUntouched ensures the fast path:
 // no findings means the original bytes (including unknown message
 // fields) are forwarded byte-for-byte.
