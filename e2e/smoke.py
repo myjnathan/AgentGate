@@ -588,6 +588,14 @@ def main():
                    {"model": "mock-eco", "messages": [{"role": "user", "content": "我的手机号是１３８１２３４５６７８，帮我记下来"}]}, token=tok2)
     text = json.dumps(chat, ensure_ascii=False)
     check("F29 fullwidth phone redacted and restored", s == 200 and "１３８１２３４５６７８" in text and "<PII_" not in text)
+    # F32: the same phone in two surface forms is one entity — the
+    # model sees one placeholder, so the echoed reply restores both
+    # occurrences to the first-seen form.
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-eco", "messages": [{"role": "user", "content": "主号 138-0000-0000，备用 13800000000，两个都是我的号"}]}, token=tok2)
+    text = json.dumps(chat, ensure_ascii=False)
+    check("F32 same phone in two forms shares one placeholder",
+          s == 200 and text.count("138-0000-0000") == 2 and "13800000000" not in text and "<PII_" not in text)
     # Top-secret data (header-declared) only reaches the local model.
     s, chat = call("/v1/chat/completions",
                    {"model": "mock-pro", "messages": [{"role": "user", "content": "普通内容"}]}, token=tok2,

@@ -2,6 +2,18 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-23 · F32 一致占位符脱敏
+
+- 本轮按常规规程选条目：P0、P1 全部 done，P2 按清单顺序取 F32（首个剩余 P2 条目）。体内的 12:26 特别指令与待办登记 1–8 均已在先前轮次执行完毕、作废。本地另有一条 docs 提交（F31 推送结果记录）随本轮整包快照一并带上。
+- 借鉴点（2026-11-23 查阅一手来源）：Kong AI PII Sanitizer 官方插件文档（developer.konghq.com/plugins/ai-sanitizer）：placeholder 模式用 `PLACEHOLDER{i}`，**identical original values receive the same placeholder**；`recover_redacted` 在响应中把原文恢复回来（仅对输入脱敏生效）；凭据按原长换成 `#`、自定义模式用 `CUSTOM{i}`；检测走独立的 AI PII Anonymizer Service（Docker + 每语言一个 spaCy 模型镜像，需 600MB 以上内存）。另有 2026-11-22 的五家网关调研报告（research_notes/ai-gateways-higress-apisix-kong-bifrost-20261122-1452/report.md）中 Kong 一节为同一结论的旁证。
+- 关键发现（立项细化）：登记 8 称「现实现按类别计数编号，同一值重复出现会得到不同占位符」，实测不成立——F10 的 Redactor 已让完全相同的字符串在一次请求内共用占位符（网关 `TestRedactBodyToolCalls` 即证）。本轮的真实缺口是**同一逻辑值的不同写法**：`138-0000-0000` 与 `13800000000`、`Li@Xinghe.example` 与 `li@xinghe.example`、`XH 200` 与 `XH-200` 各得不同占位符，模型无法指代。F32 的实现即补这一层：同一性从字面扩展到逻辑值。
+- 复用检查（Nathan 复用优先指示）：未复制代码——Kong 该功能为企业版闭源插件、其 spaCy NLP 容器形态与单二进制定位冲突，只借「同一值同一占位符」的设计；实现为 `guard.Redactor` 约 30 行改动 + 复用 F29 的 `normalize.Keywords` 作典范键，无新依赖。
+- 实现：`guard.Redactor` 的复用键由原文精确值改为典范键（`canonicalKey`：PII/自定义词用 F29 关键词归一化——分隔符去掉、全角折半角、统一小写，凭据用原文精确值因密钥区分大小写，类别前缀防跨类碰撞，归一化为空时回落原文）；占位符与恢复原文在首次出现时一次定好（恢复填回首次出现的写法）；`MaxPlaceholderLength` 与 `Restore` 未动，流式回填缓冲行为不变；网关 `redactBody`、MCP 工具结果/提示词渲染、sidecar 请求代理三处共用同一套 Redactor，行为同步生效；新增 docs/consistent-placeholders.md，README 防护管线行同步。
+- 关键决策：① 恢复取首次出现的写法——一个占位符只能对应一种写法，值相同、格式统一为首次出现的形式，这是为指代一致性付出的可见代价，已写入文档；② 凭据不参与归一化认同（大小写不同的两把 key 是不同的密钥）；③ 映射仍只存单次请求内存、不落盘、不跨请求复用（红线不变），多轮对话里同一值每轮重新编号。
+- 测试：guard 包 2 项（`TestRedactorCanonicalIdentity`：电话/邮箱/银行卡/自定义词/身份证校验位大小写五组同值共用占位符、凭据大小写敏感不合并、编号按逻辑值计数；`TestRedactNormalizedRoundTrip` 期望随行为变更同步更新——同一电话两种写法现为 1 个映射条目、恢复为首次出现的写法，测试本身未删）+ 网关 1 项（content 用带横线手机号、tool_calls 参数用不带横线同一号：1 个映射条目、两处同为 `<PII_1>`、恢复为首次写法）+ MCP 1 项（联邦工具结果含 `XH 200` 与 `XH-200` 两种写法：BYOA 得 `<CUSTOM_1>` 两次、受管级得原文；假上游新增 `project_brief` 工具）+ sidecar 1 项（上游只见 `<PII_1>` 两次、下游恢复为首次写法两次）；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（guard/gateway/mcp/sidecar）全绿；`make smoke` 279 项断言 0 失败（基线 278 + 新增 1）。
+- 本轮实测抓到的真问题：① 写测试时发现 F29 关键词视图会把纯标点分隔的两个数字连成一串——`138-0000-0000，13800000000` 中间只有逗号时，前一个变形值检测不到（占位符一致性只作用于已被检测到的值）；已记为 F32 已知注意点，检测本身的边界不在本轮范围内，不修。② 实现初版在 `Redact` 的替换循环里写 `used` 映射：多段文本（content 先、tool_calls 参数后）时后一段的写法会覆盖前一段，恢复取不到首次出现的写法；已改为占位符 minted 时一次定好恢复原文（网关测试当场捕获）。③ race 全量跑时 sidecar `TestPolicyCacheSurvivesRestart` 失败一次（状态已切 gateway 但缓存文件尚未落盘），与本轮改动无关（未碰 sidecar/terminal 的刷新路径）；随后单测 5 次、race 单测 3 次、race 全包 1 次全部通过，记为已知偶发时序抖动、不修。
+- 推送结果：待合并后补记。
+
 ## 2026-11-23 · F31 MCP 列表/调用同规则过滤
 
 - 本轮按常规规程选条目：P0、P1 全部 done，P2 按清单顺序取 F31（首个剩余 P2 条目）。体内的 12:26 特别指令与待办登记 1–8 均已在先前轮次执行完毕、作废。本地另有一条 docs 提交 fe9cd84（F30 推送结果记录）随本轮整包快照一并带上。
@@ -11,7 +23,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 关键决策：① 被隐藏的工具在调用时报「不存在」而非「无权」——错误码本身会泄漏工具存在性，-32602 与 prompts/get 对范围外提示词的「unknown prompt」同款；② 静态谓词共用、参数门禁（DLP 扫描、参数密级上限）留调用侧——列表时没有参数、无法判定，Envoy 也是请求授权与响应过滤分层；③ -32003 全仓退役——此前唯一引用就是这四处调用点与测试，改后全仓无 -32003。
 - 测试：新增 `TestToolsListCallSameRule`（BYOA 列表无 kb_get、受管级列表有；三类隐藏工具调用均为 -32602 unknown tool；不变量——列表中任一工具以空参数调用永不报 unknown tool）与 `TestKnowledgePackageListGetAgreement`（列表中每个包都可读、列表外的一律不可读）；4 处既有期望随行为变更同步更新（kb_get / 联邦 / REST / 提示词的等级拒绝均改为 -32602，测试本身未删）；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（mcp）全绿；`make smoke` 278 项断言 0 失败（基线 276 + 新增 2）。
 - 本轮实测抓到的真问题：① 冒烟首跑 1 项失败——`rpm limit enforced at 6th call`（F3 限流断言），与本轮改动无关（未碰 gateway/ratelimit）；随后重跑 4 次全部 0 失败，应为并行负载下的 60 秒滑动窗口时序抖动，记为已知偶发、不修。② 写测试时一次编辑误删了 `TestRESTToolCallArgsValidation` 的前几行，立即用 `git diff` 发现并恢复——教训：改测试文件后先 `git diff` 核对再跑测试。
-- 推送结果：待推送后填入。下一轮为 P2 的 F32（一致占位符脱敏）。
+- 推送结果：本地提交 45724f4（含随带的 fe9cd84，即 F30 推送结果记录）；远端建分支 loop/f31（基点远端 main 549bd216；推送前核对同步基点：7 个改动文件远端 blob 与本地父提交 a152949 一致）；整包快照 7 文件一次推送（提交 d4044316），PR #28 文件清单与本轮一致（7/7）；未触发 contents API 回退；已合并进远端 main，远端 HEAD 129b44a8（合并提交），读回 main 上 internal/mcp/mcp.go、docs/feature-backlog.md 两文件 blob 与快照一致。另记两点：① 推送后 get_file_contents / list_commits 读回 loop/f31 仍显示旧内容——疑似连接器读侧忽略 branch 参数或缓存滞后，PR 文件清单与合并后 main 读回证明分支实际已更新，以后轮次以 PR 清单 + main 读回为准；② 快照同步记录文件 CLI 未自动生成，已手动补记 `~/workspace/agentgate-f31-snap.muse-github-snapshot-sync.json`（提交 SHA + 7 路径）。待删分支新增 loop/f31（共 20 个，需 Nathan 网页端手动删除）。下一轮为 P2 的 F32（一致占位符脱敏）。
 
 ## 2026-11-23 · F30 复杂度智能路由
 

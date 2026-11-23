@@ -232,14 +232,45 @@ func Redact(text string, findings []Finding) (string, map[string]string) {
 // Numbering per Redact call would collide when mappings are merged
 // (each call restarts at _1), so a request is redacted through a single
 // Redactor.
+//
+// Identity is canonical, not textual (F32, Kong AI PII Sanitizer's
+// "identical values receive the same placeholder"): the same logical
+// value in different surface forms — "138-0000-0000" vs "13800000000",
+// an email in different case, a custom word with separators inserted
+// ("XH 200" vs "XH-200") — maps to one placeholder, so the model can
+// still corefer ("call that number again") instead of seeing two
+// unrelated entities. Credentials are the exception: keys and tokens
+// are case-sensitive, so only an exact match reuses a placeholder.
+//
+// The mapping lives only in this Redactor (single-request memory, never
+// persisted); Restore returns the first-seen surface form for a logical
+// value, so a repeated value comes back in the format it first appeared
+// in — the value is identical, only its formatting is normalized.
 type Redactor struct {
-	seen map[string]string // original value -> placeholder
-	used map[string]string // placeholder -> original value
+	seen map[string]string // canonical value -> placeholder
+	used map[string]string // placeholder -> original value (first-seen surface form)
 }
 
 // NewRedactor returns an empty Redactor.
 func NewRedactor() *Redactor {
 	return &Redactor{seen: map[string]string{}, used: map[string]string{}}
+}
+
+// canonicalKey returns the identity a finding is filed under. PII and
+// custom words fold to the F29 keyword view (separators stripped,
+// fullwidth folded, lowercased), so surface variants of one value share
+// a placeholder; credentials keep the exact string because keys and
+// tokens are case-sensitive. The category prefixes the key so a value
+// filed under two categories can never collide. A value that folds to
+// nothing falls back to its exact string.
+func canonicalKey(f Finding) string {
+	if f.Category == CatCredential {
+		return string(f.Category) + "\x00" + f.Value
+	}
+	if k := normalize.Keywords(f.Value).Text; k != "" {
+		return string(f.Category) + "\x00" + k
+	}
+	return string(f.Category) + "\x00" + f.Value
 }
 
 // Redact replaces findings in text with placeholders, reusing the
@@ -252,17 +283,25 @@ func (r *Redactor) Redact(text string, findings []Finding) string {
 		if f.Category == CatBanned {
 			continue
 		}
-		if _, ok := r.seen[f.Value]; !ok {
-			r.seen[f.Value] = fmt.Sprintf("<%s_%d>", strings.ToUpper(string(f.Category)), len(r.seen)+1)
-		}
 		spans = append(spans, f)
 	}
-	sort.Slice(spans, func(i, j int) bool { return spans[i].Start > spans[j].Start })
+	// Document order: the first occurrence of a logical value fixes
+	// both its placeholder and the surface form Restore returns.
+	sort.SliceStable(spans, func(i, j int) bool { return spans[i].Start < spans[j].Start })
+	for _, f := range spans {
+		key := canonicalKey(f)
+		if _, ok := r.seen[key]; !ok {
+			ph := fmt.Sprintf("<%s_%d>", strings.ToUpper(string(f.Category)), len(r.seen)+1)
+			r.seen[key] = ph
+			r.used[ph] = f.Value
+		}
+	}
+	// Replace right-to-left so earlier spans stay valid.
+	sort.SliceStable(spans, func(i, j int) bool { return spans[i].Start > spans[j].Start })
 	out := text
 	for _, f := range spans {
-		ph := r.seen[f.Value]
+		ph := r.seen[canonicalKey(f)]
 		out = out[:f.Start] + ph + out[f.End:]
-		r.used[ph] = f.Value
 	}
 	return out
 }
