@@ -15,6 +15,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/alert"
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
+	"github.com/myjnathan/agentgate/internal/autorouter"
 	"github.com/myjnathan/agentgate/internal/cache"
 	"github.com/myjnathan/agentgate/internal/distrib"
 	"github.com/myjnathan/agentgate/internal/federation"
@@ -54,6 +55,10 @@ type API struct {
 	// counters (backlog F28); nil when the server was started
 	// without a gateway wired in.
 	semReviewStats func() semreview.Stats
+	// autoRouteStats returns the gateway's smart-routing runtime
+	// counters (backlog F30); nil when the server was started
+	// without a gateway wired in.
+	autoRouteStats func() autorouter.Stats
 	// allowTopSecretExceptions is the operator opt-in for
 	// top-secret exceptions (backlog F24); default false.
 	allowTopSecretExceptions bool
@@ -202,6 +207,12 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/semantic-review", a.requirePerm(roles.Policy, a.updateSemanticReview))
 	mux.HandleFunc("POST /api/semantic-review/samples", a.requirePerm(roles.Policy, a.addSemanticSample))
 	mux.HandleFunc("DELETE /api/semantic-review/samples/{id}", a.requirePerm(roles.Policy, a.deleteSemanticSample))
+	// Smart routing (F30): policy and complexity-sample library are
+	// admin/security policy (roles.Policy), same as F28.
+	mux.HandleFunc("GET /api/auto-route", a.requirePerm(roles.Policy, a.getAutoRoute))
+	mux.HandleFunc("POST /api/auto-route", a.requirePerm(roles.Policy, a.updateAutoRoute))
+	mux.HandleFunc("POST /api/auto-route/samples", a.requirePerm(roles.Policy, a.addAutoRouteSample))
+	mux.HandleFunc("DELETE /api/auto-route/samples/{id}", a.requirePerm(roles.Policy, a.deleteAutoRouteSample))
 }
 
 // ---- helpers ----

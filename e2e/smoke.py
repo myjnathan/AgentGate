@@ -231,6 +231,42 @@ def main():
     s, _ = call("/api/semantic-review", {"enabled": True}, token=alogin["session"], method="POST")
     check("F28 review re-enabled", s == 200)
 
+    # F30: smart routing — model=auto resolves to the cheap model
+    # for a simple question and the strong model for a complex one,
+    # and is rejected while the layer is off. Runs after the F2
+    # stats check like F28/F29, with a fresh BYOA token so the F3
+    # RPM count on the smoke token stays exact.
+    s, start30 = call("/api/setup/device/start", {"agent_type": "claude-code", "tier": "byoa"})
+    s, _ = call("/api/device/approve", {"code": start30["code"], "device_name": "ci-smoke-f30"}, token=sess)
+    s, poll30 = call("/api/setup/device/poll", {"code": start30["code"], "secret": start30["secret"]})
+    tok30 = poll30.get("token", "")
+    check("F30 token issued", s == 200 and tok30.startswith("ag_at_"))
+    s, ar = call("/api/auto-route", token=alogin["session"], method="GET")
+    check("F30 smart routing policy defaults", s == 200 and ar.get("enabled") is True
+          and len(ar.get("samples", [])) == 12 and ar.get("simple_group") == ["mock-eco"]
+          and ar.get("complex_group") == ["mock-pro"] and ar.get("unresolved_models") == [])
+    s, _ = call("/api/auto-route", token=sess, method="GET")
+    check("F30 smart routing forbidden for employee", s == 403)
+    s, chat = call("/v1/chat/completions",
+                   {"model": "auto", "messages": [{"role": "user", "content": "今天是星期几？"}]}, token=tok30)
+    check("F30 simple question routes to cheap model", s == 200 and chat.get("model") == "mock-eco")
+    s, chat = call("/v1/chat/completions",
+                   {"model": "auto", "messages": [{"role": "user", "content": "分析一下上季度供应商报价单的成本异常，给三条降本建议"}]}, token=tok30)
+    check("F30 complex question routes to strong model", s == 200 and chat.get("model") == "mock-pro")
+    s, chat = call("/v1/chat/completions",
+                   {"model": "auto", "messages": [{"role": "user", "content": "帮我写请假条"}]}, token=tok30)
+    check("F30 ordinary prompt falls back to cheap model", s == 200 and chat.get("model") == "mock-eco")
+    s, _ = call("/api/auto-route", {"enabled": False}, token=alogin["session"], method="POST")
+    check("F30 routing disabled", s == 200)
+    s, chat = call("/v1/chat/completions",
+                   {"model": "auto", "messages": [{"role": "user", "content": "今天是星期几？"}]}, token=tok30)
+    check("F30 auto rejected while disabled", s == 400 and chat.get("error", {}).get("code") == "model_not_available")
+    s, _ = call("/api/auto-route", {"enabled": True}, token=alogin["session"], method="POST")
+    check("F30 routing re-enabled", s == 200)
+    s, chat = call("/v1/chat/completions",
+                   {"model": "auto", "messages": [{"role": "user", "content": "今天是星期几？"}]}, token=tok30)
+    check("F30 auto works after re-enable", s == 200 and chat.get("model") == "mock-eco")
+
     # F4: audit export (NDJSON + chain verification headers) and a
     # no-op archive. Export/archive events are Kind "admin", so they
     # do not disturb the stats totals checked above.

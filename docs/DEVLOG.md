@@ -2,6 +2,17 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-23 · F30 复杂度智能路由
+
+- 本轮按常规规程选条目：P0、P1 全部 done，P2 按清单顺序取 F30（首个剩余 P2 条目）。体内的 12:26 特别指令与待办登记 1–8 均已在先前轮次执行完毕、作废。本地另有一条 docs 提交 c3fc529（F28 推送结果记录）随本轮整包快照一并带上。
+- 借鉴点（2026-11-23 查阅一手来源）：① 1Panel AI 网关官方文档（1panel.pro/docs/v2/user_manual/ai/gateway）：智能路由只在客户端请求 `model=auto` 时触发，其他模型名走正常转发；先配简单与复杂两个模型组（组内模型顺序即选路优先级，组内不做负载均衡），再在「设置 → Embedding」配向量服务、路由阈值与 TopK，在「智能路由 → 样本」维护简单 / 复杂请求样本并生成向量；请求转语义向量、与预置样本算相似度，样本无法明确命中时再通过规则兜底判断，最终分发到对应模型组；决策日志记录每次判定的简单 / 复杂占比。② Performance Hub Model Router 文档（docs.performancehub.co，旁证）：`auto` 同样是无定价的虚拟模型 ID，按提示复杂度在 Fast / Medium / Complex / Reasoning 四档中选模型、按解析出的模型计费，选路逻辑集中在网关侧。
+- 复用检查（Nathan 复用优先指示）：未复制代码——1Panel 为闭源商业产品、Performance Hub 为商业服务，只借其智能路由形态；分类器约 400 行纯标准库自研（`internal/autorouter`），向量化复用 F28 的 `semreview.Vectorize`/`Cosine`（F28 DEVLOG 预留的复用点）再加一层字符 bigram；选路复用本仓已有 `pickCandidates`（F1/F17 的密级 + 信任 + 冷却过滤）、F28 的审计决策日志形态、F5 的告警口径（本轮无新告警事件）。
+- 实现：新包 `internal/autorouter`（`Classifier`：样本匹配——F28 同款余弦相似度 + ≥3 共享 n-gram 门 + 包含分支（≥10 共享且覆盖较小一方 80%）、平局倾向复杂；规则兜底——≥2000 字 / ≥6 轮 / 带 tool_calls → 复杂，否则简单；`ValidateConfig`/`DefaultConfig`：默认启用、阈值 0.35、简单组 `mock-eco`、复杂组 `mock-pro`、12 条种子样本）；新存储 `internal/store/autoroute.go`（`AutoRouteSample` + `AutoRouteConfig`，`State.AutoRoute`，未配置时走内置默认值）；网关 `internal/gateway/autoroute.go`（`resolveAutoModel`：分类 → 组内按序找第一个有合规候选渠道的模型 → 该层无合规渠道回落另一层（仍在合规集合内）→ 两层都无时按组模型并集报显式错误；`rewriteModel` 改写请求体 model 字段；`AutoRouteStats` 运行时计数 6 项）；`ChatCompletions` 在分级与自带级拦截之后、渠道解析之前接入（解析后 `req.Model`/请求体/Trace 均为具体模型，`detail` 带 `auto_route` / `auto_route_confidence` / `auto_route_requested` / `auto_route_sample` / `auto_route_fallback`，例外凭证豁免逻辑与直接请求同款）；`GET /v1/models` 启用时列出虚拟模型 `auto`、停用时不列出；管理 API 四条（策略查 / 改、样本增 / 删，admin/security，`unresolved_models` 列出组里暂无渠道提供的模型）；管理台新增「智能路由」页（策略表单 + 计数 + 样本库增删，中英双语）；详见 docs/auto-routing.md。
+- 关键决策：① 只做简单 / 复杂两档（1Panel 同款两档），不做四档——演示模型只有 eco/pro 两档，四档无模型可配；② 分类器在 F28 向量化器上加字符 bigram 层——短中文问句 trigram 太少（「今天星期几？」只有 3 个），插入一个字毁掉两个，bigram 对单字插入更稳健；F28 的向量化器本身未动，增强只在 autorouter 包内；③ 阈值保持 0.35（与 F28 同值）：实测分离为改写 0.39–0.56、正常提示最高 0.32（「本周的供应商报价单汇总」0.32），重度缩写「星河精密几点上班」0.34 落规则兜底、层级仍正确；④ 层级回落是可用性选择、不是降级：回落仍在合规集合内（每跳都复用 `pickCandidates`），且审计同时记录分类层级与实际服务层级；⑤ 组模型无渠道提供时不报错（可能是前向引用），只在 GET 响应与管理台提示——硬校验会挡住「先配组、后接渠道」的正常顺序；⑥ 停用时 `model=auto` 报 `model_not_available` 而不是静默落默认模型——`auto` 不是真实模型，静默回落会掩盖配置错误。
+- 测试：autorouter 包 10 项 + 网关集成 10 项 + API 1 项；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（autorouter/gateway/api/store）全绿；`make smoke` 276 项断言 0 失败（基线 266 + 新增 10，三次运行均稳定）。
+- 本轮实测抓到的真问题：① 阈值调参初版照抄 F28 的纯 trigram 向量，短问句改写（「今天是星期几？」相对种子样本仅 1 个共享 trigram）与长文本规则（测试用 100 次重复只有 1500 字、未达 2000 字阈值）双双落空——已加 bigram 层并把长文本测试改为 150 次重复（2250 字），两处均有回归用例；「星河精密几点上班」相对种子样本 0.34 仍低于阈值，已作为「缩写落规则兜底、层级仍正确」的用例写进测试与文档，不再调低阈值。② 层级回落集成测试初版未给自定义配置配样本库（`Samples` 为 nil 即空库），分类走了规则而非样本——已补 `autorouter.DefaultSamples()`，并确认空库即规则兜底是设计行为（配置语义：删空样本 ≠ 恢复种子）。③ 冒烟里 `token=<redacted>` 是工具输出的脱敏显示，真实变量是 `sess` 与 `tok30`（F29/F28 轮同款坑），已逐行核对真名并加 `python3 -c compile` 自检。④ 文档初版写了未经实测的相似度数字（「本周的供应商报价单汇总」0.26、合同改写 0.55），已用临时 probe 测试实测修正为 0.32 与 0.56，probe 用后删除。
+- 推送结果：待推送后填入。下一轮为 P2 的 F31（MCP 列表/调用同规则过滤）。
+
 ## 2026-11-23 · F28 语义复核层
 
 - 本轮按常规规程选条目：P0、P1 全部 done，P2 按清单顺序取 F28（首个剩余 P2 条目）。体内的 12:26 特别指令与待办登记 1–8 均已在先前轮次执行完毕、作废。本地另有一条 docs 提交 583a41e（F29 推送结果记录）随本轮整包快照一并带上。
@@ -11,7 +22,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 关键决策：① 默认层用确定性 n-gram 向量而非神经网络 embedding——单二进制零依赖定位装不下 embedding 模型，`Vectorize` 是可替换的函数，F30 复用同一向量化器，诚实边界写进 docs/semantic-review.md；② 阈值 0.35 来自实测调参（应命中改写 0.38–0.69、正常提示最高 0.28，重度改写 0.21–0.33 留给深层）；③ 深层只审输入不审输出（输出审核需在流式与非流式回程加缓冲，留待后续轮次）；④ 超时与深层故障按密级分流（机密以上拦截、低密级告警放行）而非一律不放行——低密级一律拦截会把可用性交给审核端点的可用性；⑤ 复核在缓存之前——被拦的请求永不进缓存；⑥ 例外凭证不豁免复核拦截——复核是安全层不是分级豁免，与违禁词同款。
 - 测试：semreview 包 12 项 + 网关集成 9 项 + API 1 项；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（semreview/gateway/api/store/alert）全绿；`make smoke` 266 项断言 0 失败（基线 258 + 新增 8）。
 - 本轮实测抓到的真问题：① 全量 `go test ./...` 首跑时 sidecar 包 `TestPolicyCacheSurvivesRestart` 失败（policy-cache.json 未写出），单跑 3 次 + 整包重跑全绿——与 F23 轮 DEVLOG 记的同款已知偶发抖动（1 秒心跳 ticker 测试在并行负载下的时序问题），非本轮改动所致（本轮未碰 sidecar 代码）；重跑全绿后继续。② 阈值调参初版用「重叠率」作包含分支，正常提示「本周的供应商报价单汇总」误报 0.500——已改为「≥10 个共享 trigram 且覆盖较小一方 80%」的双条件包含分支，误报消失。③ `make smoke` 首次在 Makefile 内报 `go: not found`——Makefile 用 `GO ?= go`，本机 Go 不在系统 PATH（在 `~/workspace/tools/gosdk/bin`），须 `GO=$HOME/workspace/tools/gosdk/bin/go make smoke`；已在 DEVLOG 记下，下一轮起直接用该形式。④ 冒烟 F28 段的 1 次拦截 + 3 次放行断言须放在 F2 的 stats 精确计数断言之后（与 F29 轮同款坑），并复用 F29 的新令牌 `tok29` 以免干扰 F3 的 RPM 计数；真实变量已逐行核对（`sess` / `tok29` / `alogin["session"]`）。
-- 推送结果：（合并后补记）
+- 推送结果：本地提交 012278e（含随带的 583a41e，即 F29 推送结果记录）；远端建分支 loop/f28（基点远端 main f7fc1e25；推送前核对同步基点：9 个改动文件远端 blob 与本地父提交一致、DEVLOG.md 仅差本地独有的 F29 推送记录行、10 个新文件在远端不存在，抽查 2 个确认）；整包快照 20 文件一次推送（提交 26b9fc0a），逐文件哈希核对 20/20 一致，未触发 contents API 回退；另记：推送后发现快照同步记录文件未生成（CLI 未写出），已按规程从已确认的推送结果手动补记 `~/workspace/agentgate-f28-snap.muse-github-snapshot-sync.json`（提交 SHA + 20 路径）；PR #26 文件清单与本轮一致，已合并进远端 main，远端 HEAD 2cca9b68（合并提交），读回 main 上 internal/semreview/semreview.go、docs/feature-backlog.md、internal/api/semreview.go 三文件 blob 与快照一致。待删分支新增 loop/f28（共 18 个，需 Nathan 网页端手动删除）。下一轮为 P2 的 F30（复杂度智能路由）。
 
 ## 2026-11-23 · F29 DLP 归一化管线
 

@@ -255,6 +255,7 @@ func main() {
 	}
 	rest.SetCache(gw.Cache())
 	rest.SetSemReviewStats(gw.SemReviewStats)
+	rest.SetAutoRouteStats(gw.AutoRouteStats)
 	rest.SetAlertDispatcher(dispatcher)
 	// Terminal inventory (backlog F23): the sidecar policy snapshot
 	// is the gateway's own word lists, so a sidecar that refreshes
