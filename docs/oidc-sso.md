@@ -16,6 +16,8 @@ AGENTGATE_OIDC_CLIENT_SECRET=...                            # client_secret（�
 AGENTGATE_OIDC_REDIRECT_URL=https://gate.example.corp/auth/oidc/callback
 AGENTGATE_OIDC_SCOPES="openid profile email"               # 默认同此值，必须含 openid
 AGENTGATE_OIDC_DEPARTMENT_CLAIM=department                 # 部门取自哪个 claim，默认 department
+AGENTGATE_OIDC_GROUPS_CLAIM=groups                         # 组取自哪个 claim，默认 groups
+AGENTGATE_OIDC_ROLE_MAP=auditors:auditor,ops:operator      # 组 → 角色映射（F26，见下）
 ```
 
 在 IdP 侧把 `AGENTGATE_OIDC_REDIRECT_URL`（默认
@@ -37,15 +39,38 @@ redirect URI，并允许 `openid profile email` scope。
    claim 放进 ID token）。
 4. 首次登录即时开户（JIT）：按 IdP `sub` 建账号，用户名取
    `preferred_username`，没有则取邮箱前缀，再没有则取 `oidc-<hash>`；
-   部门取配置的 claim；**角色一律为 employee**——IdP 只证明身份，
-   不授权限，提权必须由本地管理员操作。
+   部门取配置的 claim；**角色默认 employee**——IdP 只证明身份，
+   不授权限；只有管理员显式配了组映射（见下「角色映射」）时，映射
+   组里的成员才按映射得角色，提权仍须本地管理员操作。
 5. 回调页把 12 小时会话 token 写进浏览器 localStorage 后回到管理台，
    与本地登录完全一致。
+
+## 角色映射（F26）
+
+`AGENTGATE_OIDC_ROLE_MAP` 是组名到角色的映射（逗号分隔
+`组:角色`），如 `auditors:auditor,ops:operator`：
+
+- 只认 `auditor` / `operator` / `employee` 三档；`admin` 与
+  `security` 写进映射会在启动校验时拒绝（OIDC 因此不启用，本地
+  登录继续可用），`internal/auth` 层还会再挡一次。
+- 组 claim 取自 ID token 或 userinfo（两者合并取并集），可以是字符
+  串数组或单个字符串；claim 名由 `AGENTGATE_OIDC_GROUPS_CLAIM`
+  配置（默认 `groups`，有的 IdP 叫 `teams`）。
+- 映射只作用于 IdP 管理的账号（角色来源为 `oidc`）：每次登录按当前
+  组成员关系重新定角色——进了映射组得对应角色，退了组回到
+  employee；一个用户在多个映射组里时，按组名字典序第一个命中的
+  组为准（确定性优先）。
+- 管理员在控制台改过角色的账号即转为本地管理（`role_source:
+  local`），此后映射不再覆盖它——本地决定优先于 IdP。
+- 未配置映射时 OIDC 登录永远不碰角色（F9 行为不变）。
+- 完整规则见 [docs/roles.md](docs/roles.md)。
 
 ## 安全约定（保守默认）
 
 - **IdP 只认身份、不认权限**：role claim 即便 IdP 给了也不采信；
-  新用户永远是 employee，管理员在本地提权。
+  新用户默认是 employee；只有管理员显式配了组映射（F26）时，映射
+  组里的成员才按映射得角色——且映射只认 auditor / operator /
+  employee，admin 与 security 永远由本地授予。
 - **账号不串户**：OIDC 用户名撞上已有的本地账号时自动加后缀，
   绝不复用本地账号；OIDC 账号没有本地密码哈希，本地登录永远失败。
 - **禁用即拒登**：被本地禁用的账号 OIDC 也登不进来。
@@ -61,7 +86,8 @@ redirect URI，并允许 `openid profile email` scope。
 - `GET /api/auth/providers`（无需登录）：登录页用，返回 `local_enabled` /
   `oidc_enabled` / `oidc_issuer`（不含 secret）。
 - `GET /api/auth/oidc/status`（admin/security）：返回 issuer、client_id、
-  redirect_url、scopes、department_claim 与发现的各端点地址（不含 secret）。
+  redirect_url、scopes、department_claim、groups_claim、组 → 角色映射表
+  与发现的各端点地址（不含 secret）。
 
 ## 用公开测试 IdP 验证（Duende demo）
 

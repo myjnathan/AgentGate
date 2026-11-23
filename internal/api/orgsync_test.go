@@ -266,7 +266,7 @@ func TestOrgSyncFlow(t *testing.T) {
 	}
 	count := 0
 	st.Read(func(s *store.State) { count = len(s.Users) })
-	if count != 3 { // seed only: admin + 2 employees
+	if count != 5 { // seed only: admin + auditor + operator + 2 employees
 		t.Fatalf("test must not provision: users = %d", count)
 	}
 

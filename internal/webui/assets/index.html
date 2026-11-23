@@ -134,7 +134,7 @@
       <button class="btn ghost" style="width:100%" onclick="location.href='/auth/oidc/login'" data-i18n="ssoBtn">使用企业 SSO 登录</button>
       <p class="muted" id="ssoIssuer" style="text-align:center;margin:6px 0 0"></p>
     </div>
-    <p class="muted" style="margin:16px 0 0" data-i18n="loginHint">演示账号：admin / agentgate-admin，员工：lixiaofeng / demo12345</p>
+    <p class="muted" style="margin:16px 0 0" data-i18n="loginHint">演示账号：admin / agentgate-admin，审计员：auditor / demo12345，运维员：ops / demo12345，员工：lixiaofeng / demo12345</p>
   </div>
 </div>
 
@@ -388,6 +388,19 @@
       </div>
     </section>
 
+    <section class="page" id="page-users">
+      <div class="pageHead"><div><h1 data-i18n="usersTitle">用户与角色</h1><p class="desc" data-i18n="usersDesc">分级管理员与职责分离：平台管理员、安全管理员、审计员、运维员各管一段，互相制约；角色分配本身只由平台管理员操作，全程审计。</p></div>
+      <div class="pageActions"><button class="btn ghost" onclick="loadUsers()" data-i18n="refresh">刷新</button></div></div>
+      <div class="card"><h3 data-i18n="roleMatrix">角色分工</h3>
+        <table id="roleMatrix"><thead><tr><th data-i18n="roleCol">角色</th><th data-i18n="name">名称</th><th data-i18n="usersHintCol">权限</th></tr></thead><tbody></tbody></table>
+      </div>
+      <div class="card"><h3 data-i18n="usersList">用户列表</h3>
+        <table id="users"><thead><tr><th data-i18n="user">用户</th><th data-i18n="name">名称</th><th data-i18n="department">部门</th><th data-i18n="roleCol">角色</th><th data-i18n="roleSource">角色来源</th><th data-i18n="authSource">账号来源</th><th data-i18n="status">状态</th><th data-i18n="userOp">操作</th></tr></thead><tbody></tbody></table>
+        <span id="usersMsg" class="msg"></span>
+        <p class="hint" style="margin-top:10px" data-i18n="usersHint">只有平台管理员可以改角色（安全管理员也不行，避免自我提权）；不能改自己的角色、不能禁用自己、不能动最后一位启用的平台管理员。禁用账号会立即吊销其全部会话。角色来源为 oidc 的账号由 IdP 组映射管理，管理员在控制台改过角色后即转为本地管理、IdP 不再覆盖。</p>
+      </div>
+    </section>
+
     <section class="page" id="page-channels">
       <div class="pageHead"><div><h1 data-i18n="channelsTitle">模型渠道</h1><p class="desc" data-i18n="channelsDesc">上游模型服务与其可承载的最高数据等级、信任类型；网关按分级策略选路，密钥只加密存储、永不回显。</p></div>
       <div class="pageActions"><button class="btn ghost" onclick="loadChannels()" data-i18n="refresh">刷新</button></div></div>
@@ -608,7 +621,7 @@
 <script>
 const I18N = {
   zh: {loginTitle:"登录",loginSub:"企业 Agent 治理网关 · 管理控制台",loginBtn:"登录",logout:"退出",ssoBtn:"使用企业 SSO 登录",username:"用户名",password:"密码",
-    loginHint:"演示账号：admin / agentgate-admin，员工：lixiaofeng / demo12345",
+    loginHint:"演示账号：admin / agentgate-admin，审计员：auditor / demo12345，运维员：ops / demo12345，员工：lixiaofeng / demo12345",
     navOps:"运营",navAccess:"接入与身份",navModel:"模型网关",navCap:"能力中心",navSys:"系统",
     dashTitle:"总览",dashDesc:"网关运行与治理态势：调用、拦截、渠道健康与审计完整性。",refresh:"刷新",
     kpiCalls:"模型调用（累计）",kpiTokens:"Token 消耗（累计）",kpiBlocked:"已拦截",kpiBlockedSub:"敏感词命中 / 密级越权 / 无合规通道",kpiChain:"审计哈希链",
@@ -657,9 +670,10 @@ const I18N = {
     alertsHint:"告警只含事件类别与处置，不带请求原文；投递失败最多重试 3 次。",
     packagesTitle:"安装包分发",packagesDesc:"受管 Agent 安装包的托管与分发：管理员上传或离线导入，员工自助下载；分发包的哈希可登记为 Agent 证明的基准值。",uploadPackage:"上传 / 离线导入安装包",packageList:"已托管安装包",pkgKind:"包类型",pkgManagement:"管理包（服务端）",pkgUser:"用户包（员工）",pkgFile:"文件",pkgSize:"大小",pkgSha:"SHA-256",pkgStatus:"校验状态",verified:"已校验",unverified:"未校验",pkgSource:"来源",pkgOfflineImport:"离线导入",pkgGenerated:"平台生成",pkgAgentType:"Agent 类型",registerBaseline:"登记为证明基准值",baselineRegistered:"已登记基准值",genUserBundle:"生成用户包（ag-guard + ag-setup）",gatewayUrl:"网关地址",egressAllowlist:"出口白名单（逗号分隔主机名）",expiresAt:"过期时间（可选，RFC3339）",cleanupExpired:"清理过期包",uploadBtn:"上传",genBundleBtn:"生成用户包",packagesHint:"管理包给 IT（agentgate 服务端，现有 Docker / 离线 bundle / systemd 形态，走现有离线部署通道）；用户包给员工（ag-guard + ag-setup，按策略生成：内置网关地址、密级与脱敏策略、出口白名单，员工装一次即常驻、零配置）。只有已校验的包才能登记为 F14 证明基准值——未校验的包即使哈希一致也不予登记。过期包可一键清理；导入中断的上传可断点续传（见接口文档）。",
     orgsyncTitle:"组织同步",orgsyncDesc:"从钉钉 / 飞书 / 企业微信同步部门与员工目录，登录时把第三方身份绑定到平台账号；同步只建 / 更新账号与部门映射，不授予受管级权限。",addOrgProvider:"添加同步来源",orgProviderList:"同步来源",orgProvider:"平台",orgCorpId:"企业 CorpId",orgAppKey:"AppKey",orgAppSecret:"应用密钥",orgBaseUrl:"API 地址",orgAutoCreate:"自动建号",orgDisableMissing:"离职禁用",orgEnabled:"启用",orgSecretMasked:"密钥（已打码）",orgLastSync:"最近同步",orgSyncBtn:"同步",orgBindTitle:"绑定第三方身份",orgBindBtn:"绑定",orgBindHint:"只能绑定已同步到的目录成员（同步快照里没有的 ID 会被拒绝）；同一身份不能绑到两个账号；解绑只解除关联、不删账号。",orgMyBindings:"我的第三方身份",orgNoBindings:"暂无绑定的第三方身份",orgExternalId:"第三方用户 ID",orgsyncHint:"同步只建 / 更新账号与部门映射，不自动授予受管级权限（权限仍走平台策略）；本地已禁用的账号同步不会自动恢复；目录里没看到的人不等于离职——只有平台明确说找不到时，开启「离职禁用」才会禁用账号。应用密钥只加密存储、不回显；同步与绑定全程审计。",
+    usersTitle:"用户与角色",usersDesc:"分级管理员与职责分离：平台管理员、安全管理员、审计员、运维员各管一段，互相制约；角色分配本身只由平台管理员操作，全程审计。",roleMatrix:"角色分工",usersList:"用户列表",roleCol:"角色",roleSource:"角色来源",authSource:"账号来源",userDisabled:"已禁用",userEnabled:"启用中",userDisable:"禁用",userEnable:"启用",userOp:"操作",usersHintCol:"权限",usersHint:"只有平台管理员可以改角色（安全管理员也不行，避免自我提权）；不能改自己的角色、不能禁用自己、不能动最后一位启用的平台管理员。禁用账号会立即吊销其全部会话。角色来源为 oidc 的账号由 IdP 组映射管理，管理员在控制台改过角色后即转为本地管理、IdP 不再覆盖。",
     saved:"✓ 已保存",deleted:"✓ 已删除",empty:"暂无数据",chainValid:"哈希链完整",chainInvalid:"哈希链校验失败",approve:"通过",reject:"驳回",download:"下载",publish:"发布/回滚",test:"测试",rescan:"重扫",save:"保存"},
   en: {loginTitle:"Sign in",loginSub:"Enterprise agent governance gateway · Admin console",loginBtn:"Sign in",logout:"Sign out",ssoBtn:"Sign in with enterprise SSO",username:"Username",password:"Password",
-    loginHint:"Demo: admin / agentgate-admin, employee: lixiaofeng / demo12345",
+    loginHint:"Demo: admin / agentgate-admin, auditor: auditor / demo12345, operator: ops / demo12345, employee: lixiaofeng / demo12345",
     navOps:"Operations",navAccess:"Access & identity",navModel:"Model gateway",navCap:"Capabilities",navSys:"System",
     dashTitle:"Overview",dashDesc:"Gateway operations and governance posture: calls, blocks, channel health and audit integrity.",refresh:"Refresh",
     kpiCalls:"Model calls (total)",kpiTokens:"Tokens used (total)",kpiBlocked:"Blocked",kpiBlockedSub:"Banned words / level violations / no compliant channel",kpiChain:"Audit hash chain",
@@ -708,6 +722,7 @@ const I18N = {
     alertsHint:"Alerts carry only event categories and decisions, never request content. Failed deliveries retry up to 3 times.",
     packagesTitle:"Package distribution",packagesDesc:"Hosted distribution of managed-agent install packages: admins upload or import offline, employees download them; a distributed package's hash can be registered as the attestation baseline.",uploadPackage:"Upload / import a package offline",packageList:"Hosted packages",pkgKind:"Package kind",pkgManagement:"Management package (server)",pkgUser:"User package (employee)",pkgFile:"File",pkgSize:"Size",pkgSha:"SHA-256",pkgStatus:"Checksum status",verified:"verified",unverified:"unverified",pkgSource:"Source",pkgOfflineImport:"offline import",pkgGenerated:"generated",pkgAgentType:"Agent type",registerBaseline:"Register as attestation baseline",baselineRegistered:"baseline registered",genUserBundle:"Generate user package (ag-guard + ag-setup)",gatewayUrl:"Gateway URL",egressAllowlist:"Egress allowlist (comma-separated hostnames)",expiresAt:"Expires at (optional, RFC3339)",cleanupExpired:"Clean up expired packages",uploadBtn:"Upload",genBundleBtn:"Generate user package",packagesHint:"The management package is for IT (the agentgate server: Docker image / offline bundle / systemd, via the existing offline deployment channel); the user package is for employees (ag-guard + ag-setup, generated per policy with the gateway URL, data level and egress allowlist baked in — install once, zero-config, resident). Only a verified package can be registered as the F14 attestation baseline. Expired packages can be cleaned up in one click; an interrupted upload can be resumed (see docs).",
     orgsyncTitle:"Organisation sync",orgsyncDesc:"Sync departments and employees from DingTalk / Feishu / WeCom, and bind the third-party identity to the platform account at login; sync only creates / updates accounts and department mappings, never grants a managed tier.",addOrgProvider:"Add sync source",orgProviderList:"Sync sources",orgProvider:"Platform",orgCorpId:"Corp ID",orgAppKey:"App key",orgAppSecret:"App secret",orgBaseUrl:"API base URL",orgAutoCreate:"Auto-create accounts",orgDisableMissing:"Disable departed accounts",orgEnabled:"Enabled",orgSecretMasked:"Secret (masked)",orgLastSync:"Last sync",orgSyncBtn:"Sync",orgBindTitle:"Bind a third-party identity",orgBindBtn:"Bind",orgBindHint:"Only members present in a synced directory snapshot can be bound; one identity cannot bind to two accounts; unbinding only removes the link, never the account.",orgMyBindings:"My third-party identities",orgNoBindings:"No third-party identity bound yet",orgExternalId:"Third-party user ID",orgsyncHint:"Sync only creates / updates accounts and department mappings and never grants a managed tier (permissions stay with platform policy). A locally disabled account is never restored by sync; absence from a fetched directory is not departure — only when the provider explicitly says the person is gone does \"disable departed\" disable the account. App secrets are encrypted at rest and never echoed; sync and binding are fully audited.",
+    usersTitle:"Users & roles",usersDesc:"Tiered administrators with separation of duties: platform admin, security admin, auditor and operator each own a slice and check each other; role assignment itself is platform-admin-only and fully audited.",roleMatrix:"Role matrix",usersList:"Users",roleCol:"Role",roleSource:"Role source",authSource:"Account source",userDisabled:"disabled",userEnabled:"enabled",userDisable:"Disable",userEnable:"Enable",userOp:"Actions",usersHintCol:"Permissions",usersHint:"Only the platform admin may change roles (not even the security admin — no self-promotion); you cannot change your own role, disable yourself, or touch the last enabled platform admin. Disabling an account revokes all its sessions at once. Accounts with role source oidc are managed by the IdP group mapping; once an admin changes the role in the console it becomes locally managed and the IdP no longer overwrites it.",
     saved:"✓ Saved",deleted:"✓ Deleted",empty:"No data yet",chainValid:"Hash chain intact",chainInvalid:"Hash chain verification FAILED",approve:"Approve",reject:"Reject",download:"Download",publish:"Publish / roll back",test:"Test",rescan:"Rescan",save:"Save"}
 };
 let lang = localStorage.getItem("ag_lang") || "zh";
@@ -741,17 +756,21 @@ function timeShort(s){ return (s||"").slice(5,19).replace("T"," "); }
 
 /* ---------- navigation ---------- */
 const NAV = [
-  {group:"navOps", items:[["dashboard","◈","dashTitle"],["stats","▦","statsTitle"],["audit","☰","auditTitle"],["reports","▤","reportsTitle"]]},
-  {group:"navAccess", items:[["device","▣","deviceTitle"],["tokens","⚿","tokensTitle"],["attest","✓","attestTitle"],["terminals","◉","terminalsTitle"],["exceptions","⧉","exceptionsTitle"],["orgsync","⚭","orgsyncTitle"]]},
-  {group:"navModel", items:[["channels","⇄","channelsTitle"]]},
+  {group:"navOps", items:[["dashboard","◈","dashTitle"],["stats","▦","statsTitle",["admin","security","auditor"]],["audit","☰","auditTitle",["admin","security","auditor"]],["reports","▤","reportsTitle",["admin","security","auditor"]]]},
+  {group:"navAccess", items:[["device","▣","deviceTitle"],["tokens","⚿","tokensTitle",["admin","security","operator"]],["attest","✓","attestTitle"],["terminals","◉","terminalsTitle"],["exceptions","⧉","exceptionsTitle"],["orgsync","⚭","orgsyncTitle"],["users","⚇","usersTitle",["admin","security"]]]},
+  {group:"navModel", items:[["channels","⇄","channelsTitle",["admin","security","operator"]]]},
   {group:"navCap", items:[["kb","🗀","foldersTitle"],["skills","✦","skillsTitle"],["prompts","✎","promptsTitle"],["knowpack","🗂","knowpackTitle"],["upstreams","⛓","fedTitle"],["resttools","⇢","restTitle"]]},
   {group:"navSys", items:[["alerts","⚠","alertsTitle"],["packages","▤","packagesTitle"]]}
 ];
 let current = "dashboard";
 function buildNav(){
+  // F26: nav items carry an optional 4th element — the roles that
+  // may see them. The server enforces every endpoint; this only
+  // keeps the console from offering pages the user cannot open.
+  const visible = it => !it[3] || !me || it[3].includes(me.role);
   document.getElementById("sideNav").innerHTML = NAV.map(g=>
     `<div class="navGroup"><div class="navGroupTitle">${T(g.group)}</div>` +
-    g.items.map(([id,ico,key])=>`<div class="navItem ${id===current?"active":""}" data-nav="${id}" onclick="go('${id}')"><span class="ico">${ico}</span>${T(key)}</div>`).join("") +
+    g.items.filter(visible).map(([id,ico,key])=>`<div class="navItem ${id===current?"active":""}" data-nav="${id}" onclick="go('${id}')"><span class="ico">${ico}</span>${T(key)}</div>`).join("") +
     `</div>`).join("");
 }
 function go(id){ current = id; showPage(id); }
@@ -759,7 +778,7 @@ function showPage(id){
   document.querySelectorAll(".page").forEach(p=>p.classList.toggle("active", p.id==="page-"+id));
   document.querySelectorAll(".navItem").forEach(n=>n.classList.toggle("active", n.getAttribute("data-nav")===id));
   const loaders = {dashboard:loadDashboard, stats:()=>{loadStats(); loadCache(); loadBudgets(); loadOtel();}, audit:loadAudit, device:loadSidecar, tokens:loadTokens, attest:loadAttest, terminals:loadTerminals, channels:loadChannels,
-    kb:loadFolders, reports:loadReports, skills:loadSkills, prompts:loadPrompts, knowpack:loadKnowpacks, upstreams:loadUpstreams, resttools:loadRESTTools, alerts:loadAlerts, packages:loadPackages, orgsync:loadOrgProviders, exceptions:loadExceptions};
+    kb:loadFolders, reports:loadReports, skills:loadSkills, prompts:loadPrompts, knowpack:loadKnowpacks, upstreams:loadUpstreams, resttools:loadRESTTools, alerts:loadAlerts, packages:loadPackages, orgsync:loadOrgProviders, exceptions:loadExceptions, users:loadUsers};
   if(loaders[id]) loaders[id]();
 }
 
@@ -1011,6 +1030,36 @@ async function saveToken(id){
     await api("/api/tokens/"+id,{method:"PATCH",body:JSON.stringify({rpm_limit:rpm,tpm_limit:tpm})});
     toast(T("saved")); loadAudit();
   }catch(e){ toast(e.message, false); }
+}
+
+/* ---------- users & roles ---------- */
+async function loadUsers(){
+  try{ const d = await api("/api/users/roles");
+    document.querySelector("#roleMatrix tbody").innerHTML = (d.roles||[]).map(r=>
+      `<tr><td>${pill(r.role)}</td><td>${esc(lang==="zh"?r.name_zh:r.name_en)}</td><td>${esc(lang==="zh"?r.summary_zh:r.summary_en)}</td></tr>`).join("") || `<tr><td colspan="3" class="empty">${T("empty")}</td></tr>`;
+  }catch(e){ toast(e.message, false); }
+  try{ const d = await api("/api/users");
+    const isAdmin = me && me.role==="admin";
+    document.querySelector("#users tbody").innerHTML = (d.users||[]).map(u=>{
+      const st = u.disabled ? `<span class="pill bad">${T("userDisabled")}</span>` : `<span class="pill ok">${T("userEnabled")}</span>`;
+      let op = "—";
+      if(isAdmin){
+        op = `<select id="role-${u.id}" style="width:110px">${["admin","security","auditor","operator","employee"].map(r=>`<option value="${r}"${r===u.role?" selected":""}>${r}</option>`).join("")}</select> `+
+          `<button class="btn ghost small" onclick="saveUserRole('${u.id}')">${T("save")}</button> `+
+          `<button class="btn ghost small" onclick="toggleUserDisabled('${u.id}',${!u.disabled})">${u.disabled?T("userEnable"):T("userDisable")}</button>`;
+      }
+      return `<tr><td style="font-weight:600;color:var(--ink)">${esc(u.username)}</td><td>${esc(u.display_name)}</td><td>${esc(u.department||"—")}</td><td>${pill(u.role)}</td><td class="muted">${esc(u.role_source||"—")}</td><td class="muted">${esc(u.auth_source||"local")}</td><td>${st}</td><td style="white-space:nowrap">${op}</td></tr>`;}).join("") || `<tr><td colspan="8" class="empty">${T("empty")}</td></tr>`;
+  }catch(e){ toast(e.message, false); }
+}
+async function saveUserRole(id){
+  try{ await api("/api/users/"+id,{method:"PATCH",body:JSON.stringify({role:document.getElementById("role-"+id).value})});
+    setMsg("usersMsg", T("saved")); loadUsers();
+  }catch(e){ setMsg("usersMsg", e.message, false); }
+}
+async function toggleUserDisabled(id, disabled){
+  try{ await api("/api/users/"+id,{method:"PATCH",body:JSON.stringify({disabled})});
+    setMsg("usersMsg", T("saved")); loadUsers();
+  }catch(e){ setMsg("usersMsg", e.message, false); }
 }
 
 /* ---------- attestation ---------- */

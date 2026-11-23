@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/myjnathan/agentgate/internal/attest"
+	"github.com/myjnathan/agentgate/internal/roles"
 	"github.com/myjnathan/agentgate/internal/store"
 )
 
@@ -69,6 +70,14 @@ type Service struct {
 	mu       sync.Mutex
 	sessions map[string]session // session token -> session
 	failures map[string][]time.Time
+	// RoleFromGroups maps verified IdP groups to a local role
+	// (backlog F26). It is only consulted for OIDC-managed accounts
+	// (RoleSource "oidc", or empty on OIDC-provisioned rows) and
+	// must only return auditor / operator / employee — never admin
+	// or security. Nil means no mapping is configured: OIDC logins
+	// never change a role. A locally assigned role (RoleSource
+	// "local") is never overwritten by the IdP.
+	RoleFromGroups func(groups []string) (string, bool)
 }
 
 type session struct {
@@ -126,6 +135,9 @@ type OIDCClaims struct {
 	Email             string
 	DisplayName       string
 	Department        string
+	// Groups is the IdP group membership, used only by the F26 role
+	// mapping (RoleFromGroups). Empty when the IdP sends none.
+	Groups []string
 }
 
 // RevokeUserSessions deletes every web session of one user
@@ -170,11 +182,19 @@ func (s *Service) CreateSession(user *store.User) string {
 // and an OIDC identity can never take over a local account: if the
 // derived username belongs to a different (local) user, a suffix is
 // added instead of reusing it.
+//
+// Role mapping (backlog F26): when RoleFromGroups is set, an
+// OIDC-managed account's role follows the admin-configured group
+// mapping on every login — a mapped group yields that role
+// (auditor / operator / employee only, never admin or security),
+// no mapped group yields employee. A role an admin assigned locally
+// (RoleSource "local") is never overwritten by the IdP.
 func (s *Service) LoginOIDC(claims OIDCClaims) (*store.User, error) {
 	if claims.Subject == "" {
 		return nil, fmt.Errorf("oidc identity has no subject")
 	}
 	var user *store.User
+	isNew := false
 	s.st.WithLock(func(st *store.State) {
 		for _, u := range st.Users {
 			if u.OIDCSubject != "" && u.OIDCSubject == claims.Subject && u.AuthSource == "oidc" {
@@ -185,6 +205,7 @@ func (s *Service) LoginOIDC(claims OIDCClaims) (*store.User, error) {
 		if user != nil {
 			return
 		}
+		isNew = true
 		username := oidcUsername(claims)
 		// Never collide with an existing local account.
 		if _, taken := usernameTaken(st, username); taken {
@@ -195,9 +216,15 @@ func (s *Service) LoginOIDC(claims OIDCClaims) (*store.User, error) {
 		if display == "" {
 			display = username
 		}
+		role := "employee"
+		if s.RoleFromGroups != nil {
+			if r, ok := s.RoleFromGroups(claims.Groups); ok && roles.MappableViaIdP(r) {
+				role = r
+			}
+		}
 		user = &store.User{
 			ID: store.NewID("usr"), Username: username, DisplayName: display,
-			Department: claims.Department, Role: "employee",
+			Department: claims.Department, Role: role, RoleSource: "oidc",
 			OIDCSubject: claims.Subject, AuthSource: "oidc",
 		}
 		st.Users[user.ID] = user
@@ -209,16 +236,31 @@ func (s *Service) LoginOIDC(claims OIDCClaims) (*store.User, error) {
 		return nil, fmt.Errorf("account disabled")
 	}
 	// Refresh the display name / department from the IdP on each login
-	// (the IdP owns the profile; the role stays locally managed).
+	// (the IdP owns the profile; the role stays locally managed unless
+	// it is IdP-managed through the F26 mapping).
 	refreshName := claims.DisplayName != "" && user.DisplayName != claims.DisplayName
 	refreshDept := user.Department != claims.Department
-	if refreshName || refreshDept {
+	mappedRole := ""
+	if !isNew && s.RoleFromGroups != nil &&
+		(user.RoleSource == "oidc" || (user.RoleSource == "" && user.AuthSource == "oidc")) {
+		if r, ok := s.RoleFromGroups(claims.Groups); ok && roles.MappableViaIdP(r) {
+			mappedRole = r
+		} else {
+			mappedRole = "employee"
+		}
+	}
+	refreshRole := mappedRole != "" && mappedRole != user.Role
+	if refreshName || refreshDept || refreshRole {
 		s.st.WithLock(func(st *store.State) {
 			if u, ok := st.Users[user.ID]; ok {
 				if claims.DisplayName != "" {
 					u.DisplayName = claims.DisplayName
 				}
 				u.Department = claims.Department
+				if refreshRole {
+					u.Role = mappedRole
+					u.RoleSource = "oidc"
+				}
 				cp := *u
 				user = &cp
 			}

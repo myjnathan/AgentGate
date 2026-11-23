@@ -58,6 +58,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -208,6 +209,25 @@ func main() {
 		} else {
 			oidcProvider = p
 			log.Printf("OIDC enabled: issuer %s (local login still available)", oidcCfg.Issuer)
+			// F26 role mapping: the admin-configured group -> role
+			// map from AGENTGATE_OIDC_ROLE_MAP. Groups are checked
+			// in sorted order so a user in several mapped groups
+			// always gets the same role; unmapped groups yield no
+			// role (the auth layer falls back to employee).
+			if len(oidcCfg.RoleMap) > 0 {
+				roleMap := oidcCfg.RoleMap
+				au.RoleFromGroups = func(groups []string) (string, bool) {
+					sorted := append([]string(nil), groups...)
+					sort.Strings(sorted)
+					for _, g := range sorted {
+						if r, ok := roleMap[g]; ok {
+							return r, true
+						}
+					}
+					return "", false
+				}
+				log.Printf("OIDC role mapping enabled: %d group(s)", len(roleMap))
+			}
 		}
 	}
 	// Folder knowledge base (backlog F18): the in-memory index over

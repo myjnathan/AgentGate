@@ -23,6 +23,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/orgsync"
 	"github.com/myjnathan/agentgate/internal/otel"
 	"github.com/myjnathan/agentgate/internal/restadapter"
+	"github.com/myjnathan/agentgate/internal/roles"
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/semidx"
 	"github.com/myjnathan/agentgate/internal/store"
@@ -76,34 +77,41 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/oidc/login", a.oidcLogin)
 	mux.HandleFunc("GET /auth/oidc/callback", a.oidcCallback)
 	mux.HandleFunc("GET /api/me", a.requireSession(a.me))
+	mux.HandleFunc("GET /api/users", a.requirePerm(roles.UsersRead, a.listUsers))
+	mux.HandleFunc("GET /api/users/roles", a.requirePerm(roles.UsersRead, a.listRoles))
+	mux.HandleFunc("PATCH /api/users/{id}", a.requirePerm(roles.UsersWrite, a.updateUser))
 	mux.HandleFunc("POST /api/device/approve", a.requireSession(a.deviceApprove))
-	mux.HandleFunc("GET /api/channels", a.requireAdmin(a.listChannels))
-	mux.HandleFunc("POST /api/channels", a.requireAdmin(a.createChannel))
-	mux.HandleFunc("POST /api/channels/{id}/keys", a.requireAdmin(a.addChannelKey))
-	mux.HandleFunc("DELETE /api/channels/{id}/keys/{index}", a.requireAdmin(a.deleteChannelKey))
-	mux.HandleFunc("POST /api/channels/{id}/keys/{index}/enable", a.requireAdmin(a.enableChannelKey))
-	mux.HandleFunc("POST /api/channels/{id}/keys/{index}/disable", a.requireAdmin(a.disableChannelKey))
+	// Channels and tokens are operator territory (F26): the
+	// operations administrator runs them, the auditor may not.
+	mux.HandleFunc("GET /api/channels", a.requirePerm(roles.Channels, a.listChannels))
+	mux.HandleFunc("POST /api/channels", a.requirePerm(roles.Channels, a.createChannel))
+	mux.HandleFunc("POST /api/channels/{id}/keys", a.requirePerm(roles.Channels, a.addChannelKey))
+	mux.HandleFunc("DELETE /api/channels/{id}/keys/{index}", a.requirePerm(roles.Channels, a.deleteChannelKey))
+	mux.HandleFunc("POST /api/channels/{id}/keys/{index}/enable", a.requirePerm(roles.Channels, a.enableChannelKey))
+	mux.HandleFunc("POST /api/channels/{id}/keys/{index}/disable", a.requirePerm(roles.Channels, a.disableChannelKey))
 	mux.HandleFunc("GET /api/skills", a.requireSession(a.listSkills))
 	mux.HandleFunc("POST /api/skills", a.requireSession(a.createSkill))
 	mux.HandleFunc("POST /api/skills/{id}/review", a.requireAdmin(a.reviewSkill))
 	mux.HandleFunc("GET /api/skills/{id}/download", a.requireTokenOrSession(a.downloadSkill))
-	mux.HandleFunc("GET /api/audit", a.requireAdmin(a.queryAudit))
-	mux.HandleFunc("GET /api/audit/verify", a.requireAdmin(a.verifyAudit))
-	mux.HandleFunc("GET /api/audit/export", a.requireAdmin(a.exportAudit))
+	// Audit is read-only for the auditor (F26); archiving (moving
+	// events out of the hot log) stays admin/security.
+	mux.HandleFunc("GET /api/audit", a.requirePerm(roles.AuditRead, a.queryAudit))
+	mux.HandleFunc("GET /api/audit/verify", a.requirePerm(roles.AuditRead, a.verifyAudit))
+	mux.HandleFunc("GET /api/audit/export", a.requirePerm(roles.AuditExport, a.exportAudit))
 	mux.HandleFunc("POST /api/audit/archive", a.requireAdmin(a.archiveAudit))
-	mux.HandleFunc("GET /api/stats", a.requireAdmin(a.getStats))
-	mux.HandleFunc("GET /api/sidecar/stats", a.requireAdmin(a.sidecarStats))
-	mux.HandleFunc("GET /api/otel", a.requireAdmin(a.otelStatus))
-	mux.HandleFunc("POST /api/otel/test", a.requireAdmin(a.otelTest))
+	mux.HandleFunc("GET /api/stats", a.requirePerm(roles.AuditRead, a.getStats))
+	mux.HandleFunc("GET /api/sidecar/stats", a.requirePerm(roles.AuditRead, a.sidecarStats))
+	mux.HandleFunc("GET /api/otel", a.requirePerm(roles.OTel, a.otelStatus))
+	mux.HandleFunc("POST /api/otel/test", a.requirePerm(roles.OTel, a.otelTest))
 	mux.HandleFunc("GET /api/budgets", a.requireAdmin(a.listBudgets))
 	mux.HandleFunc("POST /api/budgets", a.requireAdmin(a.createBudget))
 	mux.HandleFunc("PATCH /api/budgets/{id}", a.requireAdmin(a.updateBudget))
 	mux.HandleFunc("DELETE /api/budgets/{id}", a.requireAdmin(a.deleteBudget))
-	mux.HandleFunc("GET /api/cache", a.requireAdmin(a.getCache))
-	mux.HandleFunc("POST /api/cache", a.requireAdmin(a.setCache))
-	mux.HandleFunc("POST /api/cache/clear", a.requireAdmin(a.clearCache))
-	mux.HandleFunc("GET /api/tokens", a.requireAdmin(a.listTokens))
-	mux.HandleFunc("PATCH /api/tokens/{id}", a.requireAdmin(a.updateTokenLimits))
+	mux.HandleFunc("GET /api/cache", a.requirePerm(roles.Cache, a.getCache))
+	mux.HandleFunc("POST /api/cache", a.requirePerm(roles.Cache, a.setCache))
+	mux.HandleFunc("POST /api/cache/clear", a.requirePerm(roles.Cache, a.clearCache))
+	mux.HandleFunc("GET /api/tokens", a.requirePerm(roles.Tokens, a.listTokens))
+	mux.HandleFunc("PATCH /api/tokens/{id}", a.requirePerm(roles.Tokens, a.updateTokenLimits))
 	mux.HandleFunc("GET /api/alerts/webhooks", a.requireAdmin(a.listWebhooks))
 	mux.HandleFunc("POST /api/alerts/webhooks", a.requireAdmin(a.createWebhook))
 	mux.HandleFunc("DELETE /api/alerts/webhooks/{id}", a.requireAdmin(a.deleteWebhook))
@@ -143,7 +151,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/attestation/policies", a.requireAdmin(a.listAttestationPolicies))
 	mux.HandleFunc("POST /api/attestation/policies", a.requireAdmin(a.upsertAttestationPolicy))
 	mux.HandleFunc("DELETE /api/attestation/policies/{agent}", a.requireAdmin(a.deleteAttestationPolicy))
-	mux.HandleFunc("GET /api/attestation/reports", a.requireAdmin(a.listAttestationReports))
+	mux.HandleFunc("GET /api/attestation/reports", a.requirePerm(roles.AuditRead, a.listAttestationReports))
 	mux.HandleFunc("GET /api/packages", a.requireAdmin(a.listPackages))
 	mux.HandleFunc("POST /api/packages", a.requireAdmin(a.uploadPackage))
 	mux.HandleFunc("POST /api/packages/uploads", a.requireAdmin(a.initUpload))
@@ -175,11 +183,14 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/exceptions/{id}/approve", a.requireAdmin(a.approveException))
 	mux.HandleFunc("POST /api/exceptions/{id}/reject", a.requireAdmin(a.rejectException))
 	mux.HandleFunc("POST /api/exceptions/{id}/revoke", a.requireAdmin(a.revokeException))
-	mux.HandleFunc("GET /api/reports", a.requireAdmin(a.listReports))
-	mux.HandleFunc("POST /api/reports", a.requireAdmin(a.generateReport))
-	mux.HandleFunc("GET /api/reports/{id}", a.requireAdmin(a.getReport))
-	mux.HandleFunc("GET /api/reports/{id}/export", a.requireAdmin(a.exportReport))
-	mux.HandleFunc("DELETE /api/reports/{id}", a.requireAdmin(a.deleteReport))
+	// Reports are the auditor's working surface (F26): generating and
+	// exporting is read-side work; deleting a frozen report stays
+	// admin/security.
+	mux.HandleFunc("GET /api/reports", a.requirePerm(roles.ReportsWrite, a.listReports))
+	mux.HandleFunc("POST /api/reports", a.requirePerm(roles.ReportsWrite, a.generateReport))
+	mux.HandleFunc("GET /api/reports/{id}", a.requirePerm(roles.ReportsWrite, a.getReport))
+	mux.HandleFunc("GET /api/reports/{id}/export", a.requirePerm(roles.AuditExport, a.exportReport))
+	mux.HandleFunc("DELETE /api/reports/{id}", a.requirePerm(roles.ReportsDelete, a.deleteReport))
 }
 
 // ---- helpers ----
@@ -226,8 +237,20 @@ func (a *API) requireSession(fn handlerFunc) http.HandlerFunc {
 
 func (a *API) requireAdmin(fn handlerFunc) http.HandlerFunc {
 	return a.requireSession(func(w http.ResponseWriter, r *http.Request, u *store.User) {
-		if u.Role != "admin" && u.Role != "security" {
+		if !roles.IsAdminRole(u.Role) {
 			writeErr(w, http.StatusForbidden, "admin role required")
+			return
+		}
+		fn(w, r, u)
+	})
+}
+
+// requirePerm guards an endpoint with one F26 permission from the
+// roles matrix: the caller must hold it, whatever their role name is.
+func (a *API) requirePerm(p roles.Permission, fn handlerFunc) http.HandlerFunc {
+	return a.requireSession(func(w http.ResponseWriter, r *http.Request, u *store.User) {
+		if !roles.Can(u.Role, p) {
+			writeErr(w, http.StatusForbidden, "role "+u.Role+" lacks permission "+string(p))
 			return
 		}
 		fn(w, r, u)

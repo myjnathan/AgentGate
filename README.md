@@ -22,6 +22,7 @@ AgentGate 是一个**不绑定任何单一桌面 Agent** 的企业级平台（�
 | Agent 分级信任 | 受管级 / 自带级分级令牌；自带级禁止发送机密数据；设备码登录（`ag-setup` 一条命令接入）；企业 OIDC 登录（IdP 只认身份不授权限，新用户一律 employee，本地账号保留兜底，见 [docs/oidc-sso.md](docs/oidc-sso.md)）；Agent 证明（受管 Agent 登录时上报版本/配置哈希/插件清单，平台校验后才发受管级令牌，不符降级为自带级并告警，见 [docs/attestation.md](docs/attestation.md)）；终端持续盘点（ag-guard 每 60 秒心跳上报版本/配置哈希/插件清单，管理台「终端清单」页按部门/版本/在线状态筛选、配置漂移标红并告警；网关断网时 ag-guard 按缓存策略执行、高密级默认拦截，恢复后补报断网审计，见 [docs/terminal-inventory.md](docs/terminal-inventory.md)）；高密级调用例外审批（员工申请、管理员审批后发一次性放行凭证，仅限一次调用，违禁词拦截永不例外，绝密默认不可例外，见 [docs/exception-approval.md](docs/exception-approval.md)） |
 | 安装包分发 | 管理员上传或离线导入受管 Agent 安装包，平台托管、员工自助下载；SHA-256 校验并区分已校验 / 未校验，导入中断可断点续传，过期包一键清理；分发包的哈希可登记为 Agent 证明的基准值（未校验包不可登记）；双包结构：管理包（agentgate 服务端，`make bundle`）与用户包（ag-guard + ag-setup，按策略生成，`make bundle-user` 或管理台生成，见 [docs/package-distribution.md](docs/package-distribution.md)） |
 | 组织同步 | 从钉钉 / 飞书 / 企业微信同步部门与员工目录（与 OIDC 并行）；同步只建 / 更新账号与部门映射，不授予受管级权限；邮箱自动关联已有账号，本地已禁用不自动恢复，目录里没看到 ≠ 离职（只有平台明确说找不到时才禁用并吊销会话）；第三方身份可手动绑定（须以同步快照为准），应用密钥只加密存储、不回显（见 [docs/org-sync.md](docs/org-sync.md)） |
+| 分级管理员 | 平台管理员 / 安全管理员 / 审计员 / 运维员 / 员工五档职责分离（等保三权分立思路）：审计员只读审计与报表、运维员只做渠道与令牌运维、不可看审计；角色分配只由平台管理员操作，改角色、批例外、导审计均要求对应角色并全程留痕；OIDC 组映射可把 IdP 组映射为审计员 / 运维员（admin 与 security 永不经 IdP 授予，本地改过角色的账号不再被映射覆盖）；管理台「用户与角色」页可查角色分工与用户列表（见 [docs/roles.md](docs/roles.md)） |
 | MCP 网关 `/mcp` | 远程 MCP，工具级授权（如 kb_get 仅受管级），工具返回过 DLP，每次调用审计；上游 MCP 服务器可联邦进来，其工具以 `命名空间.工具名` 出现在 tools/list 中；存量 REST 接口可按「方法 + 路径模板 + 参数 schema」注册为工具，以 `rest.工具名` 出现，调用前做参数 schema 校验、等级授权与 DLP（凭据服务端加密托管） |
 | 知识库 | 关键词多轮检索 + 读原文 + 引用，不用向量库；按等级控制可见范围；共享文件夹即知识库（指定文件夹自动索引 .md/.txt/.docx/.pdf，按文件夹映射密级，增量更新；Agent 按「目录 → 语义条目 → 章节树 → 章节原文」渐进式取用，语义条目为每章节一行 FRAS（职责 / 关联 / 适用范围 / 硬约束）加标签坐标、每条带原文回指，见 [docs/semantic-index.md](docs/semantic-index.md)；引用精确到文件 + 章节 + 页码，见 [docs/folder-kb.md](docs/folder-kb.md)）；专题知识包是其上的策展层：围绕一个工作问题精选文件成包（来源清单 + 综合说明），审批发布后 Agent 经 MCP `kb_pack_list` / `kb_pack_get` 按包取用，综合中每条结论带原文回指，引用只能向下，见 [docs/knowledge-packages.md](docs/knowledge-packages.md) |
 | 能力中枢 | 技能（SKILL.md）提交 → 审核 → 签名校验和 → 按部门范围下发；Prompt 模板同样走提交 → 审核 → 发布，版本不可变，Agent 经 `/mcp` `prompts/get` 只读已发布版（参数与渲染结果均过 DLP）；专题知识包同样走起草 → 审核 → 发布，版本不可变，Agent 经 `/mcp` `kb_pack_list` / `kb_pack_get` 只读已发布版（综合与引用综合均过 DLP） |
@@ -31,7 +32,7 @@ AgentGate 是一个**不绑定任何单一桌面 Agent** 的企业级平台（�
 | 部门预算 | 部门月度预算硬上限（自然月 UTC）：本月花费达到上限后网关以 `429 department_budget_exceeded` 拒绝后续调用；花费达告警阈值时每月发一次提醒（见 [docs/cost-budgets.md](docs/cost-budgets.md)） |
 | 告警 Webhook | 拦截、密级越权、渠道熔断、账号锁定、Agent 证明降级触发结构化告警，可推送到企业微信/钉钉/飞书机器人与通用 Webhook；签名可选（通用：`X-AgentGate-Signature` HMAC 头；企微/钉钉/飞书：`timestamp` + `sign` 查询参数）；投递失败最多重试 3 次后放弃并记审计；管理台可配、可测 |
 | 可观测性 | 网关与 MCP 调用产生脱敏的 trace 与指标（OTLP/HTTP JSON），默认关闭；设置 `OTEL_EXPORTER_OTLP_ENDPOINT`（如 `http://localhost:4318`）后导出到 Jaeger / Tempo / Phoenix 等后端；Span 只含模型、渠道、密级、处置、Token 数等元数据，绝不含提示词、工具参数或模型回复；管理台可查看导出状态并一键测试连通性（见 [docs/opentelemetry.md](docs/opentelemetry.md)） |
-| 管理台 `/` | 内嵌 Web UI（中英双语），渠道/健康状态/用量统计/审计/合规报表/设备批准/终端清单/例外审批/令牌限流/告警 Webhook/MCP 联邦上游/REST → MCP 工具/文件夹知识库/专题知识包/安装包分发/组织同步配置 |
+| 管理台 `/` | 内嵌 Web UI（中英双语），渠道/健康状态/用量统计/审计/合规报表/设备批准/终端清单/例外审批/令牌限流/告警 Webhook/MCP 联邦上游/REST → MCP 工具/文件夹知识库/专题知识包/安装包分发/组织同步配置/用户与角色 |
 
 ## 快速开始（PoC 演示模式）
 
@@ -43,7 +44,7 @@ AGENTGATE_MASTER_KEY=change-me-please-16+ \
 AGENTGATE_DEMO=1 \
 ./agentgate
 # 打开 http://127.0.0.1:8787
-# 管理员 admin / agentgate-admin；员工 lixiaofeng / demo12345（模拟公司「星河精密」）
+# 管理员 admin / agentgate-admin；审计员 auditor / demo12345；运维员 ops / demo12345；员工 lixiaofeng / demo12345（模拟公司「星河精密」）
 ```
 
 演示模式内置一个 mock 模型上游，无需任何真实 API Key 即可体验完整闭环：

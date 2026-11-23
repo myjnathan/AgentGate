@@ -4,10 +4,11 @@
 // for a time range; the chain verification result travels in response
 // headers so the exported package is self-describing. POST
 // /api/audit/archive moves events older than a cutoff into a
-// gzip-compressed archive (see internal/audit). Both are admin /
-// security only, and both write their own audit event — an export or
-// archive is itself auditable, and the event is appended after the
-// response body so it is never included in its own export.
+// gzip-compressed archive (see internal/audit). Export is readable by
+// the auditor too (backlog F26); archiving stays admin / security.
+// Both write their own audit event — an export or archive is itself
+// auditable, and the event is appended after the response body so it
+// is never included in its own export.
 package api
 
 import (

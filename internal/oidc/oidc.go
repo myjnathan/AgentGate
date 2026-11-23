@@ -46,10 +46,57 @@ type Config struct {
 	RedirectURL     string
 	Scopes          string // space-separated, default "openid profile email"
 	DepartmentClaim string // claim carrying the department, default "department"
+	// GroupsClaim names the claim carrying IdP group membership,
+	// default "groups".
+	GroupsClaim string
+	// RoleMap maps IdP group names to local roles (backlog F26).
+	// Only auditor / operator / employee may be mapped: the IdP
+	// must never mint admin or security. Empty means no mapping —
+	// JIT users stay employee and logins never change a role.
+	RoleMap map[string]string
+
+	// roleMapErr records a ConfigFromEnv parse failure so Validate
+	// can report it (and disable OIDC) instead of silently
+	// dropping the mapping.
+	roleMapErr error
 
 	// HTTPClient is used for discovery, token exchange, JWKS and
 	// userinfo calls. Nil means http.DefaultClient.
 	HTTPClient *http.Client
+}
+
+// ParseRoleMap parses AGENTGATE_OIDC_ROLE_MAP, a comma-separated
+// list of group:role pairs, e.g. "auditors:auditor,ops:operator".
+// Only auditor / operator / employee are mappable; admin and
+// security are rejected outright (privilege is granted locally,
+// never by the IdP).
+func ParseRoleMap(s string) (map[string]string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	out := map[string]string{}
+	for _, item := range strings.Split(s, ",") {
+		parts := strings.SplitN(strings.TrimSpace(item), ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("oidc role map entry %q must be group:role", strings.TrimSpace(item))
+		}
+		group := strings.TrimSpace(parts[0])
+		role := strings.TrimSpace(parts[1])
+		if group == "" {
+			return nil, fmt.Errorf("oidc role map entry %q has an empty group", strings.TrimSpace(item))
+		}
+		switch role {
+		case "auditor", "operator", "employee":
+		default:
+			return nil, fmt.Errorf("oidc role map: role %q for group %q is not mappable (only auditor, operator, employee)", role, group)
+		}
+		if _, dup := out[group]; dup {
+			return nil, fmt.Errorf("oidc role map: group %q mapped twice", group)
+		}
+		out[group] = role
+	}
+	return out, nil
 }
 
 // ConfigFromEnv reads the OIDC configuration from the environment:
@@ -60,6 +107,8 @@ type Config struct {
 //	AGENTGATE_OIDC_REDIRECT_URL    default http://127.0.0.1:8787/auth/oidc/callback
 //	AGENTGATE_OIDC_SCOPES          default "openid profile email"
 //	AGENTGATE_OIDC_DEPARTMENT_CLAIM default "department"
+//	AGENTGATE_OIDC_GROUPS_CLAIM    default "groups"
+//	AGENTGATE_OIDC_ROLE_MAP        e.g. "auditors:auditor,ops:operator"
 //
 // The second return value reports whether OIDC is enabled at all
 // (issuer + client ID + client secret all present).
@@ -71,7 +120,9 @@ func ConfigFromEnv(getenv func(string) string) (Config, bool) {
 		RedirectURL:     strings.TrimSpace(getenv("AGENTGATE_OIDC_REDIRECT_URL")),
 		Scopes:          strings.TrimSpace(getenv("AGENTGATE_OIDC_SCOPES")),
 		DepartmentClaim: strings.TrimSpace(getenv("AGENTGATE_OIDC_DEPARTMENT_CLAIM")),
+		GroupsClaim:     strings.TrimSpace(getenv("AGENTGATE_OIDC_GROUPS_CLAIM")),
 	}
+	cfg.RoleMap, cfg.roleMapErr = ParseRoleMap(getenv("AGENTGATE_OIDC_ROLE_MAP"))
 	if cfg.Issuer == "" || cfg.ClientID == "" || cfg.ClientSecret == "" {
 		return cfg, false
 	}
@@ -83,6 +134,9 @@ func ConfigFromEnv(getenv func(string) string) (Config, bool) {
 	}
 	if cfg.DepartmentClaim == "" {
 		cfg.DepartmentClaim = "department"
+	}
+	if cfg.GroupsClaim == "" {
+		cfg.GroupsClaim = "groups"
 	}
 	return cfg, true
 }
@@ -123,6 +177,9 @@ func (c Config) Validate() error {
 	if !strings.Contains(c.Scopes, "openid") {
 		return errors.New("oidc scopes must include openid")
 	}
+	if c.roleMapErr != nil {
+		return fmt.Errorf("oidc role map: %w", c.roleMapErr)
+	}
 	return nil
 }
 
@@ -145,6 +202,11 @@ type Claims struct {
 	PreferredUsername string
 	Email             string
 	Department        string
+	// Groups is the IdP group membership (claim named by
+	// Config.GroupsClaim, default "groups"). It is only used for the
+	// F26 role mapping, and only for groups the local admin has
+	// explicitly mapped — the IdP never mints a role by itself.
+	Groups []string
 }
 
 // pendingState is one in-flight authorization request: state + nonce
@@ -181,6 +243,9 @@ func NewProvider(cfg Config) (*Provider, error) {
 	}
 	if cfg.DepartmentClaim == "" {
 		cfg.DepartmentClaim = "department"
+	}
+	if cfg.GroupsClaim == "" {
+		cfg.GroupsClaim = "groups"
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -368,6 +433,18 @@ func mergeClaims(dst, src *Claims) {
 	if dst.Department == "" {
 		dst.Department = src.Department
 	}
+	// Groups union: ID token and userinfo may each carry part of
+	// the membership; keep first-seen order, no duplicates.
+	seen := map[string]bool{}
+	for _, g := range dst.Groups {
+		seen[g] = true
+	}
+	for _, g := range src.Groups {
+		if !seen[g] {
+			seen[g] = true
+			dst.Groups = append(dst.Groups, g)
+		}
+	}
 }
 
 func (p *Provider) fetchUserinfo(ctx context.Context, accessToken string) (*Claims, error) {
@@ -394,6 +471,9 @@ func (p *Provider) fetchUserinfo(ctx context.Context, accessToken string) (*Clai
 // parseClaims extracts the claims we use from an ID-token payload or
 // a userinfo response. Only string claims are read; anything else is
 // ignored (a department claim that is not a string is not trusted).
+// The groups claim is the one exception: it is read as an array of
+// strings (a lone string counts as a one-element array), because
+// group membership is inherently multi-valued.
 func (p *Provider) parseClaims(body []byte) (*Claims, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -407,7 +487,35 @@ func (p *Provider) parseClaims(body []byte) (*Claims, error) {
 	if p.cfg.DepartmentClaim != "" {
 		c.Department, _ = raw[p.cfg.DepartmentClaim].(string)
 	}
+	claim := p.cfg.GroupsClaim
+	if claim == "" {
+		claim = "groups"
+	}
+	c.Groups = parseGroups(raw[claim])
 	return c, nil
+}
+
+// parseGroups reads a groups claim value: an array of strings, or a
+// single string. Anything else yields no groups (never trusted).
+func parseGroups(v any) []string {
+	switch t := v.(type) {
+	case []any:
+		var out []string
+		seen := map[string]bool{}
+		for _, item := range t {
+			if s, ok := item.(string); ok && s != "" && !seen[s] {
+				seen[s] = true
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		if t == "" {
+			return nil
+		}
+		return []string{t}
+	}
+	return nil
 }
 
 // VerifyIDToken verifies an ID token (Core §3.1.3.7): RS256 signature
