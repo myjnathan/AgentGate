@@ -293,13 +293,23 @@ func (s *Server) endTrace(span *otel.Span, req rpcRequest, rec *rpcRecorder) {
 
 // listTools merges the built-in tools with federated upstream tools
 // (backlog F6) and REST-adapted tools (backlog F7, exposed as
-// "rest.<name>"). REST tools above the caller's tier are hidden, the
-// same as federated ones.
+// "rest.<name>"). What a caller may use is decided once, here, by the
+// same static rules tools/call applies (backlog F31): a tool whose
+// minimum tier the caller does not meet is omitted from the list, so
+// "invisible" and "uncallable" are the same set. Argument-dependent
+// gates (the DLP scan and the data-level cap on a call's arguments)
+// cannot be decided at list time and stay call-side only.
 func (s *Server) listTools(ctx context.Context, tok *store.APIToken) []toolDef {
-	out := append([]toolDef{}, tools...)
+	out := []toolDef{}
+	for _, t := range tools {
+		if !s.builtinToolVisible(tok, t.Name) {
+			continue
+		}
+		out = append(out, t)
+	}
 	if s.fed != nil {
 		for _, up := range s.fed.Enabled() {
-			if tierRank(tok.Tier) < tierRank(up.MinTier) {
+			if !upstreamVisible(up, tok) {
 				continue
 			}
 			uts, err := s.fed.ListTools(ctx, up)
@@ -317,7 +327,7 @@ func (s *Server) listTools(ctx context.Context, tok *store.APIToken) []toolDef {
 	}
 	if s.rest != nil {
 		for _, rt := range s.rest.Enabled() {
-			if tierRank(tok.Tier) < tierRank(rt.MinTier) {
+			if !restToolVisible(rt, tok) {
 				continue
 			}
 			out = append(out, toolDef{
@@ -328,6 +338,30 @@ func (s *Server) listTools(ctx context.Context, tok *store.APIToken) []toolDef {
 		}
 	}
 	return out
+}
+
+// builtinToolVisible is the static (argument-independent) visibility
+// rule for a built-in tool: a tool with a minimum tier above the
+// caller's tier is hidden from tools/list and denied at tools/call.
+// It is the single predicate both sides consult, so the list can
+// never advertise a tool the call would refuse for tier reasons.
+func (s *Server) builtinToolVisible(tok *store.APIToken, name string) bool {
+	if min, ok := s.ToolMinTier[name]; ok && tierRank(tok.Tier) < tierRank(min) {
+		return false
+	}
+	return true
+}
+
+// upstreamVisible and restToolVisible are the same static rule for
+// federated (F6) and REST-adapted (F7) tools: enabled, and the
+// caller's tier meets the upstream/tool minimum. tools/list and
+// tools/call both consult them.
+func upstreamVisible(up *store.UpstreamServer, tok *store.APIToken) bool {
+	return up.Enabled && tierRank(tok.Tier) >= tierRank(up.MinTier)
+}
+
+func restToolVisible(rt *store.RESTTool, tok *store.APIToken) bool {
+	return rt.Enabled && tierRank(tok.Tier) >= tierRank(rt.MinTier)
 }
 
 // callFederatedTool forwards a "<namespace>.<tool>" call to its
@@ -348,9 +382,14 @@ func (s *Server) callFederatedTool(w http.ResponseWriter, ctx context.Context, r
 			Kind: "violation", Action: "tool_call_denied", Decision: "block",
 			Detail: map[string]string{"tool": fullName, "upstream": namespace, "reason": reason}})
 	}
-	if tierRank(tok.Tier) < tierRank(up.MinTier) {
+	// A tool hidden from tools/list is indistinguishable from an
+	// unknown tool at call time (F31): the denial must not leak
+	// that the tool exists. The audit event still records the real
+	// reason server-side, and the call-side check itself is not
+	// relaxed — list filtering is only defence in depth.
+	if !upstreamVisible(up, tok) {
 		deny("tier_insufficient")
-		writeRPCError(w, req.ID, -32003, "tool not permitted for this agent tier")
+		writeRPCError(w, req.ID, -32602, "unknown tool")
 		return
 	}
 	argJSON, _ := json.Marshal(args)
@@ -414,9 +453,11 @@ func (s *Server) callRESTTool(w http.ResponseWriter, ctx context.Context, req rp
 			Kind: "violation", Action: "tool_call_denied", Decision: "block",
 			Detail: map[string]string{"tool": fullName, "rest_tool": name, "reason": reason}})
 	}
-	if tierRank(tok.Tier) < tierRank(rt.MinTier) {
+	// Same as federated tools (F31): hidden from the list means
+	// indistinguishable from unknown at call time.
+	if !restToolVisible(rt, tok) {
 		deny("tier_insufficient")
-		writeRPCError(w, req.ID, -32003, "tool not permitted for this agent tier")
+		writeRPCError(w, req.ID, -32602, "unknown tool")
 		return
 	}
 	argJSON, _ := json.Marshal(args)
@@ -496,12 +537,14 @@ func (s *Server) callTool(w http.ResponseWriter, ctx context.Context, req rpcReq
 		return
 	}
 
-	// Tool-level authorization.
-	if min, ok := s.ToolMinTier[params.Name]; ok && tierRank(tok.Tier) < tierRank(min) {
+	// Tool-level authorization — the same static rule tools/list
+	// applies (F31). A tool the caller cannot see is denied as an
+	// unknown tool, never as "exists but forbidden".
+	if !s.builtinToolVisible(tok, params.Name) {
 		s.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 			Kind: "violation", Action: "tool_call_denied", Decision: "block",
 			Detail: map[string]string{"tool": params.Name, "reason": "tier_insufficient"}})
-		writeRPCError(w, req.ID, -32003, "tool not permitted for this agent tier")
+		writeRPCError(w, req.ID, -32602, "unknown tool")
 		return
 	}
 
@@ -855,9 +898,13 @@ func (s *Server) getPrompt(w http.ResponseWriter, req rpcRequest, tok *store.API
 			Kind: "violation", Action: "prompt_get_denied", Decision: "block",
 			Detail: map[string]string{"prompt": tpl.Name, "reason": reason}})
 	}
+	// A prompt hidden from prompts/list is indistinguishable from
+	// an unknown prompt at get time — the same "invisible means
+	// uncallable" rule as tools (F31). The audit event still
+	// records the real reason server-side.
 	if tierRank(tok.Tier) < tierRank(tpl.MinTier) {
 		deny("tier_insufficient")
-		writeRPCError(w, req.ID, -32003, "prompt not permitted for this agent tier")
+		writeRPCError(w, req.ID, -32602, "unknown prompt")
 		return
 	}
 	if !tpl.InScope(user.Department) {

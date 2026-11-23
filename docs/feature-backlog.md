@@ -452,10 +452,15 @@
 - 已知注意点：只有简单 / 复杂两档（1Panel 同款两档）；规则兜底不看代码特征（表面标记太嘈杂，代码类请求靠样本库覆盖）；短主题词（如只发「供应商报价单」）可能因共享名词短语匹配复杂样本，代价是一次强模型调用、不是错误答案；缓存按解析后的模型名做键。
 - 排序：排在 F28 之后、F27 之前。
 
-### F31 MCP 列表/调用同规则过滤 `todo`
+### F31 MCP 列表/调用同规则过滤 `done`（2026-11-23）
 - 来源：Nathan 2026-11-22 批准立项（Higress / APISIX / Kong / Bifrost / Envoy 网关调研结论，待办登记 8）：借鉴 Envoy 的 MCP 工具过滤——tools/list 与 tools/call 用同一套规则过滤，看不见的工具即调不了。
-- 适配：待立项细化。
+- 适配：静态规则（工具最低等级、上游/工具启用状态）由列表与调用共用同一判定谓词；参数相关的门禁（DLP 扫描、参数密级上限）因列表时无法判定，仍只留在调用侧；被列表隐藏的工具在调用时与不存在的工具无差别（-32602 unknown tool），不通过错误码泄漏存在性；知识包（F22）列表与读取本就共用同一谓词，本轮以测试钉住、防止漂移。
 - 排序：排在 F30 之后、F27 之前。
+- 借鉴点（Envoy AI Gateway 1.0 / Agent Router MCP Gateway 官方文档 envoy-ai-gateway.netlify.app/docs/1.2/capabilities/mcp；Tetrate 1.0 发布说明 tetrate.io/blog/envoy-ai-gateway-v1-0-release；Nirmata《Govern MCP and LLM Traffic with Kyverno Authz》nirmata.com，2026-11-23 查阅）：
+  Envoy AI Gateway 1.0 的 MCP 网关：多 MCP 服务器聚合到统一端点、按网关策略聚合与过滤可用工具（MCPRoute include/exclude 规则 + CEL 细粒度授权），「tools/list 只返回调用者实际有权用的工具」；Nirmata 的总结点明了分工——「列表过滤只是给 Agent 的便利、不是安全边界，真正拦住隐藏工具的是每次 tools/call 的检查」。
+  我们照此实现，但做两处收紧：① 列表与调用共用同一静态谓词而不是各写一套（Envoy 的列表过滤与调用授权分属响应改写与请求授权两层，我们把两层收进同一个 Go 谓词，天然不可能漂移）；② 被隐藏的工具在调用时报「不存在」而非「无权」（Envoy 的调用拒绝会暴露工具存在，我们的 -32602 与 prompts/get 对范围外提示词的「unknown prompt」同款做法一致）。
+- 实现：`internal/mcp/mcp.go` 新增三个共享静态谓词——`builtinToolVisible`（内置工具最低等级）、`upstreamVisible`（F6 联邦上游：启用 + 最低等级）、`restToolVisible`（F7 REST 工具：启用 + 最低等级），`listTools` 与三处调用入口共用；此前唯一的列表/调用不一致是内置 `kb_get`（受管级工具，BYOA 的列表里可见、调用时才拒），本轮列表侧同样过滤；三处调用侧的等级拒绝由 -32003「tool not permitted for this agent tier」改为 -32602「unknown tool」，服务端 `tool_call_denied` 审计事件（reason=tier_insufficient）不变；`prompts/get` 的等级拒绝同步改为 -32602「unknown prompt」，与 prompts/list 的隐藏行为对齐；F22 知识包的列表/读取谓词未动（已共用）。
+- 测试：新增 `TestToolsListCallSameRule`（BYOA 列表无 kb_get、受管级列表有；三类隐藏工具调用均为 -32602 unknown tool；不变量——列表中任一工具以空参数调用永不报 unknown tool）与 `TestKnowledgePackageListGetAgreement`（列表中每个包都可读、列表外的一律不可读）；4 处既有期望随行为变更同步更新（kb_get / 联邦 / REST / 提示词的等级拒绝均改为 -32602，测试本身未删）；`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 新增 3 项断言（BYOA 列表无 kb_get、受管级列表有 kb_get、两处隐藏工具调用报 unknown tool）。
 
 ### F32 一致占位符脱敏 `todo`
 - 来源：Nathan 2026-11-22 批准立项（同上调研结论，待办登记 8）：借鉴 Kong 的一致占位符——同一敏感值在一次会话内始终得同一占位符，利于模型理解；只借占位符一致性，进程内实现（Kong 的实现是独立 spaCy 容器，不借）。

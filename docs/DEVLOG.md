@@ -2,6 +2,17 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-23 · F31 MCP 列表/调用同规则过滤
+
+- 本轮按常规规程选条目：P0、P1 全部 done，P2 按清单顺序取 F31（首个剩余 P2 条目）。体内的 12:26 特别指令与待办登记 1–8 均已在先前轮次执行完毕、作废。本地另有一条 docs 提交 fe9cd84（F30 推送结果记录）随本轮整包快照一并带上。
+- 借鉴点（2026-11-23 查阅一手来源）：① Envoy AI Gateway 1.0 / Agent Router MCP Gateway 官方文档（envoy-ai-gateway.netlify.app/docs/1.2/capabilities/mcp）：多 MCP 服务器聚合到统一端点、按网关策略聚合与过滤可用工具（MCPRoute include/exclude 规则 + CEL 细粒度授权），工具名按后端加前缀路由。② Tetrate 1.0 发布说明（tetrate.io/blog/envoy-ai-gateway-v1-0-release）：「tools/list 只返回调用者实际有权用的工具」，1.0 起 MCP 网关含服务器复用、工具路由与过滤、细粒度授权。③ Nirmata《Govern MCP and LLM Traffic with Kyverno Authz》（nirmata.com，2026-11-18）：「列表过滤只是给 Agent 的便利、不是安全边界，真正拦住隐藏工具的是每次 tools/call 的检查」——与本条目红线「过滤只是纵深防御，tools/call 侧既有校验不得放松」同款。
+- 复用检查（Nathan 复用优先指示）：未复制代码——Agent Router（Envoy AI Gateway）为 Apache-2.0，但其 MCP 过滤实现在 Envoy 控制面 / ext_proc 层、与本项目单二进制网关形态不同，只借「列表与调用同一套规则、列表过滤是纵深防御」的思想；实现为纯标准库自研约 60 行，复用本仓已有 `ToolMinTier`、联邦/REST 的 `MinTier` 与 `prompts/get` 的 unknown 形态。
+- 实现：`internal/mcp/mcp.go` 新增三个共享静态谓词——`builtinToolVisible`（内置工具最低等级）、`upstreamVisible`（F6 联邦上游：启用 + 最低等级）、`restToolVisible`（F7 REST 工具：启用 + 最低等级），`listTools` 与三处调用入口共用同一谓词；此前唯一的列表/调用不一致是内置 `kb_get`（受管级工具，BYOA 的列表里可见、调用时才拒），本轮列表侧同样过滤；三处调用侧的等级拒绝由 -32003「tool not permitted for this agent tier」改为 -32602「unknown tool」，服务端 `tool_call_denied` 审计事件（reason=tier_insufficient）不变；`prompts/get` 的等级拒绝同步改为 -32602「unknown prompt」，与 prompts/list 的隐藏行为对齐；F22 知识包的列表/读取谓词未动（已共用，本轮只以测试钉住）。
+- 关键决策：① 被隐藏的工具在调用时报「不存在」而非「无权」——错误码本身会泄漏工具存在性，-32602 与 prompts/get 对范围外提示词的「unknown prompt」同款；② 静态谓词共用、参数门禁（DLP 扫描、参数密级上限）留调用侧——列表时没有参数、无法判定，Envoy 也是请求授权与响应过滤分层；③ -32003 全仓退役——此前唯一引用就是这四处调用点与测试，改后全仓无 -32003。
+- 测试：新增 `TestToolsListCallSameRule`（BYOA 列表无 kb_get、受管级列表有；三类隐藏工具调用均为 -32602 unknown tool；不变量——列表中任一工具以空参数调用永不报 unknown tool）与 `TestKnowledgePackageListGetAgreement`（列表中每个包都可读、列表外的一律不可读）；4 处既有期望随行为变更同步更新（kb_get / 联邦 / REST / 提示词的等级拒绝均改为 -32602，测试本身未删）；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（mcp）全绿；`make smoke` 278 项断言 0 失败（基线 276 + 新增 2）。
+- 本轮实测抓到的真问题：① 冒烟首跑 1 项失败——`rpm limit enforced at 6th call`（F3 限流断言），与本轮改动无关（未碰 gateway/ratelimit）；随后重跑 4 次全部 0 失败，应为并行负载下的 60 秒滑动窗口时序抖动，记为已知偶发、不修。② 写测试时一次编辑误删了 `TestRESTToolCallArgsValidation` 的前几行，立即用 `git diff` 发现并恢复——教训：改测试文件后先 `git diff` 核对再跑测试。
+- 推送结果：待推送后填入。下一轮为 P2 的 F32（一致占位符脱敏）。
+
 ## 2026-11-23 · F30 复杂度智能路由
 
 - 本轮按常规规程选条目：P0、P1 全部 done，P2 按清单顺序取 F30（首个剩余 P2 条目）。体内的 12:26 特别指令与待办登记 1–8 均已在先前轮次执行完毕、作废。本地另有一条 docs 提交 c3fc529（F28 推送结果记录）随本轮整包快照一并带上。
@@ -11,7 +22,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 关键决策：① 只做简单 / 复杂两档（1Panel 同款两档），不做四档——演示模型只有 eco/pro 两档，四档无模型可配；② 分类器在 F28 向量化器上加字符 bigram 层——短中文问句 trigram 太少（「今天星期几？」只有 3 个），插入一个字毁掉两个，bigram 对单字插入更稳健；F28 的向量化器本身未动，增强只在 autorouter 包内；③ 阈值保持 0.35（与 F28 同值）：实测分离为改写 0.39–0.56、正常提示最高 0.32（「本周的供应商报价单汇总」0.32），重度缩写「星河精密几点上班」0.34 落规则兜底、层级仍正确；④ 层级回落是可用性选择、不是降级：回落仍在合规集合内（每跳都复用 `pickCandidates`），且审计同时记录分类层级与实际服务层级；⑤ 组模型无渠道提供时不报错（可能是前向引用），只在 GET 响应与管理台提示——硬校验会挡住「先配组、后接渠道」的正常顺序；⑥ 停用时 `model=auto` 报 `model_not_available` 而不是静默落默认模型——`auto` 不是真实模型，静默回落会掩盖配置错误。
 - 测试：autorouter 包 10 项 + 网关集成 10 项 + API 1 项；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（autorouter/gateway/api/store）全绿；`make smoke` 276 项断言 0 失败（基线 266 + 新增 10，三次运行均稳定）。
 - 本轮实测抓到的真问题：① 阈值调参初版照抄 F28 的纯 trigram 向量，短问句改写（「今天是星期几？」相对种子样本仅 1 个共享 trigram）与长文本规则（测试用 100 次重复只有 1500 字、未达 2000 字阈值）双双落空——已加 bigram 层并把长文本测试改为 150 次重复（2250 字），两处均有回归用例；「星河精密几点上班」相对种子样本 0.34 仍低于阈值，已作为「缩写落规则兜底、层级仍正确」的用例写进测试与文档，不再调低阈值。② 层级回落集成测试初版未给自定义配置配样本库（`Samples` 为 nil 即空库），分类走了规则而非样本——已补 `autorouter.DefaultSamples()`，并确认空库即规则兜底是设计行为（配置语义：删空样本 ≠ 恢复种子）。③ 冒烟里 `token=<redacted>` 是工具输出的脱敏显示，真实变量是 `sess` 与 `tok30`（F29/F28 轮同款坑），已逐行核对真名并加 `python3 -c compile` 自检。④ 文档初版写了未经实测的相似度数字（「本周的供应商报价单汇总」0.26、合同改写 0.55），已用临时 probe 测试实测修正为 0.32 与 0.56，probe 用后删除。
-- 推送结果：待推送后填入。下一轮为 P2 的 F31（MCP 列表/调用同规则过滤）。
+- 推送结果：本地提交 a152949（含随带的 c3fc529，即 F28 推送结果记录）；远端建分支 loop/f30（基点远端 main 2cca9b68；推送前核对同步基点：README.md 与 internal/gateway/gateway.go 远端 blob 与本地父提交一致、8 个新文件在远端不存在（抽查 autorouter.go 确认）、DEVLOG.md 仅差本地独有的 F28 推送记录行；create_branch 首次调用被连接器服务重启中断、核查确认分支已建出后继续）；整包快照 17 文件一次推送（提交 8dbd5a5a），逐文件哈希核对 17/17 一致，未触发 contents API 回退；PR #27 文件清单与本轮一致（分支自 main HEAD 建出 + 仅一次快照提交 + 17/17 blob 核对证明，list_pull_files 在本环境报 unknown method，见 F20 轮记录），已合并进远端 main，远端 HEAD 549bd216（合并提交），读回 main 上 internal/autorouter/autorouter.go、docs/auto-routing.md 两文件 blob 与快照一致。待删分支新增 loop/f30（共 19 个，需 Nathan 网页端手动删除）。下一轮为 P2 的 F31（MCP 列表/调用同规则过滤）。
 
 ## 2026-11-23 · F28 语义复核层
 
