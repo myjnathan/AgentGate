@@ -62,12 +62,32 @@
 //	                     RPO to the last completed write. Default off:
 //	                     fsync costs one disk sync per call, and a
 //	                     plain process crash loses nothing either way.
+//	AGENTGATE_BACKUP_S3_ENDPOINT / AGENTGATE_BACKUP_S3_BUCKET /
+//	AGENTGATE_BACKUP_S3_REGION / AGENTGATE_BACKUP_S3_ACCESS_KEY /
+//	AGENTGATE_BACKUP_S3_SECRET_KEY
+//	                     object-storage backup (backlog F27 phase 3
+//	                     B1): S3-compatible endpoint + bucket +
+//	                     credentials for hourly state snapshots and
+//	                     audit archive segments. The endpoint must be
+//	                     self-hosted on the same machine or intranet
+//	                     (Garage, rclone serve s3, or an existing
+//	                     MinIO) — never a cloud bucket. Unset = no
+//	                     periodic uploads; the console can store the
+//	                     same config encrypted instead (POST
+//	                     /api/backup/config). Optional:
+//	                     AGENTGATE_BACKUP_STATE_INTERVAL_HOURS
+//	                     (default 1),
+//	                     AGENTGATE_BACKUP_STATE_RETENTION_DAYS
+//	                     (default 7),
+//	                     AGENTGATE_BACKUP_AUDIT_RETENTION_DAYS
+//	                     (default 90). See docs/backup.md.
 package main
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -81,6 +101,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/api"
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
+	"github.com/myjnathan/agentgate/internal/backup"
 	"github.com/myjnathan/agentgate/internal/distrib"
 	"github.com/myjnathan/agentgate/internal/federation"
 	"github.com/myjnathan/agentgate/internal/folderkb"
@@ -113,6 +134,12 @@ func envOr(key, def string) string {
 var version = "dev"
 
 func main() {
+	// Backup CLI (backlog F27 phase 3 B1): `agentgate backup ...`
+	// runs without a server and without the master key — restore
+	// must work when the data directory is empty. See backup_cli.go.
+	if len(os.Args) > 1 && os.Args[1] == "backup" {
+		os.Exit(runBackupCLI(os.Args[2:]))
+	}
 	addr := envOr("AGENTGATE_ADDR", "127.0.0.1:8787")
 	dataDir := envOr("AGENTGATE_DATA", "./data")
 	master := os.Getenv("AGENTGATE_MASTER_KEY")
@@ -475,6 +502,62 @@ func main() {
 	if reg, _ := semix.RegenerateChanged(context.Background(), fk.Snapshots()); reg > 0 {
 		log.Printf("semidx: generated semantic entries for %d documents", reg)
 	}
+	// Object-storage backup (backlog F27 phase 3 B1): state snapshots
+	// hourly + audit archive segments to a self-hosted S3-compatible
+	// bucket (same machine or intranet — never a cloud bucket). A
+	// stored console config wins over environment variables; the
+	// secret key is decrypted only in memory, never logged. The
+	// periodic runner re-reads the config every cycle, so a console
+	// change takes effect without a restart.
+	backupSvc := backup.NewService(dataDir, func() (backup.Config, error) {
+		var stored *store.BackupConfig
+		st.Read(func(s *store.State) { stored = s.Backup })
+		if stored != nil && stored.Endpoint != "" {
+			secret, err := box.Decrypt(stored.SecretEnc)
+			if err != nil {
+				return backup.Config{}, fmt.Errorf("decrypt backup secret: %w", err)
+			}
+			cfg := backup.Config{Endpoint: stored.Endpoint, Bucket: stored.Bucket,
+				Region: stored.Region, AccessKey: stored.AccessKey,
+				SecretKey: secret, Source: "stored"}.WithDefaults()
+			if stored.StateIntervalHours > 0 {
+				cfg.StateInterval = time.Duration(stored.StateIntervalHours) * time.Hour
+			}
+			if stored.StateRetentionDays > 0 {
+				cfg.StateRetention = time.Duration(stored.StateRetentionDays) * 24 * time.Hour
+			}
+			if stored.AuditRetentionDays > 0 {
+				cfg.AuditRetention = time.Duration(stored.AuditRetentionDays) * 24 * time.Hour
+			}
+			if err := cfg.Validate(); err != nil {
+				return backup.Config{}, err
+			}
+			return cfg, nil
+		}
+		return backup.ConfigFromEnv(os.Getenv)
+	}, st.SnapshotBytes, func(ev audit.Event) { al.Append(ev) }, func(rep backup.Report) {
+		st.WithLock(func(s *store.State) {
+			if s.Backup == nil {
+				s.Backup = &store.BackupConfig{}
+			}
+			s.Backup.LastRun = &store.BackupRunSummary{
+				StartedAt: rep.StartedAt, FinishedAt: rep.FinishedAt,
+				StateUploaded: rep.StateUploaded, StateKey: rep.StateKey,
+				AuditUploaded: len(rep.AuditUploaded), AuditSkipped: rep.AuditSkipped,
+				Pruned: len(rep.Pruned), Error: rep.Error,
+			}
+		})
+		_ = st.Save()
+	}, log.Printf)
+	rest.SetBackupService(backupSvc)
+	if _, err := backupSvc.EffectiveConfig(); err == nil {
+		log.Printf("backup: object-storage backup enabled (state snapshots + audit segments; see docs/backup.md)")
+	} else if errors.Is(err, backup.ErrNotConfigured) {
+		log.Printf("backup: object storage not configured (set AGENTGATE_BACKUP_S3_* or POST /api/backup/config); periodic uploads disabled")
+	} else {
+		log.Printf("backup: config error: %v (periodic uploads disabled)", err)
+	}
+	go backupSvc.RunPeriodic(context.Background())
 
 	mux := http.NewServeMux()
 	mux.Handle("/", webui.Handler())

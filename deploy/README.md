@@ -43,9 +43,18 @@ sudo systemctl enable --now agentgate
 | `AGENTGATE_BANNED_WORDS` / `AGENTGATE_CUSTOM_WORDS` | 逗号分隔的拦截词/机密词覆盖配置 |
 
 ## 备份与恢复
-- 备份两样东西：**数据目录**（或 docker 卷 `agentgate-data`）+ **`.env` 里的主密钥**，缺一不可。
-- 恢复：还原数据目录、配回同一主密钥、启动即可。审计日志为哈希链，恢复后可在管理台
-  「审计校验」验证完整性，防篡改可证。
+
+备份两样东西：**数据目录**（或 docker 卷 `agentgate-data`）+ **`.env` 里的主密钥**，缺一不可。
+完整手册见 [docs/backup.md](../docs/backup.md)（F27 收尾 A+B1）：
+
+- **离线备份**：`deploy/backup-offline.sh`（state.json + audit.jsonl + 归档段，带 SHA-256 清单），
+  每天一次、放到另一台机器或网盘；**卷快照**（云盘/虚拟化层）每天一次。
+- **对象存储备份**：state 每小时快照 + 审计归档段自动上传到**本地/内网 S3 兼容桶**（Garage 或
+  `rclone serve s3`，不接云端桶），保留 state 7 天、审计段 90 天；管理台可配（`POST /api/backup/config`），
+  命令行 `agentgate backup upload|restore|list|verify|status`。
+- **恢复**：停服务 → `agentgate backup restore <空目录>`（取回 + 验整条审计链，链验不过拒绝起服务）
+  → 配回同一主密钥 → 启动，`/api/audit/verify` 的 `chain_valid` 必须为 true。
+  每季度做一次取回验链 + 切换恢复演练（手册 §2.3 清单）。
 
 ## 升级与回滚
 - 升级：重跑 install.sh，或 `docker compose pull && docker compose up -d`；二进制方式替换文件后 `systemctl restart`。

@@ -17,6 +17,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/audit"
 	"github.com/myjnathan/agentgate/internal/auth"
 	"github.com/myjnathan/agentgate/internal/autorouter"
+	"github.com/myjnathan/agentgate/internal/backup"
 	"github.com/myjnathan/agentgate/internal/cache"
 	"github.com/myjnathan/agentgate/internal/distrib"
 	"github.com/myjnathan/agentgate/internal/federation"
@@ -63,6 +64,11 @@ type API struct {
 	// allowTopSecretExceptions is the operator opt-in for
 	// top-secret exceptions (backlog F24); default false.
 	allowTopSecretExceptions bool
+	// backupSvc is the object-storage backup service (backlog F27
+	// phase 3 B1), wired by cmd/agentgate; nil when the API runs
+	// without one (tests), in which case status reports unconfigured
+	// and runs answer 503.
+	backupSvc *backup.Service
 	// setupCodeHash is the SHA-256 hash of the one-time first-admin
 	// setup code (backlog F34); nil when no code is live. setupMu
 	// guards it and the failed-attempt counter.
@@ -95,6 +101,13 @@ func (a *API) SetAlertDispatcher(d *alert.Dispatcher) {
 	a.dispatcher = d
 }
 
+// SetBackupService wires the object-storage backup service (backlog
+// F27 phase 3 B1) used by the /api/backup status, config and run
+// endpoints.
+func (a *API) SetBackupService(svc *backup.Service) {
+	a.backupSvc = svc
+}
+
 func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/login", a.login)
 	mux.HandleFunc("GET /api/auth/providers", a.oidcProviders)
@@ -125,6 +138,11 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/audit/verify", a.requirePerm(roles.AuditRead, a.verifyAudit))
 	mux.HandleFunc("GET /api/audit/export", a.requirePerm(roles.AuditExport, a.exportAudit))
 	mux.HandleFunc("POST /api/audit/archive", a.requireAdmin(a.archiveAudit))
+	// Object-storage backup (backlog F27 phase 3 B1): status,
+	// console configuration and manual runs are operator territory.
+	mux.HandleFunc("GET /api/backup/status", a.requireAdmin(a.backupStatus))
+	mux.HandleFunc("POST /api/backup/config", a.requireAdmin(a.setBackupConfig))
+	mux.HandleFunc("POST /api/backup/run", a.requireAdmin(a.runBackup))
 	mux.HandleFunc("GET /api/stats", a.requirePerm(roles.AuditRead, a.getStats))
 	mux.HandleFunc("GET /api/sidecar/stats", a.requirePerm(roles.AuditRead, a.sidecarStats))
 	mux.HandleFunc("GET /api/otel", a.requirePerm(roles.OTel, a.otelStatus))

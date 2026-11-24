@@ -39,6 +39,37 @@ var ErrChainInvalid = errors.New("audit chain invalid; refusing to archive")
 // of the pruned live log.
 const CheckpointAction = "audit_archive_checkpoint"
 
+// AnchorCheckpoint builds the checkpoint event that re-anchors a
+// live log at an archived segment's head (backlog F27 phase 3 B1):
+// it is the same event Archive writes when it prunes the live log —
+// PrevHash "genesis", Seq the archived head's seq, Detail carrying
+// the archived head hash and file. A restored log starts with this
+// event, so new events link from the archived head and sequence
+// numbers never collide with the archived segments; without it a
+// restored server would restart the chain at genesis and the full
+// history (segments + new log) would no longer verify as one chain.
+// The "restored" marker distinguishes a restore anchor from an
+// archive checkpoint in the audit trail.
+func AnchorCheckpoint(headHash string, headSeq int64, archiveFile, actor string) Event {
+	cp := Event{
+		Seq:      headSeq,
+		Time:     time.Now().UTC(),
+		Actor:    actor,
+		Kind:     "admin",
+		Action:   CheckpointAction,
+		Decision: "allow",
+		Detail: map[string]string{
+			"archive_file":       archiveFile,
+			"archived_last_seq":  strconv.FormatInt(headSeq, 10),
+			"archived_head_hash": headHash,
+			"restored":           "true",
+		},
+		PrevHash: "genesis",
+	}
+	cp.Hash = hashEvent(cp)
+	return cp
+}
+
 // ArchiveManifest is the JSON sidecar written next to each archive
 // file, so an auditor can check an archive without opening it.
 type ArchiveManifest struct {
