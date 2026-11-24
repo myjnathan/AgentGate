@@ -27,6 +27,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/billing"
 	"github.com/myjnathan/agentgate/internal/cache"
 	"github.com/myjnathan/agentgate/internal/guard"
+	"github.com/myjnathan/agentgate/internal/onboard"
 	"github.com/myjnathan/agentgate/internal/otel"
 	"github.com/myjnathan/agentgate/internal/ratelimit"
 	"github.com/myjnathan/agentgate/internal/secretbox"
@@ -42,6 +43,11 @@ type Policy struct {
 	// instead of blocked when the channel is allowed to receive the data.
 	RedactForTier map[store.Tier]bool
 	DryRun        bool // record decisions but never block/redact
+	// LaunchPhase is the rollout phase (backlog F34: observe | warn |
+	// block). When set it wins over DryRun: observe means DryRun,
+	// warn/block mean enforced. Empty means derive from DryRun
+	// (true -> observe, false -> block) for older callers.
+	LaunchPhase string
 	// FailThreshold is the number of consecutive retryable failures
 	// after which a channel is cooled down (0 = default 3, mirroring
 	// LiteLLM's allowed_fails).
@@ -103,13 +109,126 @@ type Gateway struct {
 	// routing (F30), process-lifetime only, never persisted.
 	autoMu    sync.Mutex
 	autoStats autorouter.Stats
+	// phaseMu guards phase: the rollout phase (backlog F34), changed
+	// at runtime by the management API. The zero value ("") means
+	// block — the pre-F34 behaviour.
+	phaseMu sync.RWMutex
+	phase   string
+	// wordsMu guards bannedWords/customWords: the gateway's word
+	// lists. They start as copies of Policy.BannedWords /
+	// Policy.CustomWords and are replaced at runtime when an
+	// industry template is applied (F34); the detector is rebuilt
+	// per request (detector()), so a runtime change takes effect
+	// on the next call without a restart.
+	wordsMu     sync.RWMutex
+	bannedWords []string
+	customWords []string
+	// redactMu guards redactOverride: the runtime redaction tiers
+	// (F34 conservative preset redacts both tiers). Nil means the
+	// Policy.RedactForTier map applies.
+	redactMu       sync.RWMutex
+	redactOverride map[store.Tier]bool
 }
 
 func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log, pol Policy) *Gateway {
+	phase := pol.LaunchPhase
+	if !onboard.ValidPhase(phase) {
+		if pol.DryRun {
+			phase = onboard.PhaseObserve
+		} else {
+			phase = onboard.PhaseBlock
+		}
+	}
 	return &Gateway{st: st, auth: au, box: box, audit: al, policy: pol,
 		client: &http.Client{Timeout: 10 * time.Minute}, limiter: ratelimit.New(),
 		cache: cache.New(pol.CacheTTL, 0), keyNext: map[string]int{},
-		budgetAlerted: map[string]string{}}
+		budgetAlerted: map[string]string{}, phase: phase,
+		bannedWords: append([]string(nil), pol.BannedWords...),
+		customWords: append([]string(nil), pol.CustomWords...)}
+}
+
+// LaunchPhase returns the current rollout phase (F34): observe |
+// warn | block. Unset means block (the pre-F34 behaviour).
+func (g *Gateway) LaunchPhase() string {
+	g.phaseMu.RLock()
+	defer g.phaseMu.RUnlock()
+	if g.phase == "" {
+		return onboard.PhaseBlock
+	}
+	return g.phase
+}
+
+// SetLaunchPhase switches the rollout phase at runtime (F34). An
+// invalid value is ignored — the phase only ever changes to one of
+// the three known phases, never to a typo.
+func (g *Gateway) SetLaunchPhase(p string) {
+	if !onboard.ValidPhase(p) {
+		return
+	}
+	g.phaseMu.Lock()
+	defer g.phaseMu.Unlock()
+	g.phase = p
+}
+
+// dryRun reports whether the gateway is in observe phase: record
+// decisions but never block or redact.
+func (g *Gateway) dryRun() bool { return g.LaunchPhase() == onboard.PhaseObserve }
+
+// warnPhase reports whether the gateway is in warn phase: the BYOA
+// tier rule is waived (see ChatCompletions) but everything else
+// still enforces.
+func (g *Gateway) warnPhase() bool { return g.LaunchPhase() == onboard.PhaseWarn }
+
+// Words returns copies of the gateway's current banned/custom word
+// lists (F34): the startup lists plus any template words applied
+// since. The slices are copies, so callers cannot mutate the
+// gateway's lists.
+func (g *Gateway) Words() (banned, custom []string) {
+	g.wordsMu.RLock()
+	defer g.wordsMu.RUnlock()
+	return append([]string(nil), g.bannedWords...), append([]string(nil), g.customWords...)
+}
+
+// SetWords replaces the gateway's word lists at runtime (F34): the
+// detector is rebuilt per request, so the next call already uses
+// the new lists. Callers pass full lists (the API unions template
+// words onto the current lists before calling).
+func (g *Gateway) SetWords(banned, custom []string) {
+	g.wordsMu.Lock()
+	defer g.wordsMu.Unlock()
+	g.bannedWords = append([]string(nil), banned...)
+	g.customWords = append([]string(nil), custom...)
+}
+
+// words is the detector's word source: the runtime lists.
+func (g *Gateway) words() (banned, custom []string) { return g.Words() }
+
+// redactForTier reports whether the tier's findings are redacted
+// (F34): the runtime override wins when set (the conservative
+// preset redacts both tiers), otherwise Policy.RedactForTier.
+func (g *Gateway) redactForTier(t store.Tier) bool {
+	g.redactMu.RLock()
+	defer g.redactMu.RUnlock()
+	if g.redactOverride != nil {
+		return g.redactOverride[t]
+	}
+	return g.policy.RedactForTier[t]
+}
+
+// SetRedactForTier replaces the redaction tiers at runtime (F34).
+// A nil map clears the override and restores Policy.RedactForTier.
+func (g *Gateway) SetRedactForTier(m map[store.Tier]bool) {
+	g.redactMu.Lock()
+	defer g.redactMu.Unlock()
+	if m == nil {
+		g.redactOverride = nil
+		return
+	}
+	cp := make(map[store.Tier]bool, len(m))
+	for k, v := range m {
+		cp[k] = v
+	}
+	g.redactOverride = cp
 }
 
 // Cache exposes the exact-match response cache (F11) so the server
@@ -155,7 +274,8 @@ func defaultTPM(tier store.Tier) int {
 }
 
 func (g *Gateway) detector() *guard.Detector {
-	return guard.NewDetector(g.policy.BannedWords, g.policy.CustomWords)
+	banned, custom := g.words()
+	return guard.NewDetector(banned, custom)
 }
 
 type chatRequest struct {
@@ -621,8 +741,10 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		ts.sidecar = sidecar
 	}
 
-	// Banned words: hard block.
-	if hasBanned && !g.policy.DryRun {
+	// Banned words: hard block. This is a safety layer, so it blocks
+	// in every phase except observe — the warn phase waives only the
+	// BYOA tier rule below, never banned content.
+	if hasBanned && !g.dryRun() {
 		ts.decision, ts.level = "block", level.String()
 		g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 			Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block", Detail: detail})
@@ -636,15 +758,29 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// otherwise block this call.
 	grant, grantPresented := g.findGrant(r, user.ID, level)
 	grantWaived := false
+	// warnedTier records that the BYOA tier block was waived by the
+	// warn phase (F34): the call proceeds through the normal trust
+	// routing below (still redacted when the channel demands it) and
+	// the decision is recorded as "warn" at the end.
+	warnedTier := false
 
-	// BYOA tier may never send confidential+ data anywhere.
-	if tok.Tier == store.TierBYOA && level >= store.LevelConfidential && !g.policy.DryRun {
+	// BYOA tier may never send confidential+ data anywhere — except
+	// in warn phase, where the tier rule is the rollout gate: the
+	// call goes through (trust routing and mandatory redaction
+	// still apply) and is recorded as a warning, so the operator
+	// can see exactly what blocking would have caught before
+	// switching to block phase. A grant still waives the block in
+	// block phase and is spent; in warn phase no grant is needed
+	// and none is consumed.
+	if tok.Tier == store.TierBYOA && level >= store.LevelConfidential && !g.dryRun() {
 		if grant != nil {
 			// A valid grant waives the tier block for this one call;
 			// the call is still desensitized when the channel
 			// demands it (below), and the grant is spent before
 			// forwarding.
 			grantWaived = true
+		} else if g.warnPhase() {
+			warnedTier = true
 		} else {
 			if grantPresented {
 				ts.decision, ts.level = "block", level.String()
@@ -815,7 +951,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// channels receive the original text.
 	mustRedact := trustRequiresRedaction(level, candidates[0].TrustTypeOrDefault())
 	var mapping map[string]string
-	if len(allFindings) > 0 && (g.policy.RedactForTier[tok.Tier] || mustRedact) && !g.policy.DryRun {
+	if len(allFindings) > 0 && (g.redactForTier(tok.Tier) || mustRedact) && !g.dryRun() {
 		body, mapping = redactBody(body, det)
 		if decision == "allow" {
 			decision = "redact"
@@ -829,8 +965,16 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	} else if len(allFindings) > 0 && decision == "allow" {
 		decision = "warn"
 	}
-	if g.policy.DryRun && len(allFindings) > 0 {
+	if g.dryRun() && len(allFindings) > 0 {
 		decision = "dry_run:" + decision
+	}
+	// Warn phase (F34): the BYOA tier block was waived above — the
+	// headline decision is "warn" (with the reason in detail), even
+	// when the call was also redacted (that is recorded separately
+	// in detail["desensitized"]).
+	if warnedTier {
+		decision = "warn"
+		detail["warn_reason"] = "byoa_tier_would_block"
 	}
 
 	// ---- Semantic review (F28) ----
@@ -853,7 +997,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	semDec := g.runSemanticReview(r.Context(), reviewText(reviewBody, fullText.String()), level)
 	if semDec.Action == semreview.DecisionBlock {
-		if g.policy.DryRun {
+		if g.dryRun() {
 			// Observe only: record the would-be block, do not block.
 			g.auditSemanticReview(user, tok, req.Model, level,
 				semreview.Decision{Action: "dry_run", Source: semDec.Source, SampleID: semDec.SampleID,
@@ -890,7 +1034,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// A hit returns the stored body verbatim and consumes no upstream
 	// tokens: it is audited as Kind "cache_hit", not "model_call",
 	// so usage stats (F2) keep measuring upstream usage only.
-	cacheEligible := !req.Stream && !g.policy.DryRun && level <= store.LevelInternal &&
+	cacheEligible := !req.Stream && !g.dryRun() && level <= store.LevelInternal &&
 		len(allFindings) == 0 && g.cache.Enabled()
 	if cacheEligible {
 		key := cache.Key(candidates[0].ID, level.String(), body)
