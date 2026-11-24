@@ -52,6 +52,11 @@ def main():
     s, health = call("/healthz", method="GET")
     check("healthz", s == 200)
 
+    # F27: readiness probe — the demo server starts healthy (state
+    # saves and audit appends landing, chain verified at startup).
+    s, ready = call("/readyz", method="GET")
+    check("F27 readyz", s == 200 and ready.get("ready") is True)
+
     # F16: fake OTLP/HTTP collector on the standard port (the server
     # is started with OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
     # by the Makefile). Started before any model/MCP call so every

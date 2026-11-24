@@ -706,6 +706,13 @@ type Store struct {
 	mu   sync.RWMutex
 	path string
 	st   *State
+	// lastSaveErr is the error from the most recent Save, or nil when
+	// the last save reached disk. API callers ignore Save errors, so
+	// without this a full disk looked healthy; /readyz (backlog F27)
+	// reads it to drain a node whose state is unwritable. Guarded by
+	// its own mutex because Save only holds mu for reading.
+	errMu       sync.Mutex
+	lastSaveErr error
 }
 
 func New(dir string) (*Store, error) {
@@ -792,13 +799,34 @@ func (s *Store) Save() error {
 	defer s.mu.RUnlock()
 	b, err := json.MarshalIndent(s.st, "", "  ")
 	if err != nil {
+		s.setSaveError(err)
 		return err
 	}
 	tmp := s.path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		s.setSaveError(err)
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	if err := os.Rename(tmp, s.path); err != nil {
+		s.setSaveError(err)
+		return err
+	}
+	s.setSaveError(nil)
+	return nil
+}
+
+func (s *Store) setSaveError(err error) {
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+	s.lastSaveErr = err
+}
+
+// LastSaveError returns the error from the most recent Save, or nil
+// when the last save reached disk.
+func (s *Store) LastSaveError() error {
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+	return s.lastSaveErr
 }
 
 // WithLock runs fn with exclusive access to the state.
