@@ -617,6 +617,69 @@ def main():
     mc33 = (aud33b.get("events", []) or [{}])[0]
     check("F33 retried call carries its attempt count",
           s == 200 and mc33.get("detail", {}).get("attempts") == "3")
+    # F34: onboarding — setup status, templates, launch-phase
+    # switching and the self-check list. Demo already has users, so
+    # setup is not required; the phase starts at block (demo
+    # demonstrates blocks). A fresh BYOA token keeps F3 RPM out of
+    # the way, and every call below lands after the exact-count
+    # stats assertion, so totals are not disturbed.
+    s, setup34 = call("/api/setup/status", method="GET")
+    check("F34 setup not required in demo", s == 200 and setup34.get("setup_required") is False)
+    s, tpl34 = call("/api/onboarding/templates", token=alogin["session"], method="GET")
+    tpl34ids = [t.get("id") for t in tpl34.get("templates", [])]
+    check("F34 two industry templates", s == 200 and tpl34ids == ["general-conservative", "medical-device"])
+    s, ph34 = call("/api/onboarding/launch-phase", token=alogin["session"], method="GET")
+    check("F34 demo launch phase is block", s == 200 and ph34.get("launch_phase") == "block")
+    s, chk34 = call("/api/onboarding/checklist", token=alogin["session"], method="GET")
+    chk34ids = {it.get("id"): it.get("ok") for it in chk34.get("items", [])}
+    check("F34 checklist measures live state", s == 200 and chk34ids.get("admin_created") is True
+          and chk34ids.get("channel_configured") is True and chk34ids.get("audit_writing") is True
+          and chk34.get("completed") is False)
+    wb34 = chk34.get("would_block_count", 0)
+    wn34 = chk34.get("warned_count", 0)
+    # Fresh BYOA token for the phase behaviour probes.
+    s, start34 = call("/api/setup/device/start", {"agent_type": "claude-code", "tier": "byoa"})
+    s, _ = call("/api/device/approve", {"code": start34["code"], "device_name": "ci-smoke-f34"}, token=alogin["session"])
+    s, poll34 = call("/api/setup/device/poll", {"code": start34["code"], "secret": start34["secret"]})
+    tok34 = poll34.get("token", "")
+    check("F34 token issued", s == 200 and tok34.startswith("ag_at_"))
+    # Observe: the banned word is audited, not blocked.
+    s, _ = call("/api/onboarding/launch-phase", {"phase": "observe"}, token=alogin["session"])
+    check("F34 phase switches to observe", s == 200)
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-pro", "messages": [{"role": "user", "content": "包含 test_sensitive 内容"}]}, token=tok34)
+    check("F34 observe audits banned words instead of blocking", s == 200 and "choices" in chat)
+    s, chk34b = call("/api/onboarding/checklist", token=alogin["session"], method="GET")
+    check("F34 would-block count sees the observed call", s == 200 and chk34b.get("would_block_count", 0) == wb34 + 1)
+    # Warn: BYOA confidential goes through with a warning; the
+    # banned word still blocks.
+    s, _ = call("/api/onboarding/launch-phase", {"phase": "warn"}, token=alogin["session"])
+    check("F34 phase switches to warn", s == 200)
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-pro", "messages": [{"role": "user", "content": "XH-200 的进度如何"}]}, token=tok34)
+    check("F34 warn lets BYOA confidential through", s == 200 and "choices" in chat)
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-pro", "messages": [{"role": "user", "content": "包含 test_sensitive 内容"}]}, token=tok34)
+    check("F34 warn still blocks banned words", s == 400 and chat.get("error", {}).get("code") == "request_rejected")
+    s, chk34c = call("/api/onboarding/checklist", token=alogin["session"], method="GET")
+    check("F34 warned count sees the warned call", s == 200 and chk34c.get("warned_count", 0) == wn34 + 1)
+    # Template: the medical-device preset applies observe + its
+    # word list; back in block phase the new word classifies.
+    s, tpl34b = call("/api/onboarding/apply-template", {"template_id": "medical-device"}, token=alogin["session"])
+    check("F34 medical template applies", s == 200 and tpl34b.get("launch_phase") == "observe"
+          and tpl34b.get("custom_words_added", 0) == 6)
+    s, _ = call("/api/onboarding/launch-phase", {"phase": "block"}, token=alogin["session"])
+    check("F34 phase restored to block", s == 200)
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-pro", "messages": [{"role": "user", "content": "注册证号的办理进度"}]}, token=tok34)
+    check("F34 template word now classifies confidential", s == 403 and chat.get("error", {}).get("code") == "data_level_forbidden")
+    # Wizard completion + console surface.
+    s, _ = call("/api/onboarding/ack", {"master_key_backed_up": True}, token=alogin["session"])
+    check("F34 master-key ack recorded", s == 200)
+    s, done34 = call("/api/onboarding/complete", {}, token=alogin["session"])
+    check("F34 wizard completes", s == 200 and done34.get("completed") is True)
+    s, page34 = call("/", method="GET")
+    check("F34 console serves the wizard page", s == 200 and "page-wizard" in page34.get("_text", ""))
     # Top-secret data (header-declared) only reaches the local model.
     s, chat = call("/v1/chat/completions",
                    {"model": "mock-pro", "messages": [{"role": "user", "content": "普通内容"}]}, token=tok2,

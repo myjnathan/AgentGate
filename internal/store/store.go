@@ -477,6 +477,37 @@ type KBFolderSource struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// OnboardingState is the persisted first-run delivery state
+// (backlog F34): the launch phase, the applied industry template
+// and the wizard checklist. A nil value on an old snapshot means
+// "never onboarded": the server fills it at boot (fresh installs
+// start in observe, existing installs keep block).
+type OnboardingState struct {
+	// LaunchPhase is observe | warn | block; "" means unset.
+	LaunchPhase string `json:"launch_phase"`
+	// TemplateID is the applied industry template, if any.
+	TemplateID string `json:"template_id,omitempty"`
+	// ConservativeApplied records that the "保守模式" preset package
+	// was applied (phase observe, both tiers redacted, weekly
+	// report cadence declared).
+	ConservativeApplied bool `json:"conservative_applied,omitempty"`
+	// ReportCadence is the declared compliance-report rhythm
+	// ("weekly"); the report itself is still generated from the
+	// reports page — no scheduled generation exists yet.
+	ReportCadence string `json:"report_cadence,omitempty"`
+	// AppliedCustomWords are the template custom words applied to
+	// the gateway detector, so a restart re-applies them (the
+	// gateway's word lists otherwise come from env at boot only).
+	AppliedCustomWords []string `json:"applied_custom_words,omitempty"`
+	// MasterKeyBackedUp is the operator's manual checklist ack that
+	// the master key is backed up (losing it loses every encrypted
+	// channel key and webhook secret).
+	MasterKeyBackedUp bool `json:"master_key_backed_up,omitempty"`
+	// CompletedAt is when the first-run wizard was finished; nil
+	// means the onboarding card stays on the dashboard.
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+}
+
 type State struct {
 	Users       map[string]*User           `json:"users"`
 	Devices     map[string]*Device         `json:"devices"`
@@ -538,6 +569,9 @@ type State struct {
 	// the gateway falls back to the built-in defaults
 	// (autorouter.DefaultConfig) instead of an empty library.
 	AutoRoute *AutoRouteConfig `json:"auto_route,omitempty"`
+	// Onboarding holds the first-run delivery state (backlog F34).
+	// Nil on snapshots written before F34 means "never onboarded".
+	Onboarding *OnboardingState `json:"onboarding,omitempty"`
 }
 
 // OrgProvider is one third-party directory (org sync) configuration

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/myjnathan/agentgate/internal/alert"
@@ -62,6 +63,20 @@ type API struct {
 	// allowTopSecretExceptions is the operator opt-in for
 	// top-secret exceptions (backlog F24); default false.
 	allowTopSecretExceptions bool
+	// setupCodeHash is the SHA-256 hash of the one-time first-admin
+	// setup code (backlog F34); nil when no code is live. setupMu
+	// guards it and the failed-attempt counter.
+	setupMu       sync.Mutex
+	setupCodeHash []byte
+	setupAttempts int
+	// launchPhaseApplier / redactForTierApplier / wordsApplier /
+	// wordsReader are the gateway's runtime setters (backlog F34),
+	// wired by cmd/agentgate; nil when the API runs without a
+	// gateway (tests), in which case changes are persisted only.
+	launchPhaseApplier   func(string)
+	redactForTierApplier func(map[store.Tier]bool)
+	wordsApplier         func(banned, custom []string)
+	wordsReader          func() (banned, custom []string)
 }
 
 func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log) *API {
@@ -158,6 +173,18 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/setup/device/start", a.deviceStart)
 	mux.HandleFunc("POST /api/setup/device/poll", a.devicePoll)
 	mux.HandleFunc("POST /api/setup/device/attest", a.deviceAttest)
+	// First-run onboarding (backlog F34): the setup code flow is
+	// unauthenticated by design (no admin exists yet); the
+	// onboarding endpoints are admin/security policy.
+	mux.HandleFunc("GET /api/setup/status", a.setupStatus)
+	mux.HandleFunc("POST /api/setup", a.setupFirstAdmin)
+	mux.HandleFunc("GET /api/onboarding/templates", a.requirePerm(roles.Policy, a.listTemplates))
+	mux.HandleFunc("POST /api/onboarding/apply-template", a.requirePerm(roles.Policy, a.applyTemplate))
+	mux.HandleFunc("GET /api/onboarding/launch-phase", a.requirePerm(roles.Policy, a.getLaunchPhase))
+	mux.HandleFunc("POST /api/onboarding/launch-phase", a.requirePerm(roles.Policy, a.setLaunchPhase))
+	mux.HandleFunc("GET /api/onboarding/checklist", a.requirePerm(roles.AuditRead, a.getChecklist))
+	mux.HandleFunc("POST /api/onboarding/ack", a.requireAdmin(a.ackOnboarding))
+	mux.HandleFunc("POST /api/onboarding/complete", a.requireAdmin(a.completeOnboarding))
 	mux.HandleFunc("GET /api/attestation/policies", a.requireAdmin(a.listAttestationPolicies))
 	mux.HandleFunc("POST /api/attestation/policies", a.requireAdmin(a.upsertAttestationPolicy))
 	mux.HandleFunc("DELETE /api/attestation/policies/{agent}", a.requireAdmin(a.deleteAttestationPolicy))

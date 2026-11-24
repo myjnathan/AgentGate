@@ -122,12 +122,23 @@
 <div id="loginWrap">
   <div class="loginCard">
     <div class="brand"><div class="brandMark">A</div><div class="brandName">Agent<span>Gate</span></div></div>
-    <h2 data-i18n="loginTitle">登录</h2>
-    <p class="sub" data-i18n="loginSub">企业 Agent 治理网关 · 管理控制台</p>
-    <div style="display:flex;flex-direction:column;gap:10px">
+    <h2 data-i18n="loginTitle" id="loginH">登录</h2>
+    <p class="sub" data-i18n="loginSub" id="loginSub">企业 Agent 治理网关 · 管理控制台</p>
+    <div id="loginForm" style="display:flex;flex-direction:column;gap:10px">
       <input id="lu" data-i18n-ph="username" placeholder="用户名" autocomplete="username">
       <input id="lp" type="password" data-i18n-ph="password" placeholder="密码" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
       <button class="btn" style="width:100%;padding:10px" onclick="login()" data-i18n="loginBtn">登录</button>
+    </div>
+    <!-- F34: first-run setup — shown instead of the login form when
+         the server reports no users yet. The setup code is the
+         one-time code printed to the server log on first boot. -->
+    <div id="setupBox" style="display:none;flex-direction:column;gap:10px">
+      <input id="suCode" data-i18n-ph="setupCode" placeholder="设置码" autocomplete="off">
+      <input id="suUser" data-i18n-ph="setupUser" placeholder="管理员用户名" value="admin" autocomplete="username">
+      <input id="suPass" type="password" data-i18n-ph="setupPass" placeholder="密码（至少 8 位）" autocomplete="new-password">
+      <input id="suPass2" type="password" data-i18n-ph="setupPass2" placeholder="确认密码" autocomplete="new-password" onkeydown="if(event.key==='Enter')doSetup()">
+      <button class="btn" style="width:100%;padding:10px" onclick="doSetup()" data-i18n="setupBtn">创建管理员并继续</button>
+      <p class="muted" style="margin:4px 0 0" data-i18n="setupCodeHint">服务器首次启动时打印在日志里的 12 位设置码（XXXX-XXXX-XXXX）。</p>
     </div>
     <p id="lerr" style="color:var(--bad);font-size:13px;min-height:18px;margin:8px 0 0"></p>
     <div id="ssoRow" style="display:none;margin-top:6px">
@@ -163,6 +174,20 @@
         <div class="kpi"><div class="label" data-i18n="kpiBlocked">已拦截</div><div class="num" id="kpiBlocked">—</div><div class="sub" data-i18n="kpiBlockedSub">敏感词命中 / 密级越权 / 无合规通道</div></div>
         <div class="kpi"><div class="label" data-i18n="kpiChain">审计哈希链</div><div class="num" id="kpiChain" style="font-size:22px;padding-top:5px">—</div><div class="sub" id="kpiChainSub"></div></div>
       </div>
+      <!-- F34: onboarding progress — shown until the wizard is completed -->
+      <div class="card" id="onboardCard" style="display:none;margin-bottom:16px">
+        <h3 data-i18n="obTitle">开通进度</h3>
+        <div id="obItems" class="muted" style="font-size:13px;line-height:1.9"></div>
+        <div class="row" style="margin-top:10px;flex-wrap:wrap">
+          <span id="obPhase" class="muted"></span><span id="obCounts" class="muted"></span><span style="flex:1"></span>
+          <span id="obPhaseBtns">
+            <button class="btn ghost small" onclick="setPhase('observe')" data-i18n="wizPhaseObserve">观察</button>
+            <button class="btn ghost small" onclick="setPhase('warn')" data-i18n="wizPhaseWarn">提醒</button>
+            <button class="btn ghost small" onclick="setPhase('block')" data-i18n="wizPhaseBlock">拦截</button>
+          </span>
+          <button class="btn ghost small" onclick="go('wizard')" data-i18n="obGoWizard">进入开通向导</button>
+        </div>
+      </div>
       <div class="grid two">
         <div class="card"><h3 data-i18n="byDept">按部门调用</h3><div class="bars" id="dashDept"></div></div>
         <div class="card"><h3 data-i18n="byDecision">处置分布</h3><div class="bars" id="dashDecision"></div></div>
@@ -174,6 +199,60 @@
         <div class="quickCard" onclick="go('device')"><div class="t" data-i18n="qDevice">批准设备码 →</div><div class="d" data-i18n="qDeviceD">员工运行 ag-setup 后，在此批准完成 Agent 接入。</div></div>
         <div class="quickCard" onclick="go('channels')"><div class="t" data-i18n="qChannels">模型渠道 →</div><div class="d" data-i18n="qChannelsD">配置上游模型服务、最高密级与渠道信任类型。</div></div>
         <div class="quickCard" onclick="go('kb')"><div class="t" data-i18n="qKb">文件夹知识库 →</div><div class="d" data-i18n="qKbD">指定共享文件夹即自动索引，按文件夹映射密级。</div></div>
+      </div>
+    </section>
+
+    <!-- wizard (F34) -->
+    <section class="page" id="page-wizard">
+      <div class="pageHead"><div><h1 data-i18n="wizardTitle">开通向导</h1><p class="desc" data-i18n="wizDesc">五步完成首次开通：建管理员 → 选行业模板 → 接模型渠道 → 选上线阶段 → 自检完成。默认保守、默认观察模式，第一天先跑起来、再慢慢收紧。</p></div></div>
+      <div class="card" style="margin-bottom:16px"><div class="row" id="wizStepper" style="flex-wrap:wrap"></div></div>
+      <div class="wizStep" id="wizStep1">
+        <div class="card"><h3 data-i18n="wizStep1">创建管理员</h3>
+          <p id="wizAdminState" class="muted"></p>
+          <p class="hint" data-i18n="wizAdminHint">首个管理员已由设置码创建。如需新增管理员，请在「用户与角色」页添加。</p>
+          <div class="row"><span style="flex:1"></span><button class="btn" onclick="wizGo(2)" data-i18n="wizNext">下一步</button></div>
+        </div>
+      </div>
+      <div class="wizStep" id="wizStep2" style="display:none">
+        <div class="card"><h3 data-i18n="wizStep2">选择行业模板</h3>
+          <p class="hint" data-i18n="wizTemplateHint">模板是一整套互相咬合的预置：预置词表、渠道信任与分级策略、上线阶段与报表节奏。应用后可在各功能页继续微调。</p>
+          <div id="wizTemplates" style="display:flex;flex-direction:column;gap:10px"></div>
+          <div class="row" style="margin-top:12px"><button class="btn ghost" onclick="wizGo(1)" data-i18n="wizBack">上一步</button><span style="flex:1"></span><span id="wizTplMsg" class="msg"></span><button class="btn" onclick="applyWizTemplate()" data-i18n="wizApplyTemplate">应用此模板</button><button class="btn" onclick="wizGo(3)" data-i18n="wizNext">下一步</button></div>
+        </div>
+      </div>
+      <div class="wizStep" id="wizStep3" style="display:none">
+        <div class="card"><h3 data-i18n="wizStep3">接入模型渠道</h3>
+          <div class="formGrid">
+            <div><label class="f" data-i18n="wizVendor">模型厂商</label><select id="wizVendor" onchange="wizVendorChange()">
+              <option value="deepseek">DeepSeek</option><option value="qwen">通义千问</option><option value="zhipu">智谱</option><option value="openai">OpenAI</option><option value="custom">自定义</option>
+            </select></div>
+            <div><label class="f" data-i18n="wizApiKey">API Key</label><input id="wizKey" type="password" autocomplete="off"></div>
+          </div>
+          <details style="margin-top:12px"><summary class="muted" data-i18n="wizAdvanced">高级（已按厂商预填，可改）</summary>
+            <div class="formGrid" style="margin-top:10px">
+              <div><label class="f">Base URL</label><input id="wizBase"></div>
+              <div><label class="f" data-i18n="models">模型</label><input id="wizModels"></div>
+              <div><label class="f" data-i18n="trustType">信任类型</label><select id="wizTrust"><option value="signed_cloud">signed_cloud（签约云）</option><option value="dedicated_cloud">dedicated_cloud（专有云 / VPC）</option><option value="local_model">local_model（本地小模型）</option></select></div>
+              <div><label class="f" data-i18n="maxLevel">最高数据等级</label><select id="wizLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select></div>
+            </div>
+          </details>
+          <div class="row" style="margin-top:12px"><button class="btn ghost" onclick="wizGo(2)" data-i18n="wizBack">上一步</button><span style="flex:1"></span><span id="wizChanMsg" class="msg"></span><button class="btn" onclick="addWizChannel()" data-i18n="wizAddChannel">添加渠道</button><button class="btn" onclick="wizGo(4)" data-i18n="wizSkip">稍后添加</button></div>
+        </div>
+      </div>
+      <div class="wizStep" id="wizStep4" style="display:none">
+        <div class="card"><h3 data-i18n="wizStep4">选择上线阶段</h3>
+          <p class="hint" data-i18n="wizPhaseHint">观察：只审计、不拦截；提醒：自带级发机密数据时仅提醒、不拦截（违禁词与语义复核仍拦截）；拦截：全部规则按配置拦截。随时可在仪表盘切换。</p>
+          <div id="wizPhaseCards" style="display:flex;flex-direction:column;gap:10px"></div>
+          <div class="row" style="margin-top:12px"><button class="btn ghost" onclick="wizGo(3)" data-i18n="wizBack">上一步</button><span style="flex:1"></span><span id="wizPhaseMsg" class="msg"></span><button class="btn" onclick="saveWizPhase()" data-i18n="wizSavePhase">保存上线阶段</button><button class="btn" onclick="wizGo(5)" data-i18n="wizNext">下一步</button></div>
+        </div>
+      </div>
+      <div class="wizStep" id="wizStep5" style="display:none">
+        <div class="card"><h3 data-i18n="wizStep5">自检与完成</h3>
+          <div id="wizChecklist" style="font-size:13px;line-height:1.9"></div>
+          <label style="display:flex;gap:8px;align-items:flex-start;margin:12px 0;font-size:13px"><input type="checkbox" id="wizMkAck" style="margin-top:2px"><span data-i18n="wizMasterKey">我已备份主密钥（丢失将导致全部加密密钥无法恢复）</span></label>
+          <p class="hint" data-i18n="wizEmployeeHint">员工接入：员工在终端运行 ag-setup 获得设备码，管理员在「设备接入」页批准即可。</p>
+          <div class="row"><button class="btn ghost" onclick="wizGo(4)" data-i18n="wizBack">上一步</button><span style="flex:1"></span><span id="wizDoneMsg" class="msg"></span><button class="btn" onclick="completeWizard()" data-i18n="wizComplete">完成开通</button></div>
+        </div>
       </div>
     </section>
 
@@ -728,7 +807,7 @@ const I18N = {
     packagesTitle:"安装包分发",packagesDesc:"受管 Agent 安装包的托管与分发：管理员上传或离线导入，员工自助下载；分发包的哈希可登记为 Agent 证明的基准值。",uploadPackage:"上传 / 离线导入安装包",packageList:"已托管安装包",pkgKind:"包类型",pkgManagement:"管理包（服务端）",pkgUser:"用户包（员工）",pkgFile:"文件",pkgSize:"大小",pkgSha:"SHA-256",pkgStatus:"校验状态",verified:"已校验",unverified:"未校验",pkgSource:"来源",pkgOfflineImport:"离线导入",pkgGenerated:"平台生成",pkgAgentType:"Agent 类型",registerBaseline:"登记为证明基准值",baselineRegistered:"已登记基准值",genUserBundle:"生成用户包（ag-guard + ag-setup）",gatewayUrl:"网关地址",egressAllowlist:"出口白名单（逗号分隔主机名）",expiresAt:"过期时间（可选，RFC3339）",cleanupExpired:"清理过期包",uploadBtn:"上传",genBundleBtn:"生成用户包",packagesHint:"管理包给 IT（agentgate 服务端，现有 Docker / 离线 bundle / systemd 形态，走现有离线部署通道）；用户包给员工（ag-guard + ag-setup，按策略生成：内置网关地址、密级与脱敏策略、出口白名单，员工装一次即常驻、零配置）。只有已校验的包才能登记为 F14 证明基准值——未校验的包即使哈希一致也不予登记。过期包可一键清理；导入中断的上传可断点续传（见接口文档）。",
     orgsyncTitle:"组织同步",orgsyncDesc:"从钉钉 / 飞书 / 企业微信同步部门与员工目录，登录时把第三方身份绑定到平台账号；同步只建 / 更新账号与部门映射，不授予受管级权限。",addOrgProvider:"添加同步来源",orgProviderList:"同步来源",orgProvider:"平台",orgCorpId:"企业 CorpId",orgAppKey:"AppKey",orgAppSecret:"应用密钥",orgBaseUrl:"API 地址",orgAutoCreate:"自动建号",orgDisableMissing:"离职禁用",orgEnabled:"启用",orgSecretMasked:"密钥（已打码）",orgLastSync:"最近同步",orgSyncBtn:"同步",orgBindTitle:"绑定第三方身份",orgBindBtn:"绑定",orgBindHint:"只能绑定已同步到的目录成员（同步快照里没有的 ID 会被拒绝）；同一身份不能绑到两个账号；解绑只解除关联、不删账号。",orgMyBindings:"我的第三方身份",orgNoBindings:"暂无绑定的第三方身份",orgExternalId:"第三方用户 ID",orgsyncHint:"同步只建 / 更新账号与部门映射，不自动授予受管级权限（权限仍走平台策略）；本地已禁用的账号同步不会自动恢复；目录里没看到的人不等于离职——只有平台明确说找不到时，开启「离职禁用」才会禁用账号。应用密钥只加密存储、不回显；同步与绑定全程审计。",
     usersTitle:"用户与角色",usersDesc:"分级管理员与职责分离：平台管理员、安全管理员、审计员、运维员各管一段，互相制约；角色分配本身只由平台管理员操作，全程审计。",roleMatrix:"角色分工",usersList:"用户列表",roleCol:"角色",roleSource:"角色来源",authSource:"账号来源",userDisabled:"已禁用",userEnabled:"启用中",userDisable:"禁用",userEnable:"启用",userOp:"操作",usersHintCol:"权限",usersHint:"只有平台管理员可以改角色（安全管理员也不行，避免自我提权）；不能改自己的角色、不能禁用自己、不能动最后一位启用的平台管理员。禁用账号会立即吊销其全部会话。角色来源为 oidc 的账号由 IdP 组映射管理，管理员在控制台改过角色后即转为本地管理、IdP 不再覆盖。",
-    saved:"✓ 已保存",deleted:"✓ 已删除",empty:"暂无数据",chainValid:"哈希链完整",chainInvalid:"哈希链校验失败",approve:"通过",reject:"驳回",download:"下载",publish:"发布/回滚",test:"测试",rescan:"重扫",save:"保存"},
+    saved:"✓ 已保存",deleted:"✓ 已删除",empty:"暂无数据",chainValid:"哈希链完整",chainInvalid:"哈希链校验失败",approve:"通过",reject:"驳回",download:"下载",publish:"发布/回滚",test:"测试",rescan:"重扫",save:"保存",wizardTitle:"开通向导",wizDesc:"五步完成首次开通：建管理员 → 选行业模板 → 接模型渠道 → 选上线阶段 → 自检完成。默认保守、默认观察模式，第一天先跑起来、再慢慢收紧。",wizStep1:"创建管理员",wizStep2:"选择行业模板",wizStep3:"接入模型渠道",wizStep4:"选择上线阶段",wizStep5:"自检与完成",wizNext:"下一步",wizBack:"上一步",wizSkip:"稍后添加",wizAdminDone:"首个管理员已创建",wizAdminHint:"首个管理员已由设置码创建。如需新增管理员，请在「用户与角色」页添加。",wizTemplateHint:"模板是一整套互相咬合的预置：预置词表、渠道信任与分级策略、上线阶段与报表节奏。应用后可在各功能页继续微调。",wizApplyTemplate:"应用此模板",wizTemplateApplied:"已应用",wizVendor:"模型厂商",wizApiKey:"API Key",wizAdvanced:"高级（已按厂商预填，可改）",wizAddChannel:"添加渠道",wizPhaseHint:"观察：只审计、不拦截；提醒：自带级发机密数据时仅提醒、不拦截（违禁词与语义复核仍拦截）；拦截：全部规则按配置拦截。随时可在仪表盘切换。",wizPhaseObserve:"观察",wizPhaseWarn:"提醒",wizPhaseBlock:"拦截",wizPhaseObserveD:"只审计、不拦截——配错了也没有代价",wizPhaseWarnD:"自带级机密调用仅提醒、不拦截；违禁词仍拦截",wizPhaseBlockD:"全部规则按配置拦截",wizSavePhase:"保存上线阶段",wizChecklist:"开通自检",wizComplete:"完成开通",wizDone:"开通完成",wizMasterKey:"我已备份主密钥（丢失将导致全部加密密钥无法恢复）",wizEmployeeHint:"员工接入：员工在终端运行 ag-setup 获得设备码，管理员在「设备接入」页批准即可。",setupTitle:"首次设置",setupSub:"创建第一个管理员",setupCode:"设置码",setupCodeHint:"服务器首次启动时打印在日志里的 12 位设置码（XXXX-XXXX-XXXX）。",setupBtn:"创建管理员并继续",setupUser:"管理员用户名",setupPass:"密码（至少 8 位）",setupPass2:"确认密码",obTitle:"开通进度",obPhase:"上线阶段",obWouldBlock:"观察模式下本应拦截",obWarned:"提醒模式下已提醒",obGoWizard:"进入开通向导",obAdvance:"进阶到拦截",obAllGreen:"全部通过，可以进阶",obComplete:"开通已完成"},
   en: {loginTitle:"Sign in",loginSub:"Enterprise agent governance gateway · Admin console",loginBtn:"Sign in",logout:"Sign out",ssoBtn:"Sign in with enterprise SSO",username:"Username",password:"Password",
     loginHint:"Demo: admin / agentgate-admin, auditor: auditor / demo12345, operator: ops / demo12345, employee: lixiaofeng / demo12345",
     navOps:"Operations",navAccess:"Access & identity",navModel:"Model gateway",navCap:"Capabilities",navSys:"System",
@@ -782,7 +861,7 @@ const I18N = {
     packagesTitle:"Package distribution",packagesDesc:"Hosted distribution of managed-agent install packages: admins upload or import offline, employees download them; a distributed package's hash can be registered as the attestation baseline.",uploadPackage:"Upload / import a package offline",packageList:"Hosted packages",pkgKind:"Package kind",pkgManagement:"Management package (server)",pkgUser:"User package (employee)",pkgFile:"File",pkgSize:"Size",pkgSha:"SHA-256",pkgStatus:"Checksum status",verified:"verified",unverified:"unverified",pkgSource:"Source",pkgOfflineImport:"offline import",pkgGenerated:"generated",pkgAgentType:"Agent type",registerBaseline:"Register as attestation baseline",baselineRegistered:"baseline registered",genUserBundle:"Generate user package (ag-guard + ag-setup)",gatewayUrl:"Gateway URL",egressAllowlist:"Egress allowlist (comma-separated hostnames)",expiresAt:"Expires at (optional, RFC3339)",cleanupExpired:"Clean up expired packages",uploadBtn:"Upload",genBundleBtn:"Generate user package",packagesHint:"The management package is for IT (the agentgate server: Docker image / offline bundle / systemd, via the existing offline deployment channel); the user package is for employees (ag-guard + ag-setup, generated per policy with the gateway URL, data level and egress allowlist baked in — install once, zero-config, resident). Only a verified package can be registered as the F14 attestation baseline. Expired packages can be cleaned up in one click; an interrupted upload can be resumed (see docs).",
     orgsyncTitle:"Organisation sync",orgsyncDesc:"Sync departments and employees from DingTalk / Feishu / WeCom, and bind the third-party identity to the platform account at login; sync only creates / updates accounts and department mappings, never grants a managed tier.",addOrgProvider:"Add sync source",orgProviderList:"Sync sources",orgProvider:"Platform",orgCorpId:"Corp ID",orgAppKey:"App key",orgAppSecret:"App secret",orgBaseUrl:"API base URL",orgAutoCreate:"Auto-create accounts",orgDisableMissing:"Disable departed accounts",orgEnabled:"Enabled",orgSecretMasked:"Secret (masked)",orgLastSync:"Last sync",orgSyncBtn:"Sync",orgBindTitle:"Bind a third-party identity",orgBindBtn:"Bind",orgBindHint:"Only members present in a synced directory snapshot can be bound; one identity cannot bind to two accounts; unbinding only removes the link, never the account.",orgMyBindings:"My third-party identities",orgNoBindings:"No third-party identity bound yet",orgExternalId:"Third-party user ID",orgsyncHint:"Sync only creates / updates accounts and department mappings and never grants a managed tier (permissions stay with platform policy). A locally disabled account is never restored by sync; absence from a fetched directory is not departure — only when the provider explicitly says the person is gone does \"disable departed\" disable the account. App secrets are encrypted at rest and never echoed; sync and binding are fully audited.",
     usersTitle:"Users & roles",usersDesc:"Tiered administrators with separation of duties: platform admin, security admin, auditor and operator each own a slice and check each other; role assignment itself is platform-admin-only and fully audited.",roleMatrix:"Role matrix",usersList:"Users",roleCol:"Role",roleSource:"Role source",authSource:"Account source",userDisabled:"disabled",userEnabled:"enabled",userDisable:"Disable",userEnable:"Enable",userOp:"Actions",usersHintCol:"Permissions",usersHint:"Only the platform admin may change roles (not even the security admin — no self-promotion); you cannot change your own role, disable yourself, or touch the last enabled platform admin. Disabling an account revokes all its sessions at once. Accounts with role source oidc are managed by the IdP group mapping; once an admin changes the role in the console it becomes locally managed and the IdP no longer overwrites it.",
-    saved:"✓ Saved",deleted:"✓ Deleted",empty:"No data yet",chainValid:"Hash chain intact",chainInvalid:"Hash chain verification FAILED",approve:"Approve",reject:"Reject",download:"Download",publish:"Publish / roll back",test:"Test",rescan:"Rescan",save:"Save"}
+    saved:"✓ Saved",deleted:"✓ Deleted",empty:"No data yet",chainValid:"Hash chain intact",chainInvalid:"Hash chain verification FAILED",approve:"Approve",reject:"Reject",download:"Download",publish:"Publish / roll back",test:"Test",rescan:"Rescan",save:"Save",wizardTitle:"Onboarding wizard",wizDesc:"Finish first-run setup in five steps: create an admin → pick an industry template → connect a model channel → choose the launch phase → self-check. Conservative by default, observe by default — get running on day one, tighten later.",wizStep1:"Create an admin",wizStep2:"Pick an industry template",wizStep3:"Connect a model channel",wizStep4:"Choose the launch phase",wizStep5:"Self-check & finish",wizNext:"Next",wizBack:"Back",wizSkip:"Add later",wizAdminDone:"First admin created",wizAdminHint:"The first admin was created with the setup code. To add more admins, use the Users & roles page.",wizTemplateHint:"A template is a complete preset that fits together: preset word list, channel trust and classification policy, launch phase and report cadence. Keep fine-tuning on the feature pages afterwards.",wizApplyTemplate:"Apply this template",wizTemplateApplied:"Applied",wizVendor:"Model vendor",wizApiKey:"API key",wizAdvanced:"Advanced (prefilled per vendor, editable)",wizAddChannel:"Add channel",wizPhaseHint:"Observe: audit only, nothing blocks. Warn: BYOA confidential calls are warned, not blocked (banned words and semantic review still block). Block: every rule enforces as configured. Switch any time from the dashboard.",wizPhaseObserve:"Observe",wizPhaseWarn:"Warn",wizPhaseBlock:"Block",wizPhaseObserveD:"Audit only — a misconfiguration costs nothing",wizPhaseWarnD:"BYOA confidential calls are warned, not blocked; banned words still block",wizPhaseBlockD:"Every rule enforces as configured",wizSavePhase:"Save launch phase",wizChecklist:"Onboarding self-check",wizComplete:"Finish onboarding",wizDone:"Onboarding complete",wizMasterKey:"I have backed up the master key (losing it loses every encrypted key)",wizEmployeeHint:"Employee onboarding: an employee runs ag-setup to get a device code; an admin approves it on the Device access page.",setupTitle:"First-time setup",setupSub:"Create the first administrator",setupCode:"Setup code",setupCodeHint:"The 12-character code printed in the server log on first boot (XXXX-XXXX-XXXX).",setupBtn:"Create admin and continue",setupUser:"Admin username",setupPass:"Password (at least 8 characters)",setupPass2:"Confirm password",obTitle:"Onboarding progress",obPhase:"Launch phase",obWouldBlock:"Would have blocked in observe mode",obWarned:"Warned in warn mode",obGoWizard:"Open the onboarding wizard",obAdvance:"Advance to block",obAllGreen:"All green — ready to advance",obComplete:"Onboarding complete"}
 };
 let lang = localStorage.getItem("ag_lang") || "zh";
 let session = localStorage.getItem("ag_session") || "";
@@ -815,7 +894,7 @@ function timeShort(s){ return (s||"").slice(5,19).replace("T"," "); }
 
 /* ---------- navigation ---------- */
 const NAV = [
-  {group:"navOps", items:[["dashboard","◈","dashTitle"],["stats","▦","statsTitle",["admin","security","auditor"]],["audit","☰","auditTitle",["admin","security","auditor"]],["reports","▤","reportsTitle",["admin","security","auditor"]]]},
+  {group:"navOps", items:[["wizard","✦","wizardTitle",["admin","security"]],["dashboard","◈","dashTitle"],["stats","▦","statsTitle",["admin","security","auditor"]],["audit","☰","auditTitle",["admin","security","auditor"]],["reports","▤","reportsTitle",["admin","security","auditor"]]]},
   {group:"navAccess", items:[["device","▣","deviceTitle"],["tokens","⚿","tokensTitle",["admin","security","operator"]],["attest","✓","attestTitle"],["terminals","◉","terminalsTitle"],["exceptions","⧉","exceptionsTitle"],["orgsync","⚭","orgsyncTitle"],["users","⚇","usersTitle",["admin","security"]]]},
   {group:"navModel", items:[["channels","⇄","channelsTitle",["admin","security","operator"]],["semreview","◐","semReviewTitle",["admin","security"]],["autoroute","↗","autoRouteTitle",["admin","security"]]]},
   {group:"navCap", items:[["kb","🗀","foldersTitle"],["skills","✦","skillsTitle"],["prompts","✎","promptsTitle"],["knowpack","🗂","knowpackTitle"],["upstreams","⛓","fedTitle"],["resttools","⇢","restTitle"]]},
@@ -836,7 +915,7 @@ function go(id){ current = id; showPage(id); }
 function showPage(id){
   document.querySelectorAll(".page").forEach(p=>p.classList.toggle("active", p.id==="page-"+id));
   document.querySelectorAll(".navItem").forEach(n=>n.classList.toggle("active", n.getAttribute("data-nav")===id));
-  const loaders = {dashboard:loadDashboard, stats:()=>{loadStats(); loadCache(); loadBudgets(); loadOtel();}, audit:loadAudit, device:loadSidecar, tokens:loadTokens, attest:loadAttest, terminals:loadTerminals, channels:loadChannels, semreview:loadSemReview, autoroute:loadAutoRoute,
+  const loaders = {wizard:loadWizard, dashboard:loadDashboard, stats:()=>{loadStats(); loadCache(); loadBudgets(); loadOtel();}, audit:loadAudit, device:loadSidecar, tokens:loadTokens, attest:loadAttest, terminals:loadTerminals, channels:loadChannels, semreview:loadSemReview, autoroute:loadAutoRoute,
     kb:loadFolders, reports:loadReports, skills:loadSkills, prompts:loadPrompts, knowpack:loadKnowpacks, upstreams:loadUpstreams, resttools:loadRESTTools, alerts:loadAlerts, packages:loadPackages, orgsync:loadOrgProviders, exceptions:loadExceptions, users:loadUsers};
   if(loaders[id]) loaders[id]();
 }
@@ -847,6 +926,26 @@ async function login(){
     const d = await api("/api/login",{method:"POST",body:JSON.stringify({username:lu.value,password:lp.value})});
     session = d.session; localStorage.setItem("ag_session", session);
     me = d; enterApp();
+  }catch(e){ document.getElementById("lerr").textContent = e.message; }
+}
+/* F34: first-run setup — the console shows this form instead of
+   login when the server reports no users yet. */
+function showSetupBox(){
+  document.getElementById("loginForm").style.display="none";
+  document.getElementById("ssoRow").style.display="none";
+  document.getElementById("loginH").textContent = T("setupTitle");
+  document.getElementById("loginSub").textContent = T("setupSub");
+  document.querySelector("[data-i18n='loginHint']").style.display="none";
+  document.getElementById("setupBox").style.display="flex";
+}
+async function doSetup(){
+  const code = suCode.value.trim(), user = suUser.value.trim(), pw = suPass.value, pw2 = suPass2.value;
+  if(pw !== pw2){ document.getElementById("lerr").textContent = lang==="zh" ? "两次密码不一致" : "Passwords do not match"; return; }
+  try{
+    await api("/api/setup",{method:"POST",body:JSON.stringify({code, username:user, password:pw})});
+    const d = await api("/api/login",{method:"POST",body:JSON.stringify({username:user, password:pw})});
+    session = d.session; localStorage.setItem("ag_session", session);
+    me = d; sessionStorage.setItem("ag_wizard_first", "1"); enterApp();
   }catch(e){ document.getElementById("lerr").textContent = e.message; }
 }
 fetch("/api/auth/providers").then(r=>r.json()).then(d=>{
@@ -860,6 +959,11 @@ function enterApp(){
   document.getElementById("whoName").textContent = me.display_name || me.username || "";
   document.getElementById("whoMeta").textContent = [me.department, me.role].filter(Boolean).join(" · ");
   buildNav(); showPage(current);
+  // F34: right after the first admin is created, open the wizard.
+  if(sessionStorage.getItem("ag_wizard_first") === "1"){
+    sessionStorage.removeItem("ag_wizard_first");
+    if(me.role === "admin" || me.role === "security") go("wizard");
+  }
 }
 
 /* ---------- dashboard ---------- */
@@ -889,6 +993,121 @@ async function loadDashboard(){
   try{ const d = await api("/api/audit");
     document.querySelector("#dashAudit tbody").innerHTML = auditRows((d.events||[]).slice(0,8)) || `<tr><td colspan="6" class="empty">${T("empty")}</td></tr>`;
   }catch(e){}
+  loadOnboardingCard();
+}
+
+/* ---------- onboarding (F34) ---------- */
+let wizStep = 1, wizTemplates = [], wizTemplate = "general-conservative", wizPhase = "observe";
+const VENDOR_PRESETS = {
+  deepseek:{base:"https://api.deepseek.com/v1", models:"deepseek-chat,deepseek-reasoner"},
+  qwen:{base:"https://dashscope.aliyuncs.com/compatible-mode/v1", models:"qwen-plus,qwen-turbo"},
+  zhipu:{base:"https://open.bigmodel.cn/api/paas/v4", models:"glm-4-plus,glm-4-flash"},
+  openai:{base:"https://api.openai.com/v1", models:"gpt-4o,gpt-4o-mini"},
+  custom:{base:"", models:""}
+};
+function wizVendorChange(){
+  const p = VENDOR_PRESETS[wizVendor.value] || VENDOR_PRESETS.custom;
+  wizBase.value = p.base; wizModels.value = p.models;
+}
+function wizGo(n){
+  wizStep = n;
+  document.querySelectorAll(".wizStep").forEach(el=>{ el.style.display = "none"; });
+  document.getElementById("wizStep"+n).style.display = "block";
+  document.getElementById("wizStepper").innerHTML = [1,2,3,4,5].map(i=>
+    `<span class="pill ${i===n?"":""}" style="${i===n?"background:var(--accent-soft);color:var(--accent);font-weight:600":""}">${i}. ${T("wizStep"+i)}</span>`).join(" ");
+  if(n === 5) renderWizChecklist();
+}
+function checklistRows(d){
+  return (d.items||[]).map(it=>`<div>${it.ok ? "✓" : "○"} ${esc(it.label)}${it.detail ? ` <span class="muted">(${esc(it.detail)})</span>` : ""}</div>`).join("");
+}
+async function loadWizard(){
+  wizGo(wizStep);
+  try{
+    const d = await api("/api/onboarding/templates");
+    wizTemplates = d.templates || [];
+    wizTemplate = d.applied_template || "general-conservative";
+    document.getElementById("wizTemplates").innerHTML = wizTemplates.map(t=>{
+      const name = lang==="zh" ? t.name : (t.name_en || t.name);
+      const desc = lang==="zh" ? t.description : (t.description_en || t.description);
+      return `<label style="display:flex;gap:10px;align-items:flex-start;border:1px solid var(--border);border-radius:10px;padding:12px;cursor:pointer">
+        <input type="radio" name="wizTpl" value="${esc(t.id)}" ${t.id===wizTemplate?"checked":""} onchange="wizTemplate=this.value" style="margin-top:3px">
+        <span><b>${esc(name)}</b><br><span class="muted" style="font-size:13px">${esc(desc)}</span><br>
+        <span class="muted" style="font-size:12px">${esc((t.departments||[]).join(" / "))}${(t.custom_words||[]).length ? " · " + (lang==="zh"?"预置词 ":"preset words ") + t.custom_words.length : ""}</span></span>
+      </label>`;
+    }).join("");
+    document.getElementById("wizAdminState").textContent = "✓ " + T("wizAdminDone") + " — " + (me ? (me.display_name || me.username) : "");
+  }catch(e){ toast(e.message, false); }
+  try{
+    const d = await api("/api/onboarding/checklist");
+    wizPhase = d.launch_phase || "observe";
+    renderPhaseCards();
+  }catch(e){}
+  wizVendorChange();
+}
+function renderPhaseCards(){
+  const cards = [["observe","wizPhaseObserve","wizPhaseObserveD"],["warn","wizPhaseWarn","wizPhaseWarnD"],["block","wizPhaseBlock","wizPhaseBlockD"]];
+  document.getElementById("wizPhaseCards").innerHTML = cards.map(([v, k, dk])=>
+    `<label style="display:flex;gap:10px;align-items:flex-start;border:1px solid var(--border);border-radius:10px;padding:12px;cursor:pointer">
+      <input type="radio" name="wizPhase" value="${v}" ${v===wizPhase?"checked":""} onchange="wizPhase=this.value" style="margin-top:3px">
+      <span><b>${T(k)}</b><br><span class="muted" style="font-size:13px">${T(dk)}</span></span>
+    </label>`).join("");
+}
+async function applyWizTemplate(){
+  try{
+    const d = await api("/api/onboarding/apply-template",{method:"POST",body:JSON.stringify({template_id:wizTemplate})});
+    wizPhase = d.launch_phase || wizPhase; renderPhaseCards();
+    setMsg("wizTplMsg", T("wizTemplateApplied") + " · " + T("wizPhase" + wizPhase.charAt(0).toUpperCase() + wizPhase.slice(1)));
+  }catch(e){ setMsg("wizTplMsg", e.message, false); }
+}
+async function addWizChannel(){
+  const key = wizKey.value.trim();
+  if(!key){ setMsg("wizChanMsg", lang==="zh" ? "请填写 API Key" : "API key required", false); return; }
+  try{
+    const d = await api("/api/channels",{method:"POST",body:JSON.stringify({
+      name: wizVendor.options[wizVendor.selectedIndex].text, base_url: wizBase.value.trim(),
+      api_key: key, models: wizModels.value.split(",").map(s=>s.trim()).filter(Boolean),
+      trust_type: wizTrust.value, max_data_level: wizLevel.value})});
+    setMsg("wizChanMsg", T("saved") + " · " + d.id); wizKey.value = "";
+  }catch(e){ setMsg("wizChanMsg", e.message, false); }
+}
+async function saveWizPhase(){
+  try{
+    await api("/api/onboarding/launch-phase",{method:"POST",body:JSON.stringify({phase:wizPhase})});
+    setMsg("wizPhaseMsg", T("saved"));
+  }catch(e){ setMsg("wizPhaseMsg", e.message, false); }
+}
+async function renderWizChecklist(){
+  try{
+    const d = await api("/api/onboarding/checklist");
+    document.getElementById("wizChecklist").innerHTML = checklistRows(d) +
+      `<div class="muted" style="margin-top:8px">${T("obWouldBlock")}: ${d.would_block_count||0} · ${T("obWarned")}: ${d.warned_count||0}</div>`;
+    if(d.completed_at) document.getElementById("wizDoneMsg").textContent = T("wizDone");
+  }catch(e){ document.getElementById("wizChecklist").textContent = e.message; }
+}
+async function completeWizard(){
+  try{
+    if(document.getElementById("wizMkAck").checked){
+      await api("/api/onboarding/ack",{method:"POST",body:JSON.stringify({master_key_backed_up:true})});
+    }
+    await api("/api/onboarding/complete",{method:"POST",body:"{}"});
+    setMsg("wizDoneMsg", T("wizDone")); loadDashboard(); go("dashboard");
+  }catch(e){ setMsg("wizDoneMsg", e.message, false); }
+}
+async function loadOnboardingCard(){
+  const card = document.getElementById("onboardCard");
+  try{
+    const d = await api("/api/onboarding/checklist");
+    if(d.completed){ card.style.display = "none"; return; }
+    card.style.display = "block";
+    document.getElementById("obItems").innerHTML = checklistRows(d);
+    document.getElementById("obPhase").textContent = T("obPhase") + ": " + T("wizPhase" + d.launch_phase.charAt(0).toUpperCase() + d.launch_phase.slice(1));
+    document.getElementById("obCounts").textContent = " · " + T("obWouldBlock") + " " + (d.would_block_count||0) + " · " + T("obWarned") + " " + (d.warned_count||0);
+    document.getElementById("obPhaseBtns").style.display = (me && (me.role === "admin" || me.role === "security")) ? "" : "none";
+  }catch(e){ card.style.display = "none"; }
+}
+async function setPhase(p){
+  try{ await api("/api/onboarding/launch-phase",{method:"POST",body:JSON.stringify({phase:p})}); loadOnboardingCard(); toast(T("saved")); }
+  catch(e){ toast(e.message, false); }
 }
 
 /* ---------- stats ---------- */
@@ -1640,7 +1859,12 @@ async function bindOrgIdentity(){
 
 /* ---------- boot ---------- */
 applyLang();
-if(session){ api("/api/me").then(d=>{ me=d; enterApp(); }).catch(()=>{}); }
+// F34: first-run setup comes before login — when the server has no
+// users yet, the console shows the setup form instead of login.
+fetch("/api/setup/status").then(r=>r.json()).then(d=>{
+  if(d.setup_required){ showSetupBox(); return; }
+  if(session){ api("/api/me").then(d=>{ me=d; enterApp(); }).catch(()=>{}); }
+}).catch(()=>{ if(session){ api("/api/me").then(d=>{ me=d; enterApp(); }).catch(()=>{}); } });
 </script>
 </body>
 </html>

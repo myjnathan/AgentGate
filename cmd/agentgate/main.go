@@ -75,6 +75,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/mcp"
 	"github.com/myjnathan/agentgate/internal/mockllm"
 	"github.com/myjnathan/agentgate/internal/oidc"
+	"github.com/myjnathan/agentgate/internal/onboard"
 	"github.com/myjnathan/agentgate/internal/orgsync"
 	"github.com/myjnathan/agentgate/internal/otel"
 	"github.com/myjnathan/agentgate/internal/restadapter"
@@ -141,6 +142,59 @@ func main() {
 
 	banned := splitEnv("AGENTGATE_BANNED_WORDS", seed.DemoBannedWords)
 	custom := splitEnv("AGENTGATE_CUSTOM_WORDS", seed.DemoCustomWords)
+	// Launch phase (backlog F34): persisted in state; a fresh
+	// install (no users yet) starts in observe so day-one mistakes
+	// cost nothing, an existing install keeps block (its previous
+	// behaviour), and demo stays block (the PoC demonstrates
+	// blocks). A template applied earlier re-applies its custom
+	// words on top of the env lists, so a restart never loses them.
+	var phase string
+	var conservative bool
+	st.Read(func(s *store.State) {
+		if s.Onboarding != nil {
+			phase = s.Onboarding.LaunchPhase
+			conservative = s.Onboarding.ConservativeApplied
+		}
+		if phase == "" {
+			if demo {
+				phase = onboard.PhaseBlock
+			} else if len(s.Users) == 0 {
+				phase = onboard.PhaseObserve
+			} else {
+				phase = onboard.PhaseBlock
+			}
+		}
+	})
+	var appliedCustom []string
+	st.Read(func(s *store.State) {
+		if s.Onboarding != nil {
+			appliedCustom = s.Onboarding.AppliedCustomWords
+		}
+	})
+	custom = append(append([]string(nil), custom...), appliedCustom...)
+	seen := map[string]bool{}
+	deduped := custom[:0]
+	for _, w := range custom {
+		if !seen[w] {
+			seen[w] = true
+			deduped = append(deduped, w)
+		}
+	}
+	custom = deduped
+	st.WithLock(func(s *store.State) {
+		if s.Onboarding == nil {
+			s.Onboarding = &store.OnboardingState{}
+		}
+		if s.Onboarding.LaunchPhase == "" {
+			s.Onboarding.LaunchPhase = phase
+		}
+	})
+	_ = st.Save()
+	redactForTier := map[store.Tier]bool{store.TierManaged: true}
+	if conservative {
+		// The conservative preset redacts both tiers (F34).
+		redactForTier[store.TierBYOA] = true
+	}
 	det := guard.NewDetector(banned, custom)
 	// Response cache (backlog F11): exact-match cache for clean
 	// public/internal chat completions; Cloudflare's TTL floor is
@@ -170,7 +224,8 @@ func main() {
 	gw := gateway.New(st, au, box, al, gateway.Policy{
 		BannedWords:   banned,
 		CustomWords:   custom,
-		RedactForTier: map[store.Tier]bool{store.TierManaged: true},
+		RedactForTier: redactForTier,
+		LaunchPhase:   phase,
 		CacheTTL:      cacheTTL,
 		Tracer:        otelTracer,
 	})
@@ -243,6 +298,25 @@ func main() {
 	mcpSrv.SetTracer(otelTracer)
 	rest := api.New(st, au, box, al)
 	rest.SetTracer(otelTracer)
+	// First-run onboarding (backlog F34): the gateway's runtime
+	// setters, so the console can switch phases, apply templates
+	// and add template words without a restart. In demo mode the
+	// seed already created users, so no setup code is issued.
+	rest.SetLaunchPhaseApplier(gw.SetLaunchPhase)
+	rest.SetRedactForTierApplier(gw.SetRedactForTier)
+	rest.SetWordsApplier(gw.SetWords)
+	rest.SetWordsReader(gw.Words)
+	if !demo {
+		var noUsers bool
+		st.Read(func(s *store.State) { noUsers = len(s.Users) == 0 })
+		if noUsers {
+			code := onboard.NewSetupCode()
+			if code != "" {
+				rest.SetSetupCode(code)
+				log.Printf("first-run setup code: %s — open the web console and enter this code to create the first administrator (single-use; five failed attempts void it, restart to issue a new one)", code)
+			}
+		}
+	}
 	rest.SetOIDC(oidcProvider)
 	rest.SetFederation(fed)
 	rest.SetRESTAdapter(restAd)
@@ -270,8 +344,13 @@ func main() {
 			log.Printf("AGENTGATE_OFFLINE_MAX_LEVEL=%q invalid, using default internal", v)
 		}
 	}
+	// The snapshot reads the gateway's live words and phase (F34):
+	// a template applied at runtime reaches sidecars on their next
+	// refresh, and in observe phase the sidecar observes too
+	// instead of blocking on the endpoint.
 	rest.SetSidecarPolicy(func() terminal.PolicySnapshot {
-		return terminal.NewPolicySnapshot(banned, custom, false, offlineMax)
+		banned, custom := gw.Words()
+		return terminal.NewPolicySnapshot(banned, custom, gw.LaunchPhase() == onboard.PhaseObserve, offlineMax)
 	})
 	// Exception approval flow (backlog F24): top-secret exceptions
 	// stay closed unless the operator explicitly opts in — the
