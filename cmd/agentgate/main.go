@@ -50,10 +50,17 @@
 //	                     exception approval flow (backlog F24): set
 //	                     to "1" to let top-secret calls be excepted;
 //	                     unset/anything else keeps them closed.
+//	AGENTGATE_HA_MODE        high availability (backlog F27): "active"
+//	                     (default) fails fast if another instance
+//	                     already holds the data-directory lock;
+//	                     "standby" waits for the lock and takes over
+//	                     when the current holder dies. See
+//	                     docs/ha-design.md.
 package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -72,6 +79,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/folderkb"
 	"github.com/myjnathan/agentgate/internal/gateway"
 	"github.com/myjnathan/agentgate/internal/guard"
+	"github.com/myjnathan/agentgate/internal/ha"
 	"github.com/myjnathan/agentgate/internal/mcp"
 	"github.com/myjnathan/agentgate/internal/mockllm"
 	"github.com/myjnathan/agentgate/internal/oidc"
@@ -107,6 +115,26 @@ func main() {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		log.Fatal(err)
 	}
+	// Single-writer lock on the data directory (backlog F27): two
+	// processes must never write state.json / audit.jsonl at once, or
+	// the audit chain forks. The lock is taken before any shared file
+	// is opened; the kernel releases it when the holder dies, so a
+	// standby node takes over by simply acquiring it.
+	haMode, err := ha.ParseMode(os.Getenv("AGENTGATE_HA_MODE"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	haLock, waited, err := ha.Acquire(dataDir, haMode)
+	if err != nil {
+		if errors.Is(err, ha.ErrLocked) {
+			log.Fatalf("another AgentGate instance holds the data directory lock (%s); start this node with AGENTGATE_HA_MODE=standby to wait for takeover", dataDir)
+		}
+		log.Fatal(err)
+	}
+	defer haLock.Release()
+	if waited {
+		log.Printf("ha: took over as active (previous holder released the data-directory lock)")
+	}
 	st, err := store.New(dataDir)
 	if err != nil {
 		log.Fatal(err)
@@ -118,6 +146,18 @@ func main() {
 	al, err := audit.Open(filepath.Join(dataDir, "audit.jsonl"))
 	if err != nil {
 		log.Fatal(err)
+	}
+	// Verify the audit chain before serving: a standby that takes over
+	// must continue the old chain, never extend a broken one. A broken
+	// chain refuses takeover outright (fail-closed); a normal (active)
+	// start only warns, so an existing single-node install is never
+	// bricked by an upgrade, but /readyz reports it not-ready.
+	chainOK := al.Verify()
+	if !chainOK {
+		log.Printf("WARNING: audit hash chain verification failed; standby takeover refuses a broken chain (see docs/ha-design.md for recovery)")
+	}
+	if haMode == ha.ModeStandby && !chainOK {
+		log.Fatal("ha: standby takeover refused: audit hash chain verification failed; restore the audit log before starting a standby")
 	}
 	retentionDays := 180
 	if v := os.Getenv("AGENTGATE_AUDIT_RETENTION_DAYS"); v != "" {
@@ -403,6 +443,12 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	// Readiness probe (backlog F27): liveness (/healthz) only says the
+	// process is alive; /readyz says this node can take traffic — its
+	// state saves and audit appends are landing, and the audit chain
+	// verified at startup. Load balancers drain a not-ready node
+	// instead of restarting it; see docs/ha-design.md.
+	mux.HandleFunc("GET /readyz", ha.ReadyHandler(st.LastSaveError, al.LastError, chainOK))
 
 	log.Printf("AgentGate %s listening on %s (data: %s, demo: %v, audit retention: %d days)", version, addr, dataDir, demo, retentionDays)
 	srv := &http.Server{Addr: addr, Handler: securityHeaders(mux)}

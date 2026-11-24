@@ -46,6 +46,11 @@ type Log struct {
 	retentionDays int     // configured retention policy (days); 0 = unset
 	events        []Event // in-memory tail for queries (all events, night-one scale)
 	notify        func(Event)
+	// lastErr is the error from the most recent append write, or nil
+	// when the last append reached disk. Append used to swallow write
+	// errors silently, so a full disk looked healthy; /readyz (backlog
+	// F27) reads this to drain a node whose audit log is unwritable.
+	lastErr error
 }
 
 // SetNotifyHook registers a callback invoked after every appended
@@ -120,14 +125,30 @@ func (l *Log) Append(ev Event) Event {
 	notify := l.notify
 	if f, err := os.OpenFile(l.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
 		b, _ := json.Marshal(ev)
-		_, _ = f.Write(append(b, '\n'))
+		if _, err := f.Write(append(b, '\n')); err != nil {
+			l.lastErr = err
+		} else {
+			l.lastErr = nil
+		}
 		_ = f.Close()
+	} else {
+		l.lastErr = err
 	}
 	l.mu.Unlock()
 	if notify != nil {
 		notify(ev)
 	}
 	return ev
+}
+
+// LastError returns the error from the most recent append write, or
+// nil when the last append reached disk. A failed append still records
+// the event in memory (and in the hash chain), so the in-memory tail
+// and the file can diverge until the disk recovers.
+func (l *Log) LastError() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.lastErr
 }
 
 // All returns a copy of all recorded events, oldest first.

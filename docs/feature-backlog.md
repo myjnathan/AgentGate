@@ -512,9 +512,14 @@
 - 已知注意点：角色是粗粒度的五档，无按部门或按资源的细粒度授权；OIDC 映射是登录时同步，组变化在用户下次登录时才生效；管理操作 HMAC 签名审计（Bifrost 形态，待办登记 8 备注）：哈希链已覆盖审计完整性，管理操作再加 HMAC 签名是补充、未在本轮实现，留待后续轮次评估。
 - 备注（待办登记 8，2026-11-22 批准）：F28 深层首选候选补 Qwen3Guard 式自托管小模型，见 F28 条目。
 
-### F27 双机热备与高可用 `todo`
+### F27 双机热备与高可用 `doing`（2026-11-24 阶段一）
 - 来源：Nathan 2026-11-22 批准立项（开源类 IP-guard 工具调研结论）：网关无状态化 + 状态外置或主备切换，单点故障时受管调用不中断、审计不丢失；对应弱点清单 #3。工程量大，排在其余 P2 之后，启动前先做方案评审。
-- 适配：待立项细化（本条目登记时仅定方向与借鉴策略）。
+- 适配：分阶段落地——阶段一（本轮）：方案评审 + 主备（共享数据目录 + 单写锁）+ 就绪探针；阶段二：写路径 fsync 选项 + 备节点预热 + 评估租约式接管；阶段三（远期）：状态外置（SQLite WAL + Litestream 式异步复制到对象存储）+ 审计对象存储归档，届时重评 Raft 多活。
+- 借鉴点（2026-11-24 查阅一手来源）：① Kubernetes 官方文档《Liveness, Readiness, and Startup Probes》（kubernetes.io/docs/concepts/workloads/pods/probes）：存活探针只判进程是否陷入不可恢复状态、失败则重启，**不得检查外部依赖**；就绪探针判「现在能否接流量」，失败只把 Pod 从 Service 端点摘掉、**不重启**，恢复后重新加回。我们照此分工：`/healthz` 保持原样作 liveness，新增 `/readyz` 作 readiness。② Litestream 官方《How it works》（litestream.io/how-it-works）：WAL 页异步流式复制、TXID 组织 LTX 文件、定期快照；明确说明异步复制的 RPO 边界（盘坏丢最后约 1 秒写入）与「single writer per replica path」。我们借其两点：阶段三的状态外置走同一形态；RPO 的诚实表述方式——异步即有窗口，不宣称零丢失。
+- 阶段一实现（2026-11-24）：新包 `internal/ha`（`Mode` active/standby + `ParseMode`；`Acquire`：`agentgate.lock` 上 `flock(LOCK_EX)`，active 非阻塞、被占即 `ErrLocked` 快速失败，standby 先非阻塞试一次、被占则阻塞等锁；Windows 上锁为 no-op，HA 只支持 Linux）+ `ReadyHandler`（`GET /readyz`：就绪 200 `{"ready":true}`，未就绪 503 `{"ready":false,"problems":[...]}`，problems 只含类别码 `state_save_failed` / `audit_append_failed` / `audit_chain_invalid`，不含路径与原文）；`audit.Log.LastError()` 与 `store.Store.LastSaveError()`（此前写错误被静默吞掉，本轮起记录最近一次写错误供 readyz 读取）；`main.go` 接线（`AGENTGATE_HA_MODE`，锁在 `store.New` 之前获取；启动时验链，standby 接管遇断链拒绝启动、active 只告警不退出，`/readyz` 同样报 `audit_chain_invalid`）；新增 `docs/ha-design.md`（方案评审全文：状态盘点、故障模型、四方案比较、接管流程、诚实边界、systemd/K8s 部署示例、切换演练）；冒烟新增 1 项断言（`/readyz` 200）。
+- 阶段一实测：真机双进程演练——第二 active 节点快速失败并提示改用 standby；standby 进程存活但不监听；主节点 `kill -9` 后备节点约 4 秒内接管（日志 `ha: took over as active`）、`/readyz` 200、登录与调用正常；接管前后 `/api/audit/verify` 均为 `{"chain_valid":true}`、导出头 `X-Audit-Chain-Valid: true`，审计链跨接管不断叉。
+- 已知注意点：RPO 不是零（写路径无 fsync，硬掉电可能丢最后一次写入窗口；进程崩溃不丢）；共享卷是单点（卷坏则双节点同坏）；锁只防双写、不防「主活着但不健康」（磁盘满/链断时不触发接管，只靠 `/readyz` 排空流量）；切换期间在途请求失败（由客户端重试）；flock 在 NFS 上依赖 lockd/NFSv4；锁文件勿手动删除（flock 锁在 inode 上，删后重建会拿到另一个锁）。
+- 复用检查（Nathan 复用优先指示）：未复制代码——K8s 探针是编排语义、Litestream 是 SQLite 复制工具，两者只借设计思想；实现约 300 行纯标准库自研（`internal/ha` + 写健康可见性 + 接线），无新依赖。
 
 ## 调研来源（持续更新）
 - LiteLLM / Portkey / Kong / Cloudflare AI Gateway 对比（genaimaturity.net、devopsness.com，2026-11 查阅）
@@ -526,4 +531,4 @@
 
 备忘：渠道（1Panel 应用商店上架与诚实版选型对比页）：Nathan 2026-11-22 批准记为发布动作（待办登记 7）——AgentGate 可打包上架 1Panel 应用商店（其用户即目标 IT 管理员），并做诚实版选型对比页；随 v0.1 发布动作推进，不单独占 Loop 条目。
 
-队列顺序（2026-11-24）：F27（双机热备，启动前先做方案评审）。
+队列顺序（2026-11-24）：F27（双机热备，阶段一已落地，继续阶段二）。
