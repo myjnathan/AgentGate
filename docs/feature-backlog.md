@@ -512,7 +512,7 @@
 - 已知注意点：角色是粗粒度的五档，无按部门或按资源的细粒度授权；OIDC 映射是登录时同步，组变化在用户下次登录时才生效；管理操作 HMAC 签名审计（Bifrost 形态，待办登记 8 备注）：哈希链已覆盖审计完整性，管理操作再加 HMAC 签名是补充、未在本轮实现，留待后续轮次评估。
 - 备注（待办登记 8，2026-11-22 批准）：F28 深层首选候选补 Qwen3Guard 式自托管小模型，见 F28 条目。
 
-### F27 双机热备与高可用 `doing`（2026-11-24 阶段一、二已落地，阶段三远期）
+### F27 双机热备与高可用 `doing`（2026-11-24 阶段一、二已落地，阶段三方案评审已完成、待 Nathan 定夺）
 - 来源：Nathan 2026-11-22 批准立项（开源类 IP-guard 工具调研结论）：网关无状态化 + 状态外置或主备切换，单点故障时受管调用不中断、审计不丢失；对应弱点清单 #3。工程量大，排在其余 P2 之后，启动前先做方案评审。
 - 适配：分阶段落地——阶段一（本轮）：方案评审 + 主备（共享数据目录 + 单写锁）+ 就绪探针；阶段二：写路径 fsync 选项 + 备节点预热 + 评估租约式接管；阶段三（远期）：状态外置（SQLite WAL + Litestream 式异步复制到对象存储）+ 审计对象存储归档，届时重评 Raft 多活。
 - 借鉴点（2026-11-24 查阅一手来源）：① Kubernetes 官方文档《Liveness, Readiness, and Startup Probes》（kubernetes.io/docs/concepts/workloads/pods/probes）：存活探针只判进程是否陷入不可恢复状态、失败则重启，**不得检查外部依赖**；就绪探针判「现在能否接流量」，失败只把 Pod 从 Service 端点摘掉、**不重启**，恢复后重新加回。我们照此分工：`/healthz` 保持原样作 liveness，新增 `/readyz` 作 readiness。② Litestream 官方《How it works》（litestream.io/how-it-works）：WAL 页异步流式复制、TXID 组织 LTX 文件、定期快照；明确说明异步复制的 RPO 边界（盘坏丢最后约 1 秒写入）与「single writer per replica path」。我们借其两点：阶段三的状态外置走同一形态；RPO 的诚实表述方式——异步即有窗口，不宣称零丢失。
@@ -524,6 +524,7 @@
 - 阶段二测试：audit 1 项（fsync 开启时追加落盘且链可验、关闭后照常追加、失败路径仍进 `LastError`）+ store 1 项（fsync 开启时保存可重载、关闭后照常保存、无残留 `.tmp`）+ ha 3 项（等锁期间 warmup 至少跑 1 次且接管 `waited=true`、空闲锁不跑 warmup、warmup 为 nil 时照常等锁接管）；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（audit/store/ha）全绿；`make smoke` 在 `AGENTGATE_FSYNC=1` 下跑（冒烟断言数不变，311 项）。
 - 阶段二实测：真机双进程演练（`AGENTGATE_FSYNC=1`）：standby 启动后每 5 秒一行 warmup 日志（state.json 字节数/用户数/渠道数）；主节点 `kill -9` 后备节点约 5 秒内接管（日志 `ha: took over as active`，含预热次数）、`/readyz` 200、登录与调用正常；接管前后 `/api/audit/verify` 均为 `{"chain_valid":true}`，审计链跨接管不断叉。
 - 已知注意点：fsync 只保「已完成写入」的持久性，不保共享卷本身（卷坏仍双节点同坏）；轮询等锁比阻塞 flock 最多慢一个轮询间隔（5 秒）；租约式接管不采用（见 §9），「主活着但不健康」仍靠 `/readyz` 排空 + 运维介入。
+- 阶段三方案评审（2026-11-24，待办登记 10）：只产出评审文档 `docs/ha-phase3-design.md`，不写实现代码。候选形态对比：A 维持现状（备份与演练加固，零代码）/ B 状态复制（SQLite WAL + Litestream 式异步复制到对象存储）/ C 外部存储 / D Raft 多活（对照）；一手来源：Litestream 官方 How it works 与恢复指南（异步复制 RPO 约 1 秒、副本不是热库须 restore、single writer per replica path、自我定位是灾备而非高可用）、SQLite 官方 WAL 文档（WAL 不支持网络文件系统，双节点须各用本地盘 + 复制）。推荐：A 立即做 + B 分两步（B1 备份级先行，B2 复制级按需）+ 不做 C/D；F27 收尾定义与需 Nathan 定夺的五项事项见评审文档 §6、§9。复制就绪的钩子（状态快照版本号、HA 状态端点）记为 deferred，留待 B2 启动时实现。
 
 ## 调研来源（持续更新）
 - LiteLLM / Portkey / Kong / Cloudflare AI Gateway 对比（genaimaturity.net、devopsness.com，2026-11 查阅）
@@ -535,4 +536,4 @@
 
 备忘：渠道（1Panel 应用商店上架与诚实版选型对比页）：Nathan 2026-11-22 批准记为发布动作（待办登记 7）——AgentGate 可打包上架 1Panel 应用商店（其用户即目标 IT 管理员），并做诚实版选型对比页；随 v0.1 发布动作推进，不单独占 Loop 条目。
 
-队列顺序（2026-11-24）：F27（双机热备，阶段一、二已落地，阶段三为远期状态外置）。
+队列顺序（2026-11-24）：F27（双机热备，阶段一、二已落地，阶段三方案评审已完成、是否开工待 Nathan 定夺；定夺前 Loop 只做巡检与小修）。
