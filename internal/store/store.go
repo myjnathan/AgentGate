@@ -713,6 +713,11 @@ type Store struct {
 	// its own mutex because Save only holds mu for reading.
 	errMu       sync.Mutex
 	lastSaveErr error
+	// syncWrites, when true, fsyncs the snapshot file before the
+	// atomic rename and fsyncs the directory afterwards, so a hard
+	// power loss cannot lose the last completed save (backlog F27
+	// phase 2, AGENTGATE_FSYNC=1). Default off; see audit.Log.SetSync.
+	syncWrites bool
 }
 
 func New(dir string) (*Store, error) {
@@ -793,6 +798,35 @@ func New(dir string) (*Store, error) {
 	return s, nil
 }
 
+// SetSync enables or disables durable saves. With sync on, Save
+// fsyncs the temp file before renaming it over state.json and fsyncs
+// the directory afterwards, so the rename itself survives a hard power
+// loss. Off by default (see audit.Log.SetSync for the trade-off).
+func (s *Store) SetSync(on bool) {
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+	s.syncWrites = on
+}
+
+func (s *Store) syncEnabled() bool {
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+	return s.syncWrites
+}
+
+// syncDir fsyncs a directory, which is what makes a rename inside it
+// durable across a hard power loss. A failed directory sync is a
+// failed save when durable writes were requested — silently ignoring
+// it would pretend durability that is not there.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
+}
+
 // Save persists a snapshot. Callers invoke it after mutations.
 func (s *Store) Save() error {
 	s.mu.RLock()
@@ -803,13 +837,39 @@ func (s *Store) Save() error {
 		return err
 	}
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		s.setSaveError(err)
+		return err
+	}
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		s.setSaveError(err)
+		return err
+	}
+	if s.syncEnabled() {
+		if err := f.Sync(); err != nil {
+			_ = f.Close()
+			_ = os.Remove(tmp)
+			s.setSaveError(err)
+			return err
+		}
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
 		s.setSaveError(err)
 		return err
 	}
 	if err := os.Rename(tmp, s.path); err != nil {
 		s.setSaveError(err)
 		return err
+	}
+	if s.syncEnabled() {
+		if err := syncDir(filepath.Dir(s.path)); err != nil {
+			s.setSaveError(err)
+			return err
+		}
 	}
 	s.setSaveError(nil)
 	return nil

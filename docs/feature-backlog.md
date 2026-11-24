@@ -512,7 +512,7 @@
 - 已知注意点：角色是粗粒度的五档，无按部门或按资源的细粒度授权；OIDC 映射是登录时同步，组变化在用户下次登录时才生效；管理操作 HMAC 签名审计（Bifrost 形态，待办登记 8 备注）：哈希链已覆盖审计完整性，管理操作再加 HMAC 签名是补充、未在本轮实现，留待后续轮次评估。
 - 备注（待办登记 8，2026-11-22 批准）：F28 深层首选候选补 Qwen3Guard 式自托管小模型，见 F28 条目。
 
-### F27 双机热备与高可用 `doing`（2026-11-24 阶段一）
+### F27 双机热备与高可用 `doing`（2026-11-24 阶段一、二已落地，阶段三远期）
 - 来源：Nathan 2026-11-22 批准立项（开源类 IP-guard 工具调研结论）：网关无状态化 + 状态外置或主备切换，单点故障时受管调用不中断、审计不丢失；对应弱点清单 #3。工程量大，排在其余 P2 之后，启动前先做方案评审。
 - 适配：分阶段落地——阶段一（本轮）：方案评审 + 主备（共享数据目录 + 单写锁）+ 就绪探针；阶段二：写路径 fsync 选项 + 备节点预热 + 评估租约式接管；阶段三（远期）：状态外置（SQLite WAL + Litestream 式异步复制到对象存储）+ 审计对象存储归档，届时重评 Raft 多活。
 - 借鉴点（2026-11-24 查阅一手来源）：① Kubernetes 官方文档《Liveness, Readiness, and Startup Probes》（kubernetes.io/docs/concepts/workloads/pods/probes）：存活探针只判进程是否陷入不可恢复状态、失败则重启，**不得检查外部依赖**；就绪探针判「现在能否接流量」，失败只把 Pod 从 Service 端点摘掉、**不重启**，恢复后重新加回。我们照此分工：`/healthz` 保持原样作 liveness，新增 `/readyz` 作 readiness。② Litestream 官方《How it works》（litestream.io/how-it-works）：WAL 页异步流式复制、TXID 组织 LTX 文件、定期快照；明确说明异步复制的 RPO 边界（盘坏丢最后约 1 秒写入）与「single writer per replica path」。我们借其两点：阶段三的状态外置走同一形态；RPO 的诚实表述方式——异步即有窗口，不宣称零丢失。
@@ -520,6 +520,10 @@
 - 阶段一实测：真机双进程演练——第二 active 节点快速失败并提示改用 standby；standby 进程存活但不监听；主节点 `kill -9` 后备节点约 4 秒内接管（日志 `ha: took over as active`）、`/readyz` 200、登录与调用正常；接管前后 `/api/audit/verify` 均为 `{"chain_valid":true}`、导出头 `X-Audit-Chain-Valid: true`，审计链跨接管不断叉。
 - 已知注意点：RPO 不是零（写路径无 fsync，硬掉电可能丢最后一次写入窗口；进程崩溃不丢）；共享卷是单点（卷坏则双节点同坏）；锁只防双写、不防「主活着但不健康」（磁盘满/链断时不触发接管，只靠 `/readyz` 排空流量）；切换期间在途请求失败（由客户端重试）；flock 在 NFS 上依赖 lockd/NFSv4；锁文件勿手动删除（flock 锁在 inode 上，删后重建会拿到另一个锁）。
 - 复用检查（Nathan 复用优先指示）：未复制代码——K8s 探针是编排语义、Litestream 是 SQLite 复制工具，两者只借设计思想；实现约 300 行纯标准库自研（`internal/ha` + 写健康可见性 + 接线），无新依赖。
+- 阶段二实现（2026-11-24）：① 写路径 fsync 选项——`AGENTGATE_FSYNC=1` 时 `audit.Log.SetSync(true)`（追加写后 `fsync`）与 `store.Store.SetSync(true)`（保存时先 `fsync` 临时文件、原子改名后 `fsync` 所在目录，临时文件写失败时清理），硬掉电 RPO 收窄到「最后一次已完成的调用/保存」，默认关闭；命名说明：设计文档初稿写的是 `AGENTGATE_AUDIT_FSYNC`（只覆盖审计），实现时改为一个开关同时覆盖两条写路径（两份文件共享同一个 RPO 窗口，只开审计 fsync 是「半持久」陷阱）；② 备节点预热——新增 `ha.AcquireStandby`（非阻塞试锁 + 每 5 秒轮询，轮询间隙调 warmup 回调；`main.go` 的 standby 路径用它替代阻塞 flock，warmup 只读重读并解析 `state.json`、记一行 `ha: standby warmup` 日志，失败只记日志永不阻塞接管；接管日志带预热次数；轮询最多给接管加 5 秒延迟，仍在 RTO ≤ 1 分钟预算内）；③ 租约式接管评估完成并写入 `docs/ha-design.md` §9，结论不采用（误判即双写、夺锁后缺 fencing、缺口已有 `/readyz` 排空缓解、租约不解决共享卷单点），阶段三（双节点各用本地盘 + 状态复制）时重评。
+- 阶段二测试：audit 1 项（fsync 开启时追加落盘且链可验、关闭后照常追加、失败路径仍进 `LastError`）+ store 1 项（fsync 开启时保存可重载、关闭后照常保存、无残留 `.tmp`）+ ha 3 项（等锁期间 warmup 至少跑 1 次且接管 `waited=true`、空闲锁不跑 warmup、warmup 为 nil 时照常等锁接管）；`gofmt`/`go vet`/`go test ./...` 全绿；`go test -race`（audit/store/ha）全绿；`make smoke` 在 `AGENTGATE_FSYNC=1` 下跑（冒烟断言数不变，311 项）。
+- 阶段二实测：真机双进程演练（`AGENTGATE_FSYNC=1`）：standby 启动后每 5 秒一行 warmup 日志（state.json 字节数/用户数/渠道数）；主节点 `kill -9` 后备节点约 5 秒内接管（日志 `ha: took over as active`，含预热次数）、`/readyz` 200、登录与调用正常；接管前后 `/api/audit/verify` 均为 `{"chain_valid":true}`，审计链跨接管不断叉。
+- 已知注意点：fsync 只保「已完成写入」的持久性，不保共享卷本身（卷坏仍双节点同坏）；轮询等锁比阻塞 flock 最多慢一个轮询间隔（5 秒）；租约式接管不采用（见 §9），「主活着但不健康」仍靠 `/readyz` 排空 + 运维介入。
 
 ## 调研来源（持续更新）
 - LiteLLM / Portkey / Kong / Cloudflare AI Gateway 对比（genaimaturity.net、devopsness.com，2026-11 查阅）
@@ -531,4 +535,4 @@
 
 备忘：渠道（1Panel 应用商店上架与诚实版选型对比页）：Nathan 2026-11-22 批准记为发布动作（待办登记 7）——AgentGate 可打包上架 1Panel 应用商店（其用户即目标 IT 管理员），并做诚实版选型对比页；随 v0.1 发布动作推进，不单独占 Loop 条目。
 
-队列顺序（2026-11-24）：F27（双机热备，阶段一已落地，继续阶段二）。
+队列顺序（2026-11-24）：F27（双机热备，阶段一、二已落地，阶段三为远期状态外置）。

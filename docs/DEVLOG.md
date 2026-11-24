@@ -2,6 +2,17 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-24 · F27 双机热备（阶段二：fsync 选项 + 备节点预热 + 租约式接管评估）
+
+- 本轮按常规规程选条目：P0、P1 全部 done，P2 只剩 F27；按队列顺序继续 F27 阶段二（阶段一已于上一轮合并，PR #33，远端 HEAD e12f8bf8）。体内的 12:26 特别指令与待办登记 1–9 均已在先前轮次执行完毕、作废；本地另有一条 docs 提交 7e89aca（F27 阶段一推送结果记录）随本轮整包快照一并带上。队列现为 F27（阶段三为远期状态外置）。
+- 借鉴点：本轮未查新的一手来源——fsync（写文件 + 原子改名 + fsync 目录三步）与轮询预热均为 POSIX 常规做法，租约评估的论证（时钟漂移 → 误判夺锁、夺锁后需 fencing）沿用阶段一已查的 Litestream「single writer per replica path」与 K8s 探针分工的同一批材料；无新外部做法可抄。
+- 复用检查（Nathan 复用优先指示）：未复制代码——约 200 行纯标准库自研（`audit`/`store` 的 `SetSync`、`ha.AcquireStandby`、`main.go` 接线），无新依赖。
+- 实现：① 写路径 fsync 选项——`audit.Log.SetSync(true)`（追加写后 `fsync`）与 `store.Store.SetSync(true)`（保存时先 `fsync` 临时文件、原子改名后 `fsync` 所在目录，临时文件写失败时清理），`main.go` 以 `AGENTGATE_FSYNC=1` 同时开启两者，硬掉电 RPO 收窄到「最后一次已完成的调用/保存」，默认关闭；② 备节点预热——新增 `ha.AcquireStandby`（非阻塞试锁 + 每 5 秒轮询，轮询间隙调 warmup 回调；`main.go` 的 standby 路径用它替代阻塞 flock，warmup 只读重读并解析 `state.json`、记一行 `ha: standby warmup` 日志，失败只记日志永不阻塞接管；接管日志带预热次数）；③ 租约式接管评估完成并写入 `docs/ha-design.md` §9，结论不采用（误判即双写、夺锁后缺 fencing、缺口已有 `/readyz` 排空缓解、租约不解决共享卷单点），阶段三（双节点各用本地盘 + 状态复制）时重评；`docs/ha-design.md` 同步更新 §1 RPO、§6 诚实边界与 §7 阶段二状态；`Makefile` 的 smoke 目标现透传 `AGENTGATE_FSYNC` 环境变量。
+- 关键决策：① 单开关 `AGENTGATE_FSYNC` 同时覆盖两条写路径——设计文档初稿写的是 `AGENTGATE_AUDIT_FSYNC`（只覆盖审计）；两份文件共享同一个 RPO 窗口，只开审计 fsync 而状态仍丢最后一次变更，是「半持久」陷阱，不如一个开关管到底，改名原因已写进设计文档 §7。② 备节点用轮询等锁（5 秒）而不用阻塞 flock——每轮询间隙跑 warmup；代价是接管最多慢 5 秒，仍在 RTO ≤ 1 分钟预算内；`Acquire` 的阻塞 standby 分支保留（既有测试与 API 不变），生产 standby 路径走 `AcquireStandby`。③ warmup 只读 `state.json`、失败只记日志永不阻塞接管；`state.json` 原子改名写入，预热读到的永远是整份快照。④ 租约式接管本轮不引入租约文件与心跳写入，避免给将来「租约已部署」的误解留接口；`agentgate.lock` 仍是唯一的互斥机制。
+- 测试：audit 1 项（fsync 开启时追加落盘且链可验、关闭后照常追加、失败路径仍进 `LastError`）+ store 1 项（fsync 开启时保存可重载、关闭后照常保存、无残留 `.tmp`）+ ha 3 项（等锁期间 warmup 至少跑 1 次且接管 `waited=true`、空闲锁不跑 warmup、warmup 为 nil 时照常等锁接管）；`gofmt`/`go vet`/`go test ./...` 全绿（33 包）；`go test -race`（audit/store/ha）全绿；`make smoke` 在 `AGENTGATE_FSYNC=1` 下 311 项断言 0 失败（断言数不变，fsync 路径已覆盖）。
+- 本轮实测（真机双进程演练，`AGENTGATE_FSYNC=1`，临时数据目录）：standby 启动后每 5 秒一行 warmup 日志（state.json 字节数/用户数/渠道数，共 7 次）；主节点 `kill -9` 后备节点约 2 秒内接管（日志 `ha: took over as active`，含 7 次预热读数）、`/readyz` 200、登录与调用正常；接管后 `/api/audit/verify` 为 `{"chain_valid":true}`、导出头 `X-Audit-Chain-Valid: true`，审计链跨接管不断叉。演练教训：① 登录端点是 `/api/login`（不是 `/api/auth/login`），上轮已记过、这次又写错——演练前先对 `e2e/smoke.py` 核对端点；② `audit.jsonl` 在首个事件追加前不存在（`Open` 不建文件），空链接管后首个事件照常续接，属正常行为；③ `pkill -f` 会匹配自己所在的 shell 命令行——以后按端口/pid 精确停进程。演练日志与数据在 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/f27-phase2-drill/`。
+- 推送结果：（待推送后补记）
+
 ## 2026-11-24 · F27 双机热备（阶段一：方案评审 + 主备 + 就绪探针）
 
 - 本轮按常规规程选条目：P0、P1 全部 done，P2 只剩 F27；按 F27 条目「启动前先做方案评审」的要求，本轮交付方案评审（`docs/ha-design.md`）+ 阶段一最小完整切片（主备单写锁 + `/readyz` 就绪探针 + 写健康可见性）。F27 整体仍为 `doing`（阶段二：fsync 选项 + 备节点预热 + 租约式接管评估；阶段三：状态外置），下一轮继续 F27 阶段二。体内的 12:26 特别指令与待办登记 1–9 均已在先前轮次执行完毕、作废。
@@ -11,6 +22,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 关键决策：① 锁的语义取 flock 而非 PID 文件——进程死亡（含 SIGKILL）时内核自动释放，无残留锁问题；代价是锁在 inode 上，运维勿手动删锁文件（删后重建会拿到另一个锁，双写防护失效），已写进文档与包注释。② 接管验链失败时 standby 拒绝启动（fail-closed，宁可无服务、不可把断链再延长），active 只告警（保持单节点既有行为，老部署不因升级而无法启动），`/readyz` 同时报未就绪、由编排器排空流量。③ 本轮不做 fsync——逐事件 fsync 会给每次调用加一次磁盘同步，是性能取舍；阶段二再做成可选项（`AGENTGATE_AUDIT_FSYNC`），RPO 的诚实边界已写进设计文档（硬掉电可能丢最后一次写入窗口，进程崩溃不丢）。④ 锁只防双写、不防「主活着但不健康」——主节点磁盘满/链断时锁仍在主手里、备不接管，只靠 `/readyz` 排空流量 + 运维介入；租约/心跳式接管需先解决误判夺锁的防护，留待阶段二评估。⑤ Windows 上锁为 no-op 而非报错——Windows 构建只跑单节点，报错会无故破坏现有 Windows 单节点部署；HA 部署只支持 Linux，已写进文档。
 - 测试：ha 包 5 项（`ParseMode` 四类拒绝、问题类别三项组合、`ReadyHandler` 健康 200 / 写失败 503 且不泄漏原文 / 断链 503、锁竞争：第二 active 得 `ErrLocked`、释放后可重新获取、standby 阻塞等锁后接管且 `waited=true`、空闲锁立即获取）+ audit 1 项（目录作日志路径时追加失败可观测、健康时为 nil）+ store 1 项（删目录后保存失败可观测、重建后恢复且错误清零）；`gofmt`/`go vet`/`go test ./...` 全绿（33 包）；`go test -race`（ha/audit/store）全绿；三平台构建通过（linux/windows/darwin，Windows 构建验证了 build-tagged 锁文件）；`make smoke` 311 项断言 0 失败（基线 310 + 新增 1：`F27 readyz`）。
 - 本轮实测（真机双进程演练，临时数据目录）：第二 active 节点快速失败并提示改用 standby；standby 进程存活但不监听；主节点 `kill -9` 后备节点约 4 秒内接管（日志 `ha: took over as active`）、`/readyz` 200、登录与调用正常；接管前后 `/api/audit/verify` 均为 `{"chain_valid":true}`、导出头 `X-Audit-Chain-Valid: true`，审计链跨接管不断叉。演练初版查链时用了错误端点（`/api/auth/login`）与错误用户名（`agentgate-admin` 是密码、用户名是 `admin`），登录拿不到 session、链验证报 unauthorized——已纠正并复验通过，记为教训：演练脚本里的端点与凭证先对着 `e2e/smoke.py` 与 `internal/seed/seed.go` 核对，不要凭印象写。
+- 推送结果：本地提交 9e4a4e8（含随带的 bdd5ecf，即 F35 推送结果记录）；远端建分支 loop/f27（基点远端 main e197d454；推送前核对同步基点：7 个改动文件远端 blob 与本地父提交 bdd5ecf 一致，DEVLOG.md 一处差异已核对——本地父提交多一段 F35 推送结果记录，正是随本轮带上的内容；新文件 9 个远端确认不存在）；整包快照 16 文件一次推送（提交 204370ce），推送后 16 个文件远端 blob 与快照逐一核对一致；PR #33 文件清单与本轮一致（16/16）；未触发 contents API 回退；已合并进远端 main，远端 HEAD e12f8bf8（合并提交），读回 main 上 internal/ha/ha.go、docs/ha-design.md、docs/feature-backlog.md 三文件 blob 与快照一致。另记：① 首次推送时 paths 清单放在 /tmp 下、两次调用之间被系统清理导致 push-files 报错找不到文件，已改用 ~/workspace 下的持久快照目录与清单重推成功——记为教训：快照目录与清单一律放持久目录，不用 /tmp；② list_branches 调用一次因服务重启中断，重试后获批成功。待删分支新增 loop/f27（共 25 个，需 Nathan 网页端手动删除）。下一轮继续 F27 阶段二（fsync 选项 + 备节点预热 + 租约式接管评估）。
 
 ## 2026-11-24 · F35 交付体验改造（P1）
 

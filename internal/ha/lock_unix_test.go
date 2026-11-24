@@ -85,3 +85,95 @@ func TestStandbyTakesFreeLockImmediately(t *testing.T) {
 		t.Errorf("standby acquire on a free lock reported waited")
 	}
 }
+
+func TestAcquireStandbyWarmsUpWhileWaiting(t *testing.T) {
+	dir := t.TempDir()
+	first, _, err := Acquire(dir, ModeActive)
+	if err != nil {
+		t.Fatalf("first Acquire: %v", err)
+	}
+
+	warmups := 0
+	type result struct {
+		waited bool
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		second, waited, err := AcquireStandby(dir, 20*time.Millisecond, func() error {
+			warmups++
+			return nil
+		})
+		if err == nil {
+			_ = second.Release()
+		}
+		done <- result{waited: waited, err: err}
+	}()
+	// Let the standby poll at least twice, then release: the next
+	// poll must hand it the lock.
+	time.Sleep(50 * time.Millisecond)
+	if err := first.Release(); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	select {
+	case r := <-done:
+		if r.err != nil {
+			t.Fatalf("standby AcquireStandby: %v", r.err)
+		}
+		if !r.waited {
+			t.Errorf("standby AcquireStandby on a held lock reported waited=false")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("standby AcquireStandby did not unblock after release")
+	}
+	if warmups < 1 {
+		t.Errorf("warmup ran %d times while waiting; want >= 1", warmups)
+	}
+}
+
+func TestAcquireStandbyFreeLockSkipsWarmup(t *testing.T) {
+	dir := t.TempDir()
+	warmups := 0
+	l, waited, err := AcquireStandby(dir, 20*time.Millisecond, func() error {
+		warmups++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("AcquireStandby on a free lock: %v", err)
+	}
+	defer l.Release()
+	if waited {
+		t.Errorf("AcquireStandby on a free lock reported waited")
+	}
+	if warmups != 0 {
+		t.Errorf("warmup ran %d times on a free lock; want 0", warmups)
+	}
+}
+
+func TestAcquireStandbyNilWarmup(t *testing.T) {
+	dir := t.TempDir()
+	first, _, err := Acquire(dir, ModeActive)
+	if err != nil {
+		t.Fatalf("first Acquire: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		second, _, err := AcquireStandby(dir, 20*time.Millisecond, nil)
+		if err == nil {
+			_ = second.Release()
+		}
+		done <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	if err := first.Release(); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("AcquireStandby with nil warmup: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("AcquireStandby with nil warmup did not unblock after release")
+	}
+}
