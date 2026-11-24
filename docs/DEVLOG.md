@@ -2,6 +2,15 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-24 · F27 双机热备（阶段三方案评审，待办登记 10）
+
+- 本轮按待办登记 10 执行（Nathan 2026-11-24 17:45 拍板）：F27 阶段三先做方案评审再决定是否开工——本轮只产出评审文档，不写实现代码；评审结论出来前 Loop 不得自行开工阶段三。体内的 12:26 特别指令与待办登记 1–9 均已在先前轮次执行完毕、作废。本地另有一条 docs 提交 811912a（F27 阶段二推送结果记录）随本轮整包快照一并带上。队列现为 F27（阶段三评审已完成、是否开工待 Nathan 定夺；定夺前 Loop 只做巡检与小修）。
+- 借鉴点（2026-11-24 查阅一手来源）：① Litestream 官方《How it works》与恢复指南：WAL 页异步流式复制、LTX 文件、定期快照；默认约 1 秒同步间隔、硬崩溃最多丢约 1 秒写入；恢复 = 最新快照 + 重放其后 LTX，支持 `-timestamp` 时间点恢复（最细恢复点只在 L0 保留期内，默认压实后 5 分钟；快照默认保留 24 小时）；"single writer per replica path"；副本不是可查询的热库，须 restore 成文件才能用；自我定位是灾备而非高可用。② SQLite 官方《Write-Ahead Logging》（sqlite.org/wal.html）：WAL 提交追加进 WAL 文件、检查点搬回数据库文件、默认 1000 页自动检查点；"All processes using a database must be on the same host computer; WAL does not work over a network filesystem"——WAL 须用本地盘，是"双节点各用本地盘 + 复制"这一形态的决定性依据。
+- 复用检查（Nathan 复用优先指示）：本轮只产出评审文档，未复制、未引入任何代码；Litestream 为 Apache-2.0（与 AGPL-3.0 兼容），若将来 B2 采用，须在 DEVLOG 记录来源与许可证。
+- 实现：无实现代码——评审文档 `docs/ha-phase3-design.md`（候选形态对比：A 维持现状 / B 状态复制 / C 外部存储 / D Raft 对照；推荐：A 立即做 + B 分两步走，B1 备份级先行、B2 复制级按需，不做 C/D；F27 收尾定义：Nathan 拍板后续路径或决定不做即关闭，拍板前保持 doing、Loop 不自行开工；需 Nathan 定夺的五项事项：推荐是否接受、对象存储选型、RPO/RTO 目标、B2 是否立项、F27 收尾）；`docs/ha-design.md` 首部状态与 §7 同步指向评审文档；backlog F27 条目补阶段三方案评审段落、队列行更新；README 文档索引同步。
+- 关键决策：① 本轮进行中 Nathan 的待办登记 10 到达时，我已按原计划写好了一小段阶段三 3a 实现代码（状态快照版本号 + HA 状态端点，未提交）；按新指令当即全部回滚（git checkout + 删除新文件），工作区恢复干净后只写评审文档——评审结论出来前不开工。② 推荐取"A + B1 先行、B2 按需"而非直接上 B2：阶段三的真实收益是"卷坏可恢复"（灾备）不是"接管更快"（阶段一/二已秒级）；B1 以一半工作量拿 B 的大部分收益，且不动存储格式、不引 SQLite；B2 的三个启动条件（B1 跑顺、选型已定、真实客户需求）缺一不可。③ 复制就绪的钩子（快照版本号、HA 状态端点）记为 deferred，留待 B2 启动时实现，不提前写代码占位。
+- 测试：本轮无代码改动——基线 `gofmt`/`go vet`/`go test ./...` 全绿（回滚后复核，33 包；冒烟未重跑，端到端流程无改动）。
+
 ## 2026-11-24 · F27 双机热备（阶段二：fsync 选项 + 备节点预热 + 租约式接管评估）
 
 - 本轮按常规规程选条目：P0、P1 全部 done，P2 只剩 F27；按队列顺序继续 F27 阶段二（阶段一已于上一轮合并，PR #33，远端 HEAD e12f8bf8）。体内的 12:26 特别指令与待办登记 1–9 均已在先前轮次执行完毕、作废；本地另有一条 docs 提交 7e89aca（F27 阶段一推送结果记录）随本轮整包快照一并带上。队列现为 F27（阶段三为远期状态外置）。
@@ -11,7 +20,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 关键决策：① 单开关 `AGENTGATE_FSYNC` 同时覆盖两条写路径——设计文档初稿写的是 `AGENTGATE_AUDIT_FSYNC`（只覆盖审计）；两份文件共享同一个 RPO 窗口，只开审计 fsync 而状态仍丢最后一次变更，是「半持久」陷阱，不如一个开关管到底，改名原因已写进设计文档 §7。② 备节点用轮询等锁（5 秒）而不用阻塞 flock——每轮询间隙跑 warmup；代价是接管最多慢 5 秒，仍在 RTO ≤ 1 分钟预算内；`Acquire` 的阻塞 standby 分支保留（既有测试与 API 不变），生产 standby 路径走 `AcquireStandby`。③ warmup 只读 `state.json`、失败只记日志永不阻塞接管；`state.json` 原子改名写入，预热读到的永远是整份快照。④ 租约式接管本轮不引入租约文件与心跳写入，避免给将来「租约已部署」的误解留接口；`agentgate.lock` 仍是唯一的互斥机制。
 - 测试：audit 1 项（fsync 开启时追加落盘且链可验、关闭后照常追加、失败路径仍进 `LastError`）+ store 1 项（fsync 开启时保存可重载、关闭后照常保存、无残留 `.tmp`）+ ha 3 项（等锁期间 warmup 至少跑 1 次且接管 `waited=true`、空闲锁不跑 warmup、warmup 为 nil 时照常等锁接管）；`gofmt`/`go vet`/`go test ./...` 全绿（33 包）；`go test -race`（audit/store/ha）全绿；`make smoke` 在 `AGENTGATE_FSYNC=1` 下 311 项断言 0 失败（断言数不变，fsync 路径已覆盖）。
 - 本轮实测（真机双进程演练，`AGENTGATE_FSYNC=1`，临时数据目录）：standby 启动后每 5 秒一行 warmup 日志（state.json 字节数/用户数/渠道数，共 7 次）；主节点 `kill -9` 后备节点约 2 秒内接管（日志 `ha: took over as active`，含 7 次预热读数）、`/readyz` 200、登录与调用正常；接管后 `/api/audit/verify` 为 `{"chain_valid":true}`、导出头 `X-Audit-Chain-Valid: true`，审计链跨接管不断叉。演练教训：① 登录端点是 `/api/login`（不是 `/api/auth/login`），上轮已记过、这次又写错——演练前先对 `e2e/smoke.py` 核对端点；② `audit.jsonl` 在首个事件追加前不存在（`Open` 不建文件），空链接管后首个事件照常续接，属正常行为；③ `pkill -f` 会匹配自己所在的 shell 命令行——以后按端口/pid 精确停进程。演练日志与数据在 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/f27-phase2-drill/`。
-- 推送结果：（待推送后补记）
+- 推送结果：本地提交 a24c0bd（含随带的 7e89aca，即 F27 阶段一推送结果记录）；复用远端分支 loop/f27（头为阶段一快照提交 204370ce，已合入 main；推送前核对同步基点：10 个改动文件远端 blob 与本地父提交 7e89aca 一致，DEVLOG.md 一处差异已核对——本地父提交多一段阶段一推送结果记录，正是随本轮带上的内容；新文件 2 个远端确认不存在）；整包快照 13 文件一次推送（提交 2da20be4），推送后 13 个文件远端 blob 与快照逐一核对一致；PR #34 文件清单与本轮一致（13/13，新增 483 行/删除 30 行，含随带的 DEVLOG 段落一行）；未触发 contents API 回退；已合并进远端 main，远端 HEAD 28fa2770（合并提交），读回 main 上 internal/ha/lock_unix.go、docs/ha-design.md 两文件 blob 与快照一致。另记：① list_branches 前两次调用因服务重启中断、无待批卡，第三次重试获批成功——只读类调用失败时先查 pending 再重试；② 同步记录已追加到 ~/workspace/agentgate-f27-snap.muse-github-snapshot-sync.json（第二条，提交 2da20be4 + 13 路径）。待删分支仍为 loop/f27（共 25 个，需 Nathan 网页端手动删除；本轮复用同一分支，未新增）。下一轮：F27 只剩阶段三（远期状态外置：SQLite WAL + Litestream 式异步复制，工程量大、启动前需方案评审与 Nathan 定夺是否启动）。
 
 ## 2026-11-24 · F27 双机热备（阶段一：方案评审 + 主备 + 就绪探针）
 
