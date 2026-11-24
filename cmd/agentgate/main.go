@@ -181,6 +181,12 @@ func main() {
 		}
 	}
 	custom = deduped
+	// F35: console-managed DLP lists override the boot lists
+	// (env + template words) — once a list is managed from the
+	// DLP page, the page is its source of truth across restarts.
+	var dlp *store.DLPWordLists
+	st.Read(func(s *store.State) { dlp = s.DLP })
+	banned, custom = dlp.Effective(banned, custom)
 	st.WithLock(func(s *store.State) {
 		if s.Onboarding == nil {
 			s.Onboarding = &store.OnboardingState{}

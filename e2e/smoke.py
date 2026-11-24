@@ -680,6 +680,36 @@ def main():
     check("F34 wizard completes", s == 200 and done34.get("completed") is True)
     s, page34 = call("/", method="GET")
     check("F34 console serves the wizard page", s == 200 and "page-wizard" in page34.get("_text", ""))
+    # F35: vendor presets, DLP word lists, progressive disclosure.
+    s, pre35 = call("/api/channels/presets", token=alogin["session"], method="GET")
+    pre35ids = [p.get("id") for p in pre35.get("presets", [])]
+    check("F35 presets list vendors", s == 200 and len(pre35ids) >= 8
+          and "deepseek" in pre35ids and "ollama" in pre35ids and "custom" in pre35ids)
+    oll35 = next((p for p in pre35.get("presets", []) if p.get("id") == "ollama"), {})
+    check("F35 ollama preset is local secret", oll35.get("trust_type") == "local_model"
+          and oll35.get("max_data_level") == "secret")
+    s, _ = call("/api/channels/presets", token=sess, method="GET")
+    check("F35 employee cannot read presets", s == 403)
+    s, dlp35 = call("/api/dlp/words", token=alogin["session"], method="GET")
+    check("F35 word lists list with origins", s == 200
+          and any(w.get("word") == "test_sensitive" and w.get("source") == "env" for w in dlp35.get("banned", []))
+          and any(w.get("word") == "XH-200" for w in dlp35.get("custom", [])))
+    s, _ = call("/api/dlp/words", token=sess, method="GET")
+    check("F35 employee cannot read word lists", s == 403)
+    # Add a word and prove it classifies live, without a restart.
+    s, add35 = call("/api/dlp/words", {"list": "custom", "action": "add", "word": "冒烟测试词F35"}, token=alogin["session"])
+    check("F35 custom word added", s == 200 and add35.get("changed") is True)
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-eco", "messages": [{"role": "user", "content": "冒烟测试词F35 的进度如何"}]}, token=tok34)
+    check("F35 added word blocks BYOA live", s == 403 and chat.get("error", {}).get("code") == "data_level_forbidden")
+    s, _ = call("/api/dlp/words", {"list": "custom", "action": "remove", "word": "冒烟测试词F35"}, token=alogin["session"])
+    check("F35 custom word removed", s == 200)
+    s, chat = call("/v1/chat/completions",
+                   {"model": "mock-eco", "messages": [{"role": "user", "content": "冒烟测试词F35 的进度如何"}]}, token=tok34)
+    check("F35 removed word no longer classifies", s == 200 and "choices" in chat)
+    check("F35 console serves DLP page and advanced nav", "page-dlpwords" in page34.get("_text", "")
+          and "navAdvanced" in page34.get("_text", "") and "DEFAULT_PAGES" in page34.get("_text", "")
+          and "chVendor" in page34.get("_text", ""))
     # Top-secret data (header-declared) only reaches the local model.
     s, chat = call("/v1/chat/completions",
                    {"model": "mock-pro", "messages": [{"role": "user", "content": "普通内容"}]}, token=tok2,

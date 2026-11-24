@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -572,6 +573,65 @@ type State struct {
 	// Onboarding holds the first-run delivery state (backlog F34).
 	// Nil on snapshots written before F34 means "never onboarded".
 	Onboarding *OnboardingState `json:"onboarding,omitempty"`
+	// DLP holds the managed DLP word lists (backlog F35). Nil means
+	// neither list has ever been managed from the console: the
+	// gateway keeps the boot lists (env vars + template words).
+	// Once a list is managed, that list's stored copy is the source
+	// of truth across restarts; env vars remain the fresh-install
+	// default only.
+	DLP *DLPWordLists `json:"dlp_words,omitempty"`
+}
+
+// DLPWordLists is the console-managed state of the two DLP word
+// lists (backlog F35): banned words (block the call) and custom
+// words (enterprise-sensitive, treated as confidential). Each list
+// is nil until first managed — the page initialises it from the
+// live gateway lists on the first write, so words that came from
+// env vars or an industry template are preserved, not dropped.
+// ManualBanned / ManualCustom record which words the page itself
+// added, so the console can show each word's origin (env /
+// template / manual) without the API needing the boot env values.
+type DLPWordLists struct {
+	Banned       []string `json:"banned,omitempty"`
+	Custom       []string `json:"custom,omitempty"`
+	ManualBanned []string `json:"manual_banned,omitempty"`
+	ManualCustom []string `json:"manual_custom,omitempty"`
+}
+
+// Effective returns the lists the gateway should enforce: the
+// managed copy when present, otherwise the given boot lists. The
+// returned slices are copies, sorted for determinism.
+func (d *DLPWordLists) Effective(bootBanned, bootCustom []string) (banned, custom []string) {
+	banned = bootBanned
+	custom = bootCustom
+	if d != nil {
+		if d.Banned != nil {
+			banned = d.Banned
+		}
+		if d.Custom != nil {
+			custom = d.Custom
+		}
+	}
+	return sortedCopy(banned), sortedCopy(custom)
+}
+
+// EnsureFrom initialises any unmanaged list from the live gateway
+// lists, so the first console edit starts from what is actually
+// enforced (env + template words included). Already-managed lists
+// are left alone.
+func (d *DLPWordLists) EnsureFrom(liveBanned, liveCustom []string) {
+	if d.Banned == nil {
+		d.Banned = sortedCopy(liveBanned)
+	}
+	if d.Custom == nil {
+		d.Custom = sortedCopy(liveCustom)
+	}
+}
+
+func sortedCopy(in []string) []string {
+	out := append([]string(nil), in...)
+	sort.Strings(out)
+	return out
 }
 
 // OrgProvider is one third-party directory (org sync) configuration

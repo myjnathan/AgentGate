@@ -109,6 +109,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	// Channels and tokens are operator territory (F26): the
 	// operations administrator runs them, the auditor may not.
 	mux.HandleFunc("GET /api/channels", a.requirePerm(roles.Channels, a.listChannels))
+	mux.HandleFunc("GET /api/channels/presets", a.requirePerm(roles.Channels, a.listChannelPresets))
 	mux.HandleFunc("POST /api/channels", a.requirePerm(roles.Channels, a.createChannel))
 	mux.HandleFunc("POST /api/channels/{id}/keys", a.requirePerm(roles.Channels, a.addChannelKey))
 	mux.HandleFunc("DELETE /api/channels/{id}/keys/{index}", a.requirePerm(roles.Channels, a.deleteChannelKey))
@@ -183,6 +184,10 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/onboarding/launch-phase", a.requirePerm(roles.Policy, a.getLaunchPhase))
 	mux.HandleFunc("POST /api/onboarding/launch-phase", a.requirePerm(roles.Policy, a.setLaunchPhase))
 	mux.HandleFunc("GET /api/onboarding/checklist", a.requirePerm(roles.AuditRead, a.getChecklist))
+	// DLP word lists (backlog F35 P1): the console page that
+	// replaces env vars + restart for banned/custom words.
+	mux.HandleFunc("GET /api/dlp/words", a.requirePerm(roles.Policy, a.listDLPWords))
+	mux.HandleFunc("POST /api/dlp/words", a.requirePerm(roles.Policy, a.updateDLPWords))
 	mux.HandleFunc("POST /api/onboarding/ack", a.requireAdmin(a.ackOnboarding))
 	mux.HandleFunc("POST /api/onboarding/complete", a.requireAdmin(a.completeOnboarding))
 	mux.HandleFunc("GET /api/attestation/policies", a.requireAdmin(a.listAttestationPolicies))
