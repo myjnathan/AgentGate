@@ -43,7 +43,7 @@ AgentGate 只防**电脑内的数字数据流**：模型调用、工具调用、
 ## 文档索引
 
 - 设计蓝图 [docs/blueprint.md](docs/blueprint.md) · 企业防护设计 [docs/enterprise-protection-design.md](docs/enterprise-protection-design.md)
-- 首次开通与上线阶段 [docs/onboarding.md](docs/onboarding.md) · 部署与离线包 [docs/package-distribution.md](docs/package-distribution.md) · 功能清单 [docs/feature-backlog.md](docs/feature-backlog.md)
+- 首次开通与上线阶段 [docs/onboarding.md](docs/onboarding.md) · 交付体验 P1（导航 / 厂商预设 / 词表） [docs/delivery-p1.md](docs/delivery-p1.md) · 部署与离线包 [docs/package-distribution.md](docs/package-distribution.md) · 功能清单 [docs/feature-backlog.md](docs/feature-backlog.md)
 - 开发循环 [docs/development-loop.md](docs/development-loop.md) · 开发日志 [docs/DEVLOG.md](docs/DEVLOG.md)
 
 ## 许可证

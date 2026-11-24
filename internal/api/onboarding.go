@@ -224,6 +224,11 @@ func (a *API) applyTemplate(w http.ResponseWriter, r *http.Request, u *store.Use
 	ob := a.onboardingState()
 	var added int
 	ob.AppliedCustomWords, added = unionWords(ob.AppliedCustomWords, tmpl.CustomWords)
+	// F35: if the DLP lists are already console-managed, the
+	// template words must join the managed copy too — otherwise
+	// the next restart would drop them when the managed copy
+	// overrides the boot lists.
+	managedDLP := a.unionTemplateWords(tmpl.CustomWords)
 	if a.wordsReader != nil && a.wordsApplier != nil {
 		banned, custom := a.wordsReader()
 		merged, _ := unionWords(custom, tmpl.CustomWords)
@@ -243,7 +248,12 @@ func (a *API) applyTemplate(w http.ResponseWriter, r *http.Request, u *store.Use
 	ob.ConservativeApplied = true
 	ob.LaunchPhase = onboard.Conservative.Phase
 	ob.ReportCadence = onboard.Conservative.ReportCadence
-	a.st.WithLock(func(st *store.State) { st.Onboarding = ob })
+	a.st.WithLock(func(st *store.State) {
+		st.Onboarding = ob
+		if managedDLP != nil {
+			st.DLP = managedDLP
+		}
+	})
 	if err := a.st.Save(); err != nil {
 		writeErr(w, http.StatusInternalServerError, "save failed")
 		return
