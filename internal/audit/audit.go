@@ -51,6 +51,11 @@ type Log struct {
 	// errors silently, so a full disk looked healthy; /readyz (backlog
 	// F27) reads this to drain a node whose audit log is unwritable.
 	lastErr error
+	// syncWrites, when true, fsyncs the file after every append
+	// (backlog F27 phase 2, AGENTGATE_FSYNC=1). Default off: without
+	// it a hard power loss can lose the last append window, while a
+	// process crash loses nothing (the OS page cache survives).
+	syncWrites bool
 }
 
 // SetNotifyHook registers a callback invoked after every appended
@@ -110,6 +115,17 @@ func hashEvent(ev Event) string {
 	return hex.EncodeToString(h[:])
 }
 
+// SetSync enables or disables durable writes: with sync on, every
+// append is fsynced before Append returns, so a hard power loss loses
+// nothing beyond the last completed call. Off by default — fsync costs
+// one disk sync per call, and a plain process crash loses nothing
+// either way (the OS page cache survives it).
+func (l *Log) SetSync(on bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.syncWrites = on
+}
+
 // Append records an event and returns it with its hash assigned.
 // The notify hook (if any) runs after the lock is released, so a hook
 // that appends its own event cannot deadlock.
@@ -125,8 +141,12 @@ func (l *Log) Append(ev Event) Event {
 	notify := l.notify
 	if f, err := os.OpenFile(l.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
 		b, _ := json.Marshal(ev)
-		if _, err := f.Write(append(b, '\n')); err != nil {
-			l.lastErr = err
+		_, werr := f.Write(append(b, '\n'))
+		if werr == nil && l.syncWrites {
+			werr = f.Sync()
+		}
+		if werr != nil {
+			l.lastErr = werr
 		} else {
 			l.lastErr = nil
 		}

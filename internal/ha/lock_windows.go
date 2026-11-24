@@ -5,6 +5,7 @@ package ha
 import (
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // Acquire on Windows is a no-op: flock is a Unix semantic and there is
@@ -19,4 +20,10 @@ func Acquire(dir string, mode Mode) (*Lock, bool, error) {
 		return nil, false, err
 	}
 	return &Lock{f: f, dir: dir}, false, nil
+}
+
+// AcquireStandby mirrors the Unix polling wait, but there is no lock
+// to wait on here: it returns immediately, and warmup never runs.
+func AcquireStandby(dir string, interval time.Duration, warmup func() error) (*Lock, bool, error) {
+	return Acquire(dir, ModeStandby)
 }

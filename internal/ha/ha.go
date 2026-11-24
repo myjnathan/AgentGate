@@ -1,9 +1,12 @@
 // Package ha implements the phase-1 building blocks for F27 high
 // availability: a single-writer lock on the data directory (active /
-// standby roles) and a readiness probe for load balancers. See
-// docs/ha-design.md for the full design review, including the honest
-// limits of this phase (shared volume is a single point of failure,
-// no fsync so a hard power loss can lose the last write window).
+// standby roles) and a readiness probe for load balancers. Phase 2
+// adds durable writes (AGENTGATE_FSYNC=1, opt-in fsync on both write
+// paths) and standby warm-up (a standby re-reads state.json read-only
+// while it waits for the lock). See docs/ha-design.md for the full
+// design review, including the honest limits of each phase (shared
+// volume is a single point of failure; without fsync a hard power loss
+// can lose the last write window).
 package ha
 
 import (

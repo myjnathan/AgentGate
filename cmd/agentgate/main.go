@@ -56,10 +56,17 @@
 //	                     "standby" waits for the lock and takes over
 //	                     when the current holder dies. See
 //	                     docs/ha-design.md.
+//	AGENTGATE_FSYNC         durable writes (backlog F27 phase 2): set
+//	                     to "1" to fsync every audit append and every
+//	                     state save, narrowing the hard-power-loss
+//	                     RPO to the last completed write. Default off:
+//	                     fsync costs one disk sync per call, and a
+//	                     plain process crash loses nothing either way.
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -124,7 +131,37 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	haLock, waited, err := ha.Acquire(dataDir, haMode)
+	var haLock *ha.Lock
+	var waited bool
+	warmups := 0
+	if haMode == ha.ModeStandby {
+		// Standby warm-up (backlog F27 phase 2): while waiting for
+		// the lock, re-read state.json read-only every 5 seconds, so
+		// the snapshot is already parsed and fresh in the page cache
+		// when takeover happens. The primary writes state.json by
+		// atomic rename, so a warm-up read always sees a whole
+		// snapshot, never a torn file; a stale or unreadable snapshot
+		// only logs a line and never blocks takeover.
+		haLock, waited, err = ha.AcquireStandby(dataDir, 5*time.Second, func() error {
+			warmups++
+			b, rerr := os.ReadFile(filepath.Join(dataDir, "state.json"))
+			if rerr != nil {
+				if !os.IsNotExist(rerr) {
+					log.Printf("ha: standby warmup: state.json unreadable: %v", rerr)
+				}
+				return rerr
+			}
+			var st store.State
+			if jerr := json.Unmarshal(b, &st); jerr != nil {
+				log.Printf("ha: standby warmup: state.json unparsable: %v", jerr)
+				return jerr
+			}
+			log.Printf("ha: standby warmup: state.json %d bytes, %d users, %d channels", len(b), len(st.Users), len(st.Channels))
+			return nil
+		})
+	} else {
+		haLock, waited, err = ha.Acquire(dataDir, haMode)
+	}
 	if err != nil {
 		if errors.Is(err, ha.ErrLocked) {
 			log.Fatalf("another AgentGate instance holds the data directory lock (%s); start this node with AGENTGATE_HA_MODE=standby to wait for takeover", dataDir)
@@ -133,7 +170,7 @@ func main() {
 	}
 	defer haLock.Release()
 	if waited {
-		log.Printf("ha: took over as active (previous holder released the data-directory lock)")
+		log.Printf("ha: took over as active (previous holder released the data-directory lock; %d warmup reads while standing by)", warmups)
 	}
 	st, err := store.New(dataDir)
 	if err != nil {
@@ -146,6 +183,15 @@ func main() {
 	al, err := audit.Open(filepath.Join(dataDir, "audit.jsonl"))
 	if err != nil {
 		log.Fatal(err)
+	}
+	// Durable writes (backlog F27 phase 2): AGENTGATE_FSYNC=1 fsyncs
+	// every audit append and every state save. Default off: one disk
+	// sync per call, and a plain process crash loses nothing either
+	// way — the option only narrows the hard-power-loss window.
+	if fsync := os.Getenv("AGENTGATE_FSYNC"); fsync == "1" || strings.EqualFold(fsync, "true") {
+		st.SetSync(true)
+		al.SetSync(true)
+		log.Printf("ha: durable writes enabled (AGENTGATE_FSYNC=1)")
 	}
 	// Verify the audit chain before serving: a standby that takes over
 	// must continue the old chain, never extend a broken one. A broken
