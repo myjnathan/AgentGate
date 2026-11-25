@@ -57,6 +57,7 @@
   .kpi .num{font-size:29px;font-weight:700;color:var(--ink);line-height:1.15}
   .kpi .sub{color:var(--muted);font-size:12.5px;margin-top:4px}
   table{width:100%;border-collapse:collapse;font-size:13.5px}
+  .tableWrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
   thead th{background:#f8fafc;color:var(--muted);font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;font-weight:600;text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
   tbody td{padding:9px 10px;border-bottom:1px solid #eef2f7;vertical-align:middle;color:var(--body)}
   tbody tr:hover{background:#f8fafd}
@@ -112,7 +113,7 @@
     nav{display:flex;flex-wrap:wrap;gap:2px} .navGroup{margin-top:6px;display:flex;align-items:center;gap:2px;flex-wrap:wrap}
     .navGroupTitle{width:100%} .sideFoot{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
     main{margin-left:0;padding:20px 16px 40px}
-    .grid.kpis{grid-template-columns:repeat(2,1fr)} .grid.two,.quick{grid-template-columns:1fr} .formGrid{grid-template-columns:1fr}
+    .grid.kpis{grid-template-columns:repeat(2,1fr)} .grid.two,.quick{grid-template-columns:1fr} .formGrid{grid-template-columns:1fr} .formGrid .wide{grid-column:auto}
   }
 </style>
 </head>
@@ -193,7 +194,7 @@
         <div class="card"><h3 data-i18n="byDecision">处置分布</h3><div class="bars" id="dashDecision"></div></div>
       </div>
       <div class="card"><h3 data-i18n="recentAudit">最近审计事件</h3>
-        <table id="dashAudit"><thead><tr><th data-i18n="time">时间</th><th data-i18n="actor">操作者</th><th>Agent</th><th data-i18n="action">动作</th><th data-i18n="level">等级</th><th data-i18n="decision">处置</th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="dashAudit"><thead><tr><th data-i18n="time">时间</th><th data-i18n="actor">操作者</th><th>Agent</th><th data-i18n="action">动作</th><th data-i18n="level">等级</th><th data-i18n="decision">处置</th></tr></thead><tbody></tbody></table></div>
       </div>
       <div class="quick">
         <div class="quickCard" onclick="go('device')"><div class="t" data-i18n="qDevice">批准设备码 →</div><div class="d" data-i18n="qDeviceD">员工运行 ag-setup 后，在此批准完成 Agent 接入。</div></div>
@@ -260,12 +261,12 @@
       <div class="pageHead"><div><h1 data-i18n="statsTitle">用量统计</h1><p class="desc" data-i18n="statsDesc">基于审计日志聚合：按部门、模型、渠道统计调用量、Token 与拦截。</p></div>
       <div class="pageActions"><button class="btn ghost" onclick="loadStats()" data-i18n="refresh">刷新</button></div></div>
       <div class="grid two">
-        <div class="card"><h3 data-i18n="byDept">按部门</h3><table id="statsDept"><thead><tr><th data-i18n="dept">部门</th><th class="num" data-i18n="calls">调用</th><th class="num">Tokens</th><th class="num" data-i18n="blocked">拦截</th><th class="num" data-i18n="costUsd">成本 (USD)</th></tr></thead><tbody></tbody></table></div>
-        <div class="card"><h3 data-i18n="byModel">按模型</h3><table id="statsModel"><thead><tr><th data-i18n="model">模型</th><th class="num" data-i18n="calls">调用</th><th class="num">Tokens</th><th class="num" data-i18n="blocked">拦截</th><th class="num" data-i18n="costUsd">成本 (USD)</th></tr></thead><tbody></tbody></table></div>
+        <div class="card"><h3 data-i18n="byDept">按部门</h3><div class="tableWrap"><table id="statsDept"><thead><tr><th data-i18n="dept">部门</th><th class="num" data-i18n="calls">调用</th><th class="num">Tokens</th><th class="num" data-i18n="blocked">拦截</th><th class="num" data-i18n="costUsd">成本 (USD)</th></tr></thead><tbody></tbody></table></div></div>
+        <div class="card"><h3 data-i18n="byModel">按模型</h3><div class="tableWrap"><table id="statsModel"><thead><tr><th data-i18n="model">模型</th><th class="num" data-i18n="calls">调用</th><th class="num">Tokens</th><th class="num" data-i18n="blocked">拦截</th><th class="num" data-i18n="costUsd">成本 (USD)</th></tr></thead><tbody></tbody></table></div></div>
       </div>
-      <div class="card"><h3 data-i18n="byChannel">按渠道</h3><table id="statsChannel"><thead><tr><th data-i18n="channel">渠道</th><th class="num" data-i18n="calls">调用</th><th class="num">Tokens</th><th class="num" data-i18n="blocked">拦截</th><th class="num" data-i18n="costUsd">成本 (USD)</th></tr></thead><tbody></tbody></table></div>
+      <div class="card"><h3 data-i18n="byChannel">按渠道</h3><div class="tableWrap"><table id="statsChannel"><thead><tr><th data-i18n="channel">渠道</th><th class="num" data-i18n="calls">调用</th><th class="num">Tokens</th><th class="num" data-i18n="blocked">拦截</th><th class="num" data-i18n="costUsd">成本 (USD)</th></tr></thead><tbody></tbody></table></div></div>
       <div class="card"><h3 data-i18n="budgetsTitle">部门月度预算</h3>
-        <table id="budgets"><thead><tr><th data-i18n="dept">部门</th><th class="num" data-i18n="budgetCap">月度上限 (USD)</th><th class="num" data-i18n="budgetSpent">本月已花</th><th class="num" data-i18n="budgetRemaining">剩余</th><th class="num" data-i18n="budgetUsed">已用</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="budgets"><thead><tr><th data-i18n="dept">部门</th><th class="num" data-i18n="budgetCap">月度上限 (USD)</th><th class="num" data-i18n="budgetSpent">本月已花</th><th class="num" data-i18n="budgetRemaining">剩余</th><th class="num" data-i18n="budgetUsed">已用</th><th></th></tr></thead><tbody></tbody></table></div>
         <div class="formGrid" style="margin-top:12px">
           <div><label class="f" data-i18n="dept">部门</label><input id="budDept" placeholder="研发部"></div>
           <div><label class="f" data-i18n="budgetCap">月度上限 (USD)</label><input id="budCap" type="number" min="0" step="0.01" placeholder="50"></div>
@@ -308,7 +309,7 @@
           <span id="expMsg" class="msg"></span>
         </div>
         <p class="hint" data-i18n="exportHint">导出文件可直接喂给 jq / SIEM，响应头附带哈希链校验结果；归档把超过保留期（默认 180 天）的事件移入 gzip 压缩包并留校验锚点。</p>
-        <table id="audit"><thead><tr><th data-i18n="time">时间</th><th data-i18n="actor">操作者</th><th>Agent</th><th data-i18n="action">动作</th><th data-i18n="level">等级</th><th data-i18n="decision">处置</th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="audit"><thead><tr><th data-i18n="time">时间</th><th data-i18n="actor">操作者</th><th>Agent</th><th data-i18n="action">动作</th><th data-i18n="level">等级</th><th data-i18n="decision">处置</th></tr></thead><tbody></tbody></table></div>
       </div>
     </section>
 
@@ -325,7 +326,7 @@
         <p class="hint" style="margin-top:10px" data-i18n="reportsHint">周报表覆盖周一 00:00（UTC）至下周一，月报表覆盖自然月（UTC）；同一周期可重复生成，每次生成都会冻结一份快照。最多保留 52 份报表（一年周报量），超出时最旧的自动删除。报表是审计证据，不是合规认证。</p>
       </div>
       <div class="card"><h3 data-i18n="repList">已生成报表</h3>
-        <table id="reports"><thead><tr><th data-i18n="repPeriod">周期</th><th data-i18n="repGenerated">生成时间</th><th data-i18n="repGeneratedBy">生成人</th><th data-i18n="calls">调用</th><th data-i18n="blocked">拦截</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="reports"><thead><tr><th data-i18n="repPeriod">周期</th><th data-i18n="repGenerated">生成时间</th><th data-i18n="repGeneratedBy">生成人</th><th data-i18n="calls">调用</th><th data-i18n="blocked">拦截</th><th></th></tr></thead><tbody></tbody></table></div>
       </div>
       <div class="card" id="repPreviewCard" style="display:none"><h3 data-i18n="repPreview">预览</h3><div id="repPreview"></div></div>
     </section>
@@ -359,7 +360,7 @@
       <div class="pageHead"><div><h1 data-i18n="tokensTitle">令牌与限流</h1><p class="desc" data-i18n="tokensDesc">每个接入令牌的速率限制（RPM / TPM）与本月用量；0 表示使用等级默认值。</p></div>
       <div class="pageActions"><button class="btn ghost" onclick="loadTokens()" data-i18n="refresh">刷新</button></div></div>
       <div class="card">
-        <table id="tokens"><thead><tr><th data-i18n="user">用户</th><th>Agent</th><th data-i18n="tier">等级</th><th data-i18n="attested">证明</th><th>RPM</th><th>TPM</th><th data-i18n="used">已用</th><th data-i18n="expires">过期</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="tokens"><thead><tr><th data-i18n="user">用户</th><th>Agent</th><th data-i18n="tier">等级</th><th data-i18n="attested">证明</th><th>RPM</th><th>TPM</th><th data-i18n="used">已用</th><th data-i18n="expires">过期</th><th></th></tr></thead><tbody></tbody></table></div>
         <p class="hint" style="margin-top:10px" data-i18n="tokensHint">等级默认：受管级 60 RPM / 100000 TPM，自带级 20 RPM / 20000 TPM。修改后即时生效并写入审计。</p>
         <span id="tokMsg" class="msg"></span>
       </div>
@@ -383,10 +384,10 @@
         <p class="hint" style="margin-top:10px" data-i18n="attestHint">无策略的 Agent 类型保持旧行为（按申请发令牌，标记为未验证）；策略一旦要求提交证明，未提交或未通过的受管申请一律降级为自带级。本轮证明为软件自报证据，不防有意伪造，详见 docs/attestation.md。</p>
       </div>
       <div class="card"><h3 data-i18n="attestPolicyList">证明策略</h3>
-        <table id="attestPolicies"><thead><tr><th>Agent</th><th data-i18n="minVersion">最低版本</th><th data-i18n="requireReport">要求证明</th><th data-i18n="requireGuard">要求守卫</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="attestPolicies"><thead><tr><th>Agent</th><th data-i18n="minVersion">最低版本</th><th data-i18n="requireReport">要求证明</th><th data-i18n="requireGuard">要求守卫</th><th></th></tr></thead><tbody></tbody></table></div>
       </div>
       <div class="card"><h3 data-i18n="attestReports">最近证明记录</h3>
-        <table id="attestReports"><thead><tr><th data-i18n="time">时间</th><th>Agent</th><th data-i18n="action">动作</th><th data-i18n="decision">处置</th><th data-i18n="verdict">裁决</th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="attestReports"><thead><tr><th data-i18n="time">时间</th><th>Agent</th><th data-i18n="action">动作</th><th data-i18n="decision">处置</th><th data-i18n="verdict">裁决</th></tr></thead><tbody></tbody></table></div>
       </div>
     </section>
 
@@ -404,7 +405,7 @@
         <div class="row"><button class="btn" onclick="loadTerminals()" data-i18n="filterBtn">筛选</button></div>
       </div>
       <div class="card"><h3 data-i18n="terminalsList">终端列表</h3>
-        <table id="terminals"><thead><tr><th data-i18n="user">用户</th><th>Agent</th><th data-i18n="termVersion">版本</th><th data-i18n="dept">部门</th><th data-i18n="termStatus">状态</th><th data-i18n="termLastSeen">最近心跳</th><th data-i18n="termDrift">漂移</th><th data-i18n="termOffline">断网补报</th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="terminals"><thead><tr><th data-i18n="user">用户</th><th>Agent</th><th data-i18n="termVersion">版本</th><th data-i18n="dept">部门</th><th data-i18n="termStatus">状态</th><th data-i18n="termLastSeen">最近心跳</th><th data-i18n="termDrift">漂移</th><th data-i18n="termOffline">断网补报</th></tr></thead><tbody></tbody></table></div>
         <p class="hint" style="margin-top:10px" data-i18n="terminalsHint">在线：5 分钟内有心跳；失联超过 60 分钟记为离线。心跳只含版本、哈希与插件清单等元数据，不含任何请求内容。网关断网期间 ag-guard 按缓存策略执行、高密级默认拦截，恢复后经心跳补报断网期间的审计（只含计数与类别）。</p>
       </div>
     </section>
@@ -425,7 +426,7 @@
         <div id="excGrantBox" style="display:none;margin-top:10px"><label class="f" data-i18n="excGrant">一次性放行凭证（只显示一次，请立即复制交给申请人）</label><div id="excGrant" style="word-break:break-all;font-family:monospace"></div></div>
       </div>
       <div class="card"><h3 data-i18n="excList">例外申请</h3>
-        <table id="exceptions"><thead><tr><th data-i18n="user">用户</th><th data-i18n="excLevel">密级</th><th data-i18n="excReason">理由</th><th data-i18n="excScope">范围</th><th data-i18n="excStatus">状态</th><th data-i18n="excExpires">有效期至</th><th data-i18n="excDecidedBy">审批人</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="exceptions"><thead><tr><th data-i18n="user">用户</th><th data-i18n="excLevel">密级</th><th data-i18n="excReason">理由</th><th data-i18n="excScope">范围</th><th data-i18n="excStatus">状态</th><th data-i18n="excExpires">有效期至</th><th data-i18n="excDecidedBy">审批人</th><th></th></tr></thead><tbody></tbody></table></div>
       </div>
     </section>
 
@@ -448,7 +449,7 @@
         <p class="hint" style="margin-top:10px" data-i18n="orgsyncHint">同步只建 / 更新账号与部门映射，不自动授予受管级权限（权限仍走平台策略）；本地已禁用的账号同步不会自动恢复；目录里没看到的人不等于离职——只有平台明确说找不到时，开启「离职禁用」才会禁用账号。应用密钥只加密存储、不回显；同步与绑定全程审计。</p>
       </div>
       <div class="card"><h3 data-i18n="orgProviderList">同步来源</h3>
-        <table id="orgProviders"><thead><tr><th data-i18n="name">名称</th><th data-i18n="orgProvider">平台</th><th data-i18n="orgCorpId">企业 CorpId</th><th data-i18n="orgAppKey">AppKey</th><th data-i18n="orgSecretMasked">密钥（已打码）</th><th data-i18n="orgLastSync">最近同步</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="orgProviders"><thead><tr><th data-i18n="name">名称</th><th data-i18n="orgProvider">平台</th><th data-i18n="orgCorpId">企业 CorpId</th><th data-i18n="orgAppKey">AppKey</th><th data-i18n="orgSecretMasked">密钥（已打码）</th><th data-i18n="orgLastSync">最近同步</th><th></th></tr></thead><tbody></tbody></table></div>
         <span id="osSyncMsg" class="msg"></span>
       </div>
       <div class="card"><h3 data-i18n="orgBindTitle">绑定第三方身份</h3>
@@ -470,10 +471,10 @@
       <div class="pageHead"><div><h1 data-i18n="usersTitle">用户与角色</h1><p class="desc" data-i18n="usersDesc">分级管理员与职责分离：平台管理员、安全管理员、审计员、运维员各管一段，互相制约；角色分配本身只由平台管理员操作，全程审计。</p></div>
       <div class="pageActions"><button class="btn ghost" onclick="loadUsers()" data-i18n="refresh">刷新</button></div></div>
       <div class="card"><h3 data-i18n="roleMatrix">角色分工</h3>
-        <table id="roleMatrix"><thead><tr><th data-i18n="roleCol">角色</th><th data-i18n="name">名称</th><th data-i18n="usersHintCol">权限</th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="roleMatrix"><thead><tr><th data-i18n="roleCol">角色</th><th data-i18n="name">名称</th><th data-i18n="usersHintCol">权限</th></tr></thead><tbody></tbody></table></div>
       </div>
       <div class="card"><h3 data-i18n="usersList">用户列表</h3>
-        <table id="users"><thead><tr><th data-i18n="user">用户</th><th data-i18n="name">名称</th><th data-i18n="department">部门</th><th data-i18n="roleCol">角色</th><th data-i18n="roleSource">角色来源</th><th data-i18n="authSource">账号来源</th><th data-i18n="status">状态</th><th data-i18n="userOp">操作</th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="users"><thead><tr><th data-i18n="user">用户</th><th data-i18n="name">名称</th><th data-i18n="department">部门</th><th data-i18n="roleCol">角色</th><th data-i18n="roleSource">角色来源</th><th data-i18n="authSource">账号来源</th><th data-i18n="status">状态</th><th data-i18n="userOp">操作</th></tr></thead><tbody></tbody></table></div>
         <span id="usersMsg" class="msg"></span>
         <p class="hint" style="margin-top:10px" data-i18n="usersHint">只有平台管理员可以改角色（安全管理员也不行，避免自我提权）；不能改自己的角色、不能禁用自己、不能动最后一位启用的平台管理员。禁用账号会立即吊销其全部会话。角色来源为 oidc 的账号由 IdP 组映射管理，管理员在控制台改过角色后即转为本地管理、IdP 不再覆盖。</p>
       </div>
@@ -497,7 +498,7 @@
         <div class="row"><button class="btn" onclick="addChannel()" data-i18n="addBtn">添加</button><span id="chMsg" class="msg"></span></div>
       </div>
       <div class="card"><h3 data-i18n="channelList">渠道列表</h3>
-        <table id="channels"><thead><tr><th data-i18n="name">名称</th><th data-i18n="models">模型</th><th data-i18n="pricing">单价</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="trustType">信任类型</th><th>Key</th><th data-i18n="health">健康</th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="channels"><thead><tr><th data-i18n="name">名称</th><th data-i18n="models">模型</th><th data-i18n="pricing">单价</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="trustType">信任类型</th><th>Key</th><th data-i18n="health">健康</th></tr></thead><tbody></tbody></table></div>
       </div>
       <div class="card"><h3 data-i18n="manageKeys">管理渠道密钥</h3>
         <div class="formGrid">
@@ -545,7 +546,7 @@
         <p class="hint" data-i18n="semReviewHint">样本匹配在本地完成，不调模型、不出站；判定（命中样本、相似度、判定来源）写入审计。深层复核走配置渠道的分级路由，绝密内容永不送审；超时与深层故障默认保守处置：机密以上拦截、低密级告警放行。关闭本层后网关行为与此前完全一致。</p>
       </div>
       <div class="card"><h3 data-i18n="semReviewSamples">风险样本库</h3>
-        <table id="semSamples"><thead><tr><th data-i18n="semReviewCategory">类别</th><th data-i18n="semReviewSampleText">样本内容</th><th data-i18n="semReviewAction">处置</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="semSamples"><thead><tr><th data-i18n="semReviewCategory">类别</th><th data-i18n="semReviewSampleText">样本内容</th><th data-i18n="semReviewAction">处置</th><th></th></tr></thead><tbody></tbody></table></div>
         <div class="formGrid" style="margin-top:12px">
           <div><label class="f" data-i18n="semReviewCategory">类别</label><select id="srCat"><option value="jailbreak">jailbreak 越狱</option><option value="inducement">inducement 诱导</option><option value="disguise">disguise 伪装</option><option value="split_exfil">split_exfil 拆分外发</option></select></div>
           <div><label class="f" data-i18n="semReviewAction">处置</label><select id="srAct"><option value="block">拦截</option><option value="alert">告警放行</option></select></div>
@@ -572,7 +573,7 @@
         <p class="hint" id="arUnresolved"></p>
       </div>
       <div class="card"><h3 data-i18n="autoRouteSamples">复杂度样本库</h3>
-        <table id="autoSamples"><thead><tr><th data-i18n="autoRouteTier">层级</th><th data-i18n="autoRouteSampleText">样本内容</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="autoSamples"><thead><tr><th data-i18n="autoRouteTier">层级</th><th data-i18n="autoRouteSampleText">样本内容</th><th></th></tr></thead><tbody></tbody></table></div>
         <div class="formGrid" style="margin-top:12px">
           <div><label class="f" data-i18n="autoRouteTier">层级</label><select id="arTier"><option value="simple">simple 简单</option><option value="complex">complex 复杂</option></select></div>
           <div class="wide"><label class="f" data-i18n="autoRouteSampleText">样本内容</label><input id="arText" placeholder="简单问答或复杂任务的典型表述"></div>
@@ -600,7 +601,7 @@
         <div id="semCov" class="muted">—</div>
       </div>
       <div class="card"><h3 data-i18n="folderList">已索引文件夹</h3>
-        <table id="folders"><thead><tr><th data-i18n="name">名称</th><th data-i18n="department">部门</th><th data-i18n="path">路径</th><th data-i18n="maxLevel">数据等级</th><th data-i18n="docs">文档</th><th data-i18n="lastScan">最近扫描</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="folders"><thead><tr><th data-i18n="name">名称</th><th data-i18n="department">部门</th><th data-i18n="path">路径</th><th data-i18n="maxLevel">数据等级</th><th data-i18n="docs">文档</th><th data-i18n="lastScan">最近扫描</th><th></th></tr></thead><tbody></tbody></table></div>
       </div>
     </section>
 
@@ -623,7 +624,7 @@
         <p class="hint" style="margin-top:10px" data-i18n="knowpackHint">包的密级取来源与引用包的最高密级；引用只能向下（低密级包不得嵌入高密级内容）；引用回指由索引树填入（文件 + 章节 + 页码），不接受手写回指；每次创建 / 加版 / 审核 / 发布 / 删除都记入审计（变更回执）。</p>
       </div>
       <div class="card"><h3 data-i18n="knowpackList">知识包列表</h3>
-        <table id="knowpacks"><thead><tr><th data-i18n="name">名称</th><th data-i18n="status">状态</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="versions">版本</th><th data-i18n="scope">范围</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="knowpacks"><thead><tr><th data-i18n="name">名称</th><th data-i18n="status">状态</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="versions">版本</th><th data-i18n="scope">范围</th><th></th></tr></thead><tbody></tbody></table></div>
       </div>
     </section>
 
@@ -641,7 +642,7 @@
         <div class="row"><button class="btn" onclick="addSkill()" data-i18n="submitBtn">提交审核</button><span id="skMsg" class="msg"></span></div>
       </div>
       <div class="card"><h3 data-i18n="skillList">技能列表</h3>
-        <table id="skills"><thead><tr><th data-i18n="name">名称</th><th data-i18n="version">版本</th><th data-i18n="status">状态</th><th data-i18n="scope">范围</th><th data-i18n="updated">更新</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="skills"><thead><tr><th data-i18n="name">名称</th><th data-i18n="version">版本</th><th data-i18n="status">状态</th><th data-i18n="scope">范围</th><th data-i18n="updated">更新</th><th></th></tr></thead><tbody></tbody></table></div>
       </div>
     </section>
 
@@ -663,7 +664,7 @@
         <p class="hint" style="margin-top:10px" data-i18n="promptsHint">Agent 经 /mcp prompts/get 读取已发布版本；参数先过 DLP，渲染结果再过 DLP + 自带级脱敏。</p>
       </div>
       <div class="card"><h3 data-i18n="promptList">模板列表</h3>
-        <table id="prompts"><thead><tr><th data-i18n="name">名称</th><th data-i18n="status">状态</th><th data-i18n="versions">版本</th><th data-i18n="scope">范围</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="tier">等级</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="prompts"><thead><tr><th data-i18n="name">名称</th><th data-i18n="status">状态</th><th data-i18n="versions">版本</th><th data-i18n="scope">范围</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="tier">等级</th><th></th></tr></thead><tbody></tbody></table></div>
       </div>
     </section>
 
@@ -683,7 +684,7 @@
         <p class="hint" style="margin-top:10px" data-i18n="fedHint">凭据加密存储、永不回显；调用前按上游的最高密级与最低等级做授权与 DLP。</p>
       </div>
       <div class="card"><h3 data-i18n="upstreamList">上游列表</h3>
-        <table id="upstreams"><thead><tr><th data-i18n="name">名称</th><th>URL</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="tier">等级</th><th>Token</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="upstreams"><thead><tr><th data-i18n="name">名称</th><th>URL</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="tier">等级</th><th>Token</th><th></th></tr></thead><tbody></tbody></table></div>
       </div>
     </section>
 
@@ -706,7 +707,7 @@
         <p class="hint" style="margin-top:10px" data-i18n="restHint">以 rest.工具名 出现在 /mcp 的 tools/list 中；路径 {{参数}} 会被替换转义，其余参数走 query（GET/DELETE）或 JSON body（POST/PUT/PATCH）；调用前做 schema 校验、等级授权与 DLP，凭据加密存储、永不回显。</p>
       </div>
       <div class="card"><h3 data-i18n="restList">已注册接口</h3>
-        <table id="resttools"><thead><tr><th data-i18n="name">名称</th><th>Method</th><th>Path</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="tier">等级</th><th>Token</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="resttools"><thead><tr><th data-i18n="name">名称</th><th>Method</th><th>Path</th><th data-i18n="maxLevel">最高数据等级</th><th data-i18n="tier">等级</th><th>Token</th><th></th></tr></thead><tbody></tbody></table></div>
       </div>
     </section>
 
@@ -725,7 +726,7 @@
         <p class="hint" style="margin-top:10px" data-i18n="alertsHint">告警只含事件类别与处置，不带请求原文；投递失败最多重试 3 次。</p>
       </div>
       <div class="card"><h3 data-i18n="webhookList">Webhook 列表</h3>
-        <table id="webhooks"><thead><tr><th data-i18n="name">名称</th><th data-i18n="kind">类型</th><th>URL</th><th data-i18n="lastStatus">最近投递</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="webhooks"><thead><tr><th data-i18n="name">名称</th><th data-i18n="kind">类型</th><th>URL</th><th data-i18n="lastStatus">最近投递</th><th></th></tr></thead><tbody></tbody></table></div>
       </div>
     </section>
 
@@ -762,7 +763,7 @@
         <div class="row"><button class="btn" onclick="generateUserBundle()" data-i18n="genBundleBtn">生成用户包</button><span id="ubMsg" class="msg"></span></div>
       </div>
       <div class="card"><h3 data-i18n="packageList">已托管安装包</h3>
-        <table id="packages"><thead><tr><th data-i18n="name">名称</th><th data-i18n="pkgKind">包类型</th><th data-i18n="version">版本</th><th data-i18n="pkgFile">文件</th><th data-i18n="pkgSize">大小</th><th data-i18n="pkgSha">SHA-256</th><th data-i18n="pkgStatus">校验状态</th><th data-i18n="baselineRegistered">已登记基准值</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="tableWrap"><table id="packages"><thead><tr><th data-i18n="name">名称</th><th data-i18n="pkgKind">包类型</th><th data-i18n="version">版本</th><th data-i18n="pkgFile">文件</th><th data-i18n="pkgSize">大小</th><th data-i18n="pkgSha">SHA-256</th><th data-i18n="pkgStatus">校验状态</th><th data-i18n="baselineRegistered">已登记基准值</th><th></th></tr></thead><tbody></tbody></table></div>
         <div class="row" style="margin-top:12px"><button class="btn ghost small danger" onclick="cleanupPackages()" data-i18n="cleanupExpired">清理过期包</button><span id="pkCleanMsg" class="msg"></span></div>
       </div>
     </section>
@@ -1289,7 +1290,7 @@ async function archiveAudit(){
 /* ---------- compliance reports ---------- */
 function repTable(title, head, rows){
   if(!rows.length) return "";
-  return `<h4 style="margin:14px 0 6px">${esc(title)}</h4><table><thead><tr>${head.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>`;
+  return `<h4 style="margin:14px 0 6px">${esc(title)}</h4><div class="tableWrap"><table><thead><tr>${head.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 async function loadReports(){
   try{
