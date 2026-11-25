@@ -228,10 +228,10 @@ type APIToken struct {
 
 // Webhook is an alert delivery target (backlog F5). SecretEnc holds
 // the optional HMAC signing secret encrypted with the master key
-// (AES-GCM, see package secretbox); it is persisted (unlike
-// Channel.Keys, which predates persistence) so admin-configured
-// webhooks survive restarts. The plaintext secret and the full URL
-// query (which may carry a bot key) are never returned by the API.
+// (AES-GCM, see package secretbox); it is persisted, like
+// ChannelKey.Enc, so admin-configured webhooks survive restarts. The
+// plaintext secret and the full URL query (which may carry a bot key)
+// are never returned by the API.
 type Webhook struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
@@ -314,19 +314,20 @@ type DeviceCode struct {
 // list (QuantumNous/new-api, AGPL-3.0, model/channel.go; reused under
 // Nathan's 2026-11-21 reuse-first instruction, AGPL-3.0 is compatible
 // with this project's AGPL-3.0). Enc holds the key AES-GCM-encrypted
-// with the master key (see package secretbox); it is never persisted
-// (json:"-") and never returned by the API — only Masked (last 4
-// chars) is ever displayed. Disabled marks a key the gateway removed
-// after the upstream rejected it with 401, or an admin disabled by
-// hand; DisabledReason/DisabledAt record why and when. Like channel
-// health (F1), key state is runtime-only: a restart re-enables keys
-// and the gateway re-proves them against the upstream.
+// with the master key (see package secretbox); it is persisted (like
+// Webhook.SecretEnc) so channels survive restarts and volume restores,
+// and never returned by the API — only Masked (last 4 chars) is ever
+// displayed. Disabled marks a key the gateway removed after the
+// upstream rejected it with 401, or an admin disabled by hand;
+// DisabledReason/DisabledAt record why and when. Like channel health
+// (F1), the disabled state is runtime-only (json:"-"): a restart
+// re-enables keys and the gateway re-proves them against the upstream.
 type ChannelKey struct {
-	Enc            string    `json:"-"`
+	Enc            string    `json:"enc,omitempty"`
 	Masked         string    `json:"masked"`
-	Disabled       bool      `json:"disabled"`
-	DisabledReason string    `json:"disabled_reason,omitempty"`
-	DisabledAt     time.Time `json:"disabled_at,omitempty"`
+	Disabled       bool      `json:"-"`
+	DisabledReason string    `json:"-"`
+	DisabledAt     time.Time `json:"-"`
 }
 
 // ModelPrice is the per-model price of one channel, in USD per
@@ -363,12 +364,15 @@ type DepartmentBudget struct {
 // Channel is an upstream model provider. Keys holds every upstream API
 // key for this channel (index 0 is the primary key); the gateway
 // round-robins across the enabled keys and auto-disables any key the
-// upstream rejects with 401 (F12). At most MaxChannelKeys keys.
+// upstream rejects with 401 (F12). Keys are persisted AES-GCM-encrypted
+// (see ChannelKey); a channel snapshotted before that change loads with
+// no keys and keeps its previous behaviour until an admin re-enters
+// them. At most MaxChannelKeys keys.
 type Channel struct {
 	ID      string       `json:"id"`
 	Name    string       `json:"name"`
 	BaseURL string       `json:"base_url"`
-	Keys    []ChannelKey `json:"-"`
+	Keys    []ChannelKey `json:"keys,omitempty"`
 	Models  []string     `json:"models"`
 	// Pricing maps model name -> price per million tokens (F13).
 	// A model without an entry is unpriced.
