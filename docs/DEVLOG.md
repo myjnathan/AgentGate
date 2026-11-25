@@ -2,6 +2,15 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-25 · 渠道密钥持久化（F27 演练遗留，演练第 19 项根因）
+
+- 本轮按上一轮 DEVLOG「下一轮」计划执行：持久化加密后的渠道密钥，再重跑 EnsureBucket 演练使第 19 项变绿；之后 F36 第一切片顺延下一轮。体内的 12:26 特别指令与待办登记 1–13 均已在先前轮次执行完毕、作废。队列仍为 F36 → F37（F27 已 done）。
+- 根因：`store.Channel.Keys` 与 `ChannelKey.Enc` 均为 `json:"-"`，密钥只存在于进程内存、从不落盘——经 API 给渠道加一把密钥并保存后，磁盘 `state.json` 里仍无该密钥；重启/恢复后全部渠道 0 把密钥、全部模型调用 502 `channel_no_enabled_key`，直到管理员逐个重录。上一轮演练第 20 项 FAIL（401）是同一根因在恢复失败场景下的表现。
+- 实现：只改三处 JSON 标签，不动任何行为逻辑——`Channel.Keys` 由 `json:"-"` 改为 `json:"keys,omitempty"`，`ChannelKey.Enc` 改为 `json:"enc,omitempty"`（AES-GCM 密文，复用 Webhook/上游凭据已有的加密存储形态）；`Disabled`/`DisabledReason`/`DisabledAt` 由持久化字段改为 `json:"-"`——停用状态仍为运行态（F12 既定语义：重启后重新启用、由网关再次向上游证明），且 `Save()` 是整份 state 快照，任何一次保存都会把当时的停用态写盘，留着标签等于悄悄改变 F12 语义。API 不变：仍走 `channelView`/`channelKeyView` 视图结构，`enc` 密文永不外泄；`docs/ha-design.md` §2.1 早已要求两节点配同一主密钥才能解开渠道密钥，与本次持久化一致，无需改动；backlog F12 条目补修复记录。
+- 关键决策：① 只持久化密文 + 脱敏值，不持久化停用态（见上）；② 旧快照无 `keys` 字段时按原行为加载为无密钥渠道，不做迁移——密钥本来就没落过盘，没有可迁移的旧值，管理员重录一次即持久化；③ 主密钥更换后旧密文解不开（与 Webhook 密钥同款约束），属已知行为，不另做密钥轮换机制。
+- 测试：store 包新增 `TestChannelKeysPersistAcrossSaveAndReload`（Save → 磁盘快照含 `enc`、不含明文 → 重载后两把密钥均可解密、停用态已复位、旧快照加载为无密钥渠道；并以反向验证确认该测试在旧标签下失败）+ api 包新增 `TestChannelKeysSurviveRestart`（经 API 建渠道、加第二把密钥、手动停用第二把 → 列表响应既无明文也无 `enc` → 重开 store 后两把密钥均可解密、均已重新启用）。`gofmt`/`go vet`/`go test ./...` 全绿（34 包）；`make smoke` 314 项断言 0 失败。
+- 本轮实测（EnsureBucket 演练重跑，全新桶，脚本与记录见 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/f27-ensurebucket-drill/`）：21 项检查全部通过（含新增 11a）——桶由首个备份周期自动创建、上传/取回/验链/恢复全流程通过，**第 19 项（恢复后服务器上模型调用）首次变绿、返回 200**。演练中修掉一个上一轮的脚本缺口：恢复服务器 demo 关闭故不挂载 `/mock/`，而演示渠道指向已停的 8801，密钥修好后调用仍到不了上游——本轮在演练里补了一个专用的 mock 上游服务器（8801 上的 demo 模式空数据目录、无备份环境，只供 `/mock/v1`）。另以恢复目录的 `state.json` 实测核对：4 个渠道共 5 把密钥均有 `enc` 密文、无 `disabled` 字段落盘、无明文密钥。演练第 19 项根因至此闭环；下一轮：F36 第一切片（按上一轮已拍好的 24 页截图写 `docs/ux-audit.md`）。
+
 ## 2026-11-25 · 备份自动建桶（EnsureBucket，待办登记 13）
 
 - 本轮按待办登记 13 执行（MEMORY.md 2026-11-25 新增：F27 收尾遗留——备份服务不会自动创建对象存储桶，上一轮演练失败的根因、当轮以预建桶绕过；下一轮先补自动建桶并用全新未建的桶重演一遍，再做 F36 第一切片）。本轮只做 EnsureBucket + 全新桶重演；F36 第一切片顺延下一轮——本轮已把 F36 审查的地基打好：演示模式 + 无头浏览器逐页截图 24 个管理台页面（桌面 1440px 全页 + 登录页 + 390px 窄屏三页），0 控制台/页面/请求错误，证据在 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/f36-audit/`（截图 + `audit-shots.js`），下一轮据此写 `docs/ux-audit.md`。另记：窄屏下渠道页存在横向溢出（scrollWidth 816 > 390，表格无滚动容器），已列入 F36 清单候选。
@@ -10,6 +19,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 测试：backup 包新增 4 项（`TestEnsureBucketCreatesMissingBucket` / `TestEnsureBucketRaceConflict` / `TestPutObjectMissingBucketFails` / `TestServiceRunOnceCreatesBucket`）；旧 `TestClientAgainstFakeS3` 改为先 EnsureBucket；api 包 `fakeS3Server` 补 HEAD（按是否 PUT 过返回 200/404，建模"桶不存在直到被创建"）——此前 HEAD 405 导致 `TestBackupConfigAndRun` 502，全量首跑另有 1 项 alert 包偶发失败（`TestNotifyDeliversAsyncAndSkipsDisabled`，与本轮无关、单跑 5 次全绿）。`gofmt`/`go vet`/`go test ./...` 全绿；`make smoke` 0 失败。
 - 本轮实测（全新桶真机演练，脚本 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/f27-ensurebucket-drill/drill.py`，记录见同目录 `README.md` 与 `drill-log.md`）：rclone serve s3 全新 s3root、桶 `agentgate-ensurebucket` 从未预建——启动时的首个备份周期自动建桶并上传 state（日志有 `created object storage bucket`）；CLI 上传在桶已存在时幂等；归档 6 事件 → 上传 state + 1 段 + manifest → 卷坏模拟 → 取回验链通过 → 恢复目录上起服务、登录与 `/api/audit/verify` 链有效。20 项检查 19 通过。
 - 演练抓到的真问题（不在本轮范围内，下一轮优先）：恢复后服务器上模型调用 502 `channel_no_enabled_key`——渠道 API 密钥从不落盘（`store.Channel.Keys` 与 `ChannelKey.Enc` 均为 `json:"-"`，代码里 Webhook 注释明说 "Channel.Keys, which predates persistence"）。实测确认：经 API 给渠道加一把密钥并保存后，磁盘 state.json 里仍无该密钥；重启/恢复后全部渠道 0 把密钥、全部模型调用 502，直到管理员逐个重录。上一轮演练第 20 项 FAIL（401）是同一根因的不同表现。下一轮：持久化加密后的渠道密钥（复用 Webhook/上游凭据已有的 AES-GCM 加密存储形态，API 仍只回显脱敏值），再重跑本演练使第 19 项变绿。
+- 推送结果：本地提交 f8419b4（含随带的 e456e4e，即 F27 收尾推送结果记录）；复用远端分支 loop/f27（头为收尾快照提交 e6c39d66，已合入 main；推送前核对同步基点：8 个改动文件里 7 个远端 blob 与本地父提交 e456e4e 一致，DEVLOG.md 一处差异已核对——本地父提交多一段 F27 收尾推送结果记录，正是随本轮带上的内容；新文件 0 个）；整包快照 8 文件一次推送（提交 72dbbf83），推送后 8 个文件远端 blob 与快照逐一核对一致；PR #37 文件清单与本轮一致（8/8；+260/-8，本地 diff 为 +259，差 1 行为 DEVLOG 末尾换行符归一）；未触发 contents API 回退；已合并进远端 main，远端 HEAD 10843110（合并提交），读回 main 上 internal/backup/s3.go、docs/backup.md、docs/DEVLOG.md 三文件 blob 与快照一致。另记：合并调用首次因服务重启中断，经查 PR 仍 open、main 未动后重试，第二次获批成功。待删分支仍为 loop/f27（共 25 个，需 Nathan 网页端手动删除；本轮复用同一分支，未新增）。下一轮：渠道密钥持久化（演练第 19 项的根因），再重跑 EnsureBucket 演练；之后 F36 第一切片。
 
 ## 2026-11-24 · F27 收尾实现（A+B1，待办登记 11）+ F36/F37 登记（待办登记 12）
 

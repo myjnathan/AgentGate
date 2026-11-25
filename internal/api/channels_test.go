@@ -4,9 +4,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/myjnathan/agentgate/internal/api"
+	"github.com/myjnathan/agentgate/internal/audit"
+	"github.com/myjnathan/agentgate/internal/auth"
+	"github.com/myjnathan/agentgate/internal/secretbox"
+	"github.com/myjnathan/agentgate/internal/seed"
 	"github.com/myjnathan/agentgate/internal/store"
 )
 
@@ -260,6 +267,124 @@ func TestChannelsMultiKey(t *testing.T) {
 	for _, plain := range []string{"key-one", "key-two", "key-three", "key-four", "only-key"} {
 		if strings.Contains(string(raw), plain) {
 			t.Fatalf("list response leaks plaintext key %q", plain)
+		}
+	}
+}
+
+// TestChannelKeysSurviveRestart is the API-level pin for the 2026-11-25
+// fix: keys added through the API must still be there — decryptable —
+// after the store is reopened from disk (the F27 drill found channels
+// came back with zero keys after a volume restore, and every model call
+// failed with 502 channel_no_enabled_key). It also pins that a key
+// disabled by hand reloads enabled (F12: disabled state is runtime-only)
+// and that no ciphertext ever leaves through the API.
+func TestChannelKeysSurviveRestart(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	box, _ := secretbox.New("test-master-key-123456")
+	au := auth.New(st)
+	if err := seed.Demo(st, box, "http://127.0.0.1:9"); err != nil {
+		t.Fatal(err)
+	}
+	al, err := audit.Open(filepath.Join(dir, "audit.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rest := api.New(st, au, box, al)
+	mux := http.NewServeMux()
+	rest.Register(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	login := func(username, password string) string {
+		t.Helper()
+		body := strings.NewReader(`{"username":"` + username + `","password":"` + password + `"}`)
+		resp, err := http.Post(srv.URL+"/api/login", "application/json", body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var d struct {
+			Session string `json:"session"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&d)
+		if resp.StatusCode != 200 || d.Session == "" {
+			t.Fatalf("login %s failed: %d", username, resp.StatusCode)
+		}
+		return d.Session
+	}
+	admin := login("admin", "agentgate-admin")
+	call := func(method, path, sess string, body any) (int, map[string]any) {
+		t.Helper()
+		var buf *bytes.Buffer
+		if body != nil {
+			b, _ := json.Marshal(body)
+			buf = bytes.NewBuffer(b)
+		} else {
+			buf = bytes.NewBuffer(nil)
+		}
+		req, _ := http.NewRequest(method, srv.URL+path, buf)
+		req.Header.Set("Content-Type", "application/json")
+		if sess != "" {
+			req.Header.Set("Authorization", "Bearer "+sess)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+
+	code, created := call("POST", "/api/channels", admin, map[string]any{
+		"name": "persist (test)", "base_url": "https://llm.example.invalid/v1",
+		"api_key": "sk-persist-drill-1", "models": []string{"mock-eco"}, "max_data_level": "internal"})
+	if code != 201 {
+		t.Fatalf("create channel: got %d (%v), want 201", code, created)
+	}
+	id, _ := created["id"].(string)
+	if code, _ := call("POST", "/api/channels/"+id+"/keys", admin, map[string]any{"api_key": "sk-persist-drill-2"}); code != 201 {
+		t.Fatalf("add key: got %d, want 201", code)
+	}
+	// Disable the second key by hand, then reopen: the ciphertext
+	// must survive, the disabled flag must not.
+	if code, _ := call("POST", "/api/channels/"+id+"/keys/1/disable", admin, map[string]any{"reason": "drill"}); code != 200 {
+		t.Fatalf("disable key: got %d, want 200", code)
+	}
+	// Neither plaintext nor ciphertext may leave through the API.
+	code, listed := call("GET", "/api/channels", admin, nil)
+	if code != 200 {
+		t.Fatalf("list channels: got %d, want 200", code)
+	}
+	raw, _ := json.Marshal(listed)
+	for _, leak := range []string{"sk-persist-drill-1", "sk-persist-drill-2", `"enc"`} {
+		if strings.Contains(string(raw), leak) {
+			t.Fatalf("list response leaks %q", leak)
+		}
+	}
+	// Reopen the store from disk, as a restart or a volume restore
+	// would: both keys come back decryptable, both enabled.
+	st2, err := store.New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ch *store.Channel
+	st2.Read(func(s *store.State) { ch = s.Channels[id] })
+	if ch == nil || len(ch.Keys) != 2 {
+		t.Fatalf("reloaded channel has %d keys, want 2", len(ch.Keys))
+	}
+	for i, want := range []string{"sk-persist-drill-1", "sk-persist-drill-2"} {
+		plain, err := box.Decrypt(ch.Keys[i].Enc)
+		if err != nil || plain != want {
+			t.Fatalf("key %d decrypts to %q (%v), want %q", i, plain, err, want)
+		}
+		if ch.Keys[i].Disabled {
+			t.Fatalf("key %d must reload enabled (disabled state is runtime-only)", i)
 		}
 	}
 }
