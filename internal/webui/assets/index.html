@@ -12,13 +12,19 @@
     --ok:#15803d; --ok-bg:#e8f7ee; --warn:#b45309; --warn-bg:#fdf3e0;
     --bad:#b91c1c; --bad-bg:#fdecec; --info:#1d4ed8; --info-bg:#e8effd;
     --radius:10px; --shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.04);
+    /* F37 motion language: durations + easings, reused site-wide.
+       Only transform/opacity animate; colour transitions are paint-only. */
+    --motion-fast:120ms; --motion-base:180ms; --motion-slow:280ms;
+    --motion-ease-out:cubic-bezier(.2,0,0,1); --motion-ease-standard:cubic-bezier(.4,0,.2,1);
   }
+  @keyframes fadeSlideIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+  @media (prefers-reduced-motion:reduce){ *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;transition-delay:0s!important;scroll-behavior:auto!important} }
   *{box-sizing:border-box}
   body{font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;margin:0;background:var(--bg);color:var(--body);font-size:14px;line-height:1.55}
   a{color:var(--accent);text-decoration:none}
   /* ---------- login ---------- */
   #loginWrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(160deg,#eef2ff 0%,#f6f9fc 55%,#eef7f1 100%);padding:24px}
-  .loginCard{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 8px 30px rgba(16,24,40,.08);padding:34px 34px 26px;width:380px;max-width:94vw}
+  .loginCard{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 8px 30px rgba(16,24,40,.08);padding:34px 34px 26px;width:380px;max-width:94vw;animation:fadeSlideIn var(--motion-slow) var(--motion-ease-out)}
   .brand{display:flex;align-items:center;gap:10px}
   .brandMark{width:34px;height:34px;border-radius:9px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:17px}
   .brandName{font-size:19px;font-weight:700;color:var(--ink)} .brandName span{color:var(--accent)}
@@ -32,7 +38,7 @@
   nav{flex:1;overflow-y:auto;padding:4px 12px 12px}
   .navGroup{margin-top:16px}
   .navGroupTitle{font-size:11px;letter-spacing:.08em;color:var(--faint);padding:0 10px;margin-bottom:5px;font-weight:600}
-  .navItem{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:8px;color:var(--body);cursor:pointer;font-size:13.5px;margin-bottom:2px;border:1px solid transparent}
+  .navItem{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:8px;color:var(--body);cursor:pointer;font-size:13.5px;margin-bottom:2px;border:1px solid transparent;transition:background-color var(--motion-fast) var(--motion-ease-standard),color var(--motion-fast) var(--motion-ease-standard)}
   .navItem:hover{background:#f4f7fb}
   .navItem.active{background:var(--accent-soft);color:var(--accent);font-weight:600;border-color:#dfe6ff}
   .navItem .ico{width:17px;text-align:center;flex:none}
@@ -41,7 +47,9 @@
   .sideFoot .meta{color:var(--muted);font-size:12px;margin:2px 0 9px}
   main{margin-left:232px;padding:28px 34px 48px}
   .page{max-width:1180px;margin:0 auto;display:none}
-  .page.active{display:block}
+  .page.active{display:block;animation:fadeSlideIn var(--motion-base) var(--motion-ease-out)}
+  .wizStep{animation:fadeSlideIn var(--motion-base) var(--motion-ease-out)}
+  #onboardCard{animation:fadeSlideIn var(--motion-base) var(--motion-ease-out)}
   .pageHead{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:18px}
   .pageHead h1{font-size:25px;color:var(--ink);margin:0 0 3px;font-weight:700}
   .pageHead .desc{color:var(--muted);font-size:13px;margin:0;max-width:720px}
@@ -88,8 +96,9 @@
   .formGrid.cols2a{grid-template-columns:1fr 1fr auto;align-items:end}
   .formGrid.cols3a{grid-template-columns:1fr 1fr 1fr auto;align-items:end}
   .formGrid input,.formGrid select{width:100%}
-  .btn{background:var(--accent);border:1px solid var(--accent);color:#fff;padding:8px 15px;border-radius:8px;font-size:13.5px;cursor:pointer;font-weight:550}
+  .btn{background:var(--accent);border:1px solid var(--accent);color:#fff;padding:8px 15px;border-radius:8px;font-size:13.5px;cursor:pointer;font-weight:550;transition:background-color var(--motion-fast) var(--motion-ease-standard),border-color var(--motion-fast) var(--motion-ease-standard),color var(--motion-fast) var(--motion-ease-standard),transform var(--motion-fast) var(--motion-ease-standard)}
   .btn:hover{background:var(--accent-hover)}
+  .btn:active{transform:scale(.97)}
   .btn.ghost{background:#fff;border-color:var(--border-strong);color:var(--body)}
   .btn.ghost:hover{border-color:var(--accent);color:var(--accent)}
   .btn.small{padding:4px 10px;font-size:12.5px}
@@ -107,13 +116,20 @@
   .barFill.ok{background:#34a853}.barFill.redact{background:#e8a33d}
   .barRow .v{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
   .quick{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
-  .quickCard{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;cursor:pointer}
-  .quickCard:hover{border-color:var(--accent)}
+  .quickCard{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;cursor:pointer;transition:border-color var(--motion-fast) var(--motion-ease-standard),transform var(--motion-fast) var(--motion-ease-standard)}
+  .quickCard:hover{border-color:var(--accent);transform:translateY(-1px)}
   .quickCard .t{font-weight:650;color:var(--ink);margin-bottom:3px}
   .quickCard .d{color:var(--muted);font-size:12.5px}
-  #toast{position:fixed;right:22px;bottom:22px;background:var(--ink);color:#fff;padding:10px 16px;border-radius:9px;font-size:13.5px;box-shadow:0 8px 24px rgba(16,24,40,.25);display:none;z-index:50;max-width:min(480px,90vw);cursor:pointer}
-  #confirmOverlay,#inputOverlay{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:60;display:none;align-items:center;justify-content:center}
-  #confirmCard,#inputCard{background:#fff;border-radius:12px;padding:20px;max-width:min(420px,90vw);box-shadow:0 12px 32px rgba(16,24,40,.3)}
+  /* F37 M-001: toast fades/slides via opacity+transform (class-based so the
+     transition can run and be interrupted); visibility hides it from
+     keyboard/AT once faded out. */
+  #toast{position:fixed;right:22px;bottom:22px;background:var(--ink);color:#fff;padding:10px 16px;border-radius:9px;font-size:13.5px;box-shadow:0 8px 24px rgba(16,24,40,.25);z-index:50;max-width:min(480px,90vw);cursor:pointer;visibility:hidden;opacity:0;transform:translateY(8px);pointer-events:none;transition:opacity var(--motion-base) var(--motion-ease-out),transform var(--motion-base) var(--motion-ease-out),visibility 0s linear var(--motion-base)}
+  #toast.show{visibility:visible;opacity:1;transform:translateY(0);pointer-events:auto;transition:opacity var(--motion-base) var(--motion-ease-out),transform var(--motion-base) var(--motion-ease-out),visibility 0s}
+  /* F37 M-002: overlays fade; the card rises slightly into place. */
+  #confirmOverlay,#inputOverlay{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:60;display:flex;align-items:center;justify-content:center;visibility:hidden;opacity:0;transition:opacity var(--motion-base) var(--motion-ease-out),visibility 0s linear var(--motion-base)}
+  #confirmOverlay.open,#inputOverlay.open{visibility:visible;opacity:1;transition:opacity var(--motion-base) var(--motion-ease-out),visibility 0s}
+  #confirmCard,#inputCard{background:#fff;border-radius:12px;padding:20px;max-width:min(420px,90vw);box-shadow:0 12px 32px rgba(16,24,40,.3);transform:translateY(8px) scale(.98);transition:transform var(--motion-base) var(--motion-ease-out)}
+  #confirmOverlay.open #confirmCard,#inputOverlay.open #inputCard{transform:translateY(0) scale(1)}
   .chainOk{color:var(--ok);font-weight:600}.chainBad{color:var(--bad);font-weight:600}
   @media (max-width:960px){
     aside{position:static;width:auto;border-right:none;border-bottom:1px solid var(--border)}
@@ -123,7 +139,7 @@
     .sideBrand{justify-content:space-between}
     #navToggle{display:inline-flex}
     nav{display:none}
-    aside.navOpen nav{display:flex;flex-wrap:wrap;gap:2px} .navGroup{margin-top:6px;display:flex;align-items:center;gap:2px;flex-wrap:wrap}
+    aside.navOpen nav{display:flex;flex-wrap:wrap;gap:2px;animation:fadeSlideIn var(--motion-base) var(--motion-ease-out)} .navGroup{margin-top:6px;display:flex;align-items:center;gap:2px;flex-wrap:wrap}
     .navGroupTitle{width:100%} .sideFoot{display:none}
     aside.navOpen .sideFoot{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
     main{margin-left:0;padding:20px 16px 40px}
@@ -1030,13 +1046,16 @@ function errText(e){
 }
 function toast(msg, ok=true){
   const t = document.getElementById("toast");
-  t.textContent = msg; t.title = T("toastDismiss"); t.style.display="block"; t.style.background = ok ? "#0f172a" : "#991b1b";
-  clearTimeout(t._h); t._h = setTimeout(()=>{ t.style.display="none"; }, 3400);
+  t.textContent = msg; t.title = T("toastDismiss"); t.style.background = ok ? "#0f172a" : "#991b1b";
+  /* F37 M-001: .show drives the fade/slide transition; re-adding the class
+     restarts it, so a toast fired while one is fading out replaces it. */
+  t.classList.add("show");
+  clearTimeout(t._h); t._h = setTimeout(()=>{ t.classList.remove("show"); }, 3400);
 }
 /* UX-010: a toast is dismissible by clicking it (ruler 5: every press
    can be taken back); the auto-hide timer is cleared so a dismissed
    toast cannot pop back. */
-function dismissToast(){ const t = document.getElementById("toast"); clearTimeout(t._h); t.style.display="none"; }
+function dismissToast(){ const t = document.getElementById("toast"); clearTimeout(t._h); t.classList.remove("show"); }
 /* UX-009: one shared confirm-before-delete dialog for every destructive
    action (ruler 7: losing things must be hard to do by accident).
    Returns a promise; Esc / overlay click / Cancel resolve false.
@@ -1046,12 +1065,12 @@ function confirmDelete(){
   return new Promise((res)=>{
     _confirmResolve = res;
     document.getElementById("confirmBody").textContent = T("confirmDeleteBody");
-    document.getElementById("confirmOverlay").style.display = "flex";
+    document.getElementById("confirmOverlay").classList.add("open");
     document.getElementById("confirmCancelBtn").focus();
   });
 }
 function closeConfirm(ok){
-  document.getElementById("confirmOverlay").style.display = "none";
+  document.getElementById("confirmOverlay").classList.remove("open");
   if(_confirmResolve){ const r = _confirmResolve; _confirmResolve = null; r(ok); }
 }
 /* UX-015: one shared input dialog for the flows that used the
@@ -1074,17 +1093,17 @@ function promptInput(opts){
     const target = _inputMultiline ? a : f;
     target.value = opts.value || "";
     target.placeholder = opts.placeholder || "";
-    document.getElementById("inputOverlay").style.display = "flex";
+    document.getElementById("inputOverlay").classList.add("open");
     target.focus(); target.select();
   });
 }
 function closeInput(v){
-  document.getElementById("inputOverlay").style.display = "none";
+  document.getElementById("inputOverlay").classList.remove("open");
   if(_inputResolve){ const r = _inputResolve; _inputResolve = null; _inputValidate = null; r(v); }
 }
 function submitInput(){
   const ov = document.getElementById("inputOverlay");
-  if(ov.style.display !== "flex") return;
+  if(!ov.classList.contains("open")) return;
   const target = _inputMultiline ? document.getElementById("inputArea") : document.getElementById("inputField");
   if(_inputValidate){
     const err = _inputValidate(target.value);
@@ -1092,7 +1111,7 @@ function submitInput(){
   }
   closeInput(target.value);
 }
-document.addEventListener("keydown", (e)=>{ if(e.key==="Escape" && document.getElementById("confirmOverlay").style.display==="flex") closeConfirm(false); if(e.key==="Escape" && document.getElementById("inputOverlay").style.display==="flex") closeInput(null); if(e.key==="Enter" && !_inputMultiline && document.getElementById("inputOverlay").style.display==="flex" && document.activeElement === document.getElementById("inputField")) submitInput(); });
+document.addEventListener("keydown", (e)=>{ if(e.key==="Escape" && document.getElementById("confirmOverlay").classList.contains("open")) closeConfirm(false); if(e.key==="Escape" && document.getElementById("inputOverlay").classList.contains("open")) closeInput(null); if(e.key==="Enter" && !_inputMultiline && document.getElementById("inputOverlay").classList.contains("open") && document.activeElement === document.getElementById("inputField")) submitInput(); });
 function setMsg(id, msg, ok=true){ const el=document.getElementById(id); if(el){ el.textContent=msg; el.className="msg "+(ok?"ok":"err"); } }
 function esc(s){ return String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function pill(v){ return v ? `<span class="pill ${esc(v)}">${esc(v)}</span>` : ""; }
