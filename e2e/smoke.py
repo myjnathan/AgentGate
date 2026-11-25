@@ -179,6 +179,15 @@ def main():
           and all(c.get("health") == "healthy" for c in chans["channels"]))
     s, ver = call("/api/audit/verify", token=alogin["session"], method="GET")
     check("audit chain valid", s == 200 and ver.get("chain_valid") is True)
+    # F27 phase 3 B1: object-storage backup is unconfigured in demo
+    # mode — status says so, a manual run refuses, employees may not
+    # see it. The configured path is covered by the live drill (docs).
+    s, bstat = call("/api/backup/status", token=alogin["session"], method="GET")
+    check("F27 backup status unconfigured", s == 200 and bstat.get("configured") is False)
+    s, _ = call("/api/backup/run", {}, token=alogin["session"], method="POST")
+    check("F27 backup run unconfigured 503", s == 503)
+    s, _ = call("/api/backup/status", token=login["session"], method="GET")
+    check("F27 backup status forbidden for employee", s == 403)
     s, stats = call("/api/stats", token=alogin["session"], method="GET")
     check("stats reconcile with audit", s == 200
           and stats.get("totals", {}).get("calls", 0) == 3

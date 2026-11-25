@@ -438,7 +438,7 @@ func (Reviewer) Review(ctx context.Context, text string, level store.DataLevel, 
 	if cfg.DeepEnabled && deep != nil {
 		verdict, err := deep(ctx, text, level)
 		if err != nil {
-			return conservativeFallback(ctx, level, "deep_error")
+			return conservativeFallback(ctx, level, err)
 		}
 		switch verdict.Verdict {
 		case VerdictUnsafe:
@@ -452,7 +452,7 @@ func (Reviewer) Review(ctx context.Context, text string, level store.DataLevel, 
 		case VerdictSafe:
 			return Decision{Action: DecisionAllow, Source: SourceDeep, Similarity: sim, Reason: "deep_safe"}
 		default:
-			return conservativeFallback(ctx, level, "deep_error")
+			return conservativeFallback(ctx, level, errors.New("deep verdict unparseable"))
 		}
 	}
 	return Decision{Action: DecisionAllow, Source: SourceSample, Similarity: sim, Reason: "no_match"}
@@ -460,12 +460,16 @@ func (Reviewer) Review(ctx context.Context, text string, level store.DataLevel, 
 
 // conservativeFallback is the timeout / deep-error disposition
 // (red line ④): confidential and above fail closed, lower levels
-// alert and allow. A context deadline is a timeout; anything else
-// is a deep-layer error.
-func conservativeFallback(ctx context.Context, level store.DataLevel, fallback string) Decision {
+// alert and allow. A context deadline is a timeout, whether it is
+// observed on the caller's context or reported by the deep call
+// itself: a deep client that returns DeadlineExceeded timed out even
+// when this context has not observed its own deadline yet (timer
+// delivery can lag under load — the 1 ms test context used to flap
+// on exactly this). Anything else is a deep-layer error.
+func conservativeFallback(ctx context.Context, level store.DataLevel, err error) Decision {
 	source := SourceDeepError
-	reason := fallback
-	if ctx.Err() == context.DeadlineExceeded {
+	reason := "deep_error"
+	if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
 		source = SourceTimeout
 		reason = "deep_timeout"
 	}

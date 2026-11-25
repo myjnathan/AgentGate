@@ -580,6 +580,11 @@ type State struct {
 	// of truth across restarts; env vars remain the fresh-install
 	// default only.
 	DLP *DLPWordLists `json:"dlp_words,omitempty"`
+	// Backup holds the object-storage backup configuration (backlog
+	// F27 phase 3 B1). Nil means never configured from the console:
+	// the server falls back to AGENTGATE_BACKUP_S3_* environment
+	// variables.
+	Backup *BackupConfig `json:"backup,omitempty"`
 }
 
 // DLPWordLists is the console-managed state of the two DLP word
@@ -632,6 +637,39 @@ func sortedCopy(in []string) []string {
 	out := append([]string(nil), in...)
 	sort.Strings(out)
 	return out
+}
+
+// BackupConfig is the object-storage backup configuration (backlog
+// F27 phase 3 B1). SecretEnc holds the S3 secret key encrypted with
+// the master key (AES-GCM, see package secretbox); it is persisted
+// (like Webhook.SecretEnc) and never returned by the API — only
+// SecretMasked is displayed. AccessKey is an identifier (like
+// OrgProvider.AppKey), not a secret, and is stored in plaintext.
+type BackupConfig struct {
+	Endpoint           string            `json:"endpoint"`
+	Bucket             string            `json:"bucket"`
+	Region             string            `json:"region,omitempty"`
+	AccessKey          string            `json:"access_key"`
+	SecretEnc          string            `json:"secret_enc,omitempty"`
+	SecretMasked       string            `json:"secret_masked,omitempty"`
+	StateIntervalHours int               `json:"state_interval_hours,omitempty"`
+	StateRetentionDays int               `json:"state_retention_days,omitempty"`
+	AuditRetentionDays int               `json:"audit_retention_days,omitempty"`
+	LastRun            *BackupRunSummary `json:"last_run,omitempty"`
+}
+
+// BackupRunSummary is the outcome of one backup cycle, persisted so
+// the console can show backup health across restarts. Error holds an
+// error class only (e.g. "s3_unreachable"), never a secret or URL.
+type BackupRunSummary struct {
+	StartedAt     time.Time `json:"started_at"`
+	FinishedAt    time.Time `json:"finished_at"`
+	StateUploaded bool      `json:"state_uploaded"`
+	StateKey      string    `json:"state_key,omitempty"`
+	AuditUploaded int       `json:"audit_uploaded"`
+	AuditSkipped  int       `json:"audit_skipped"`
+	Pruned        int       `json:"pruned"`
+	Error         string    `json:"error,omitempty"`
 }
 
 // OrgProvider is one third-party directory (org sync) configuration
@@ -873,6 +911,17 @@ func (s *Store) Save() error {
 	}
 	s.setSaveError(nil)
 	return nil
+}
+
+// SnapshotBytes returns the state exactly as Save would write it
+// (same JSON), without touching disk. The backup runner (backlog F27
+// phase 3 B1) snapshots the live state this way, so an hourly upload
+// never reads a stale on-disk copy when a mutation has not been
+// saved yet.
+func (s *Store) SnapshotBytes() ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return json.MarshalIndent(s.st, "", "  ")
 }
 
 func (s *Store) setSaveError(err error) {
