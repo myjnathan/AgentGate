@@ -245,7 +245,7 @@
             <div class="formGrid" style="margin-top:10px">
               <div><label class="f">Base URL</label><input id="wizBase"></div>
               <div><label class="f" data-i18n="models">模型</label><input id="wizModels"></div>
-              <div><label class="f" data-i18n="trustType">信任类型</label><select id="wizTrust"><option value="signed_cloud">signed_cloud（签约云）</option><option value="dedicated_cloud">dedicated_cloud（专有云 / VPC）</option><option value="local_model">local_model（本地小模型）</option></select></div>
+              <div><label class="f" data-i18n="trustType">信任类型</label><select id="wizTrust"><option value="signed_cloud" data-i18n="trustSigned">signed_cloud（签约云）</option><option value="dedicated_cloud" data-i18n="trustDedicated">dedicated_cloud（专有云 / VPC）</option><option value="local_model" data-i18n="trustLocal">local_model（本地小模型）</option></select></div>
               <div><label class="f" data-i18n="maxLevel">最高数据等级</label><select id="wizLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select></div>
             </div>
           </details>
@@ -281,7 +281,7 @@
       <div class="card"><h3 data-i18n="budgetsTitle">部门月度预算</h3>
         <div class="tableWrap"><table id="budgets"><thead><tr><th data-i18n="dept">部门</th><th class="num" data-i18n="budgetCap">月度上限 (USD)</th><th class="num" data-i18n="budgetSpent">本月已花</th><th class="num" data-i18n="budgetRemaining">剩余</th><th class="num" data-i18n="budgetUsed">已用</th><th></th></tr></thead><tbody></tbody></table></div>
         <div class="formGrid" style="margin-top:12px">
-          <div><label class="f" data-i18n="dept">部门</label><input id="budDept" placeholder="研发部"></div>
+          <div><label class="f" data-i18n="dept">部门</label><input id="budDept" data-i18n-ph="phDept" placeholder="研发部"></div>
           <div><label class="f" data-i18n="budgetCap">月度上限 (USD)</label><input id="budCap" type="number" min="0" step="0.01" placeholder="50"></div>
           <div><label class="f" data-i18n="budgetThreshold">告警阈值 (0–1)</label><input id="budThreshold" type="number" min="0" max="1" step="0.1" placeholder="0.8"></div>
         </div>
@@ -350,7 +350,7 @@
       <div class="card"><h3 data-i18n="deviceApprove">批准设备码</h3>
         <div class="formGrid cols2a">
           <div><label class="f" data-i18n="deviceCode">设备码</label><input id="dcode" placeholder="AG-XXXXXX"></div>
-          <div><label class="f" data-i18n="deviceName">设备名称</label><input id="dname" placeholder="device name"></div>
+          <div><label class="f" data-i18n="deviceName">设备名称</label><input id="dname" data-i18n-ph="phDeviceName" placeholder="device name"></div>
           <button class="btn" onclick="approve()" data-i18n="approveBtn">批准</button>
         </div>
         <span id="dmsg" class="msg"></span>
@@ -412,8 +412,8 @@
         <div class="formGrid">
           <div><label class="f" data-i18n="dept">部门</label><input id="tmDept" placeholder=""></div>
           <div><label class="f" data-i18n="termVersion">版本</label><input id="tmVersion" placeholder="0.1.0"></div>
-          <div><label class="f" data-i18n="termStatus">状态</label><select id="tmStatus"><option value="">全部</option><option value="online">online</option><option value="stale">stale</option><option value="offline">offline</option></select></div>
-          <div><label class="f" data-i18n="termDrift">漂移</label><select id="tmDrift"><option value="">全部</option><option value="true">仅漂移</option><option value="false">仅正常</option></select></div>
+          <div><label class="f" data-i18n="termStatus">状态</label><select id="tmStatus"><option value="" data-i18n="filterAll">全部</option><option value="online">online</option><option value="stale">stale</option><option value="offline">offline</option></select></div>
+          <div><label class="f" data-i18n="termDrift">漂移</label><select id="tmDrift"><option value="" data-i18n="filterAll">全部</option><option value="true" data-i18n="filterDriftOnly">仅漂移</option><option value="false" data-i18n="filterNormalOnly">仅正常</option></select></div>
         </div>
         <div class="row"><button class="btn" onclick="loadTerminals()" data-i18n="filterBtn">筛选</button></div>
       </div>
@@ -429,10 +429,10 @@
       <div class="pageActions"><button class="btn ghost" onclick="loadExceptions()" data-i18n="refresh">刷新</button></div></div>
       <div class="card"><h3 data-i18n="excApply">申请例外</h3>
         <div class="formGrid">
-          <div><label class="f" data-i18n="excLevel">数据密级</label><select id="excLevel"><option value="confidential">confidential（机密）</option><option value="secret">secret（绝密，需另行开启）</option></select></div>
+          <div><label class="f" data-i18n="excLevel">数据密级</label><select id="excLevel"><option value="confidential" data-i18n="excConf">confidential（机密）</option><option value="secret" data-i18n="excSecret">secret（绝密，需另行开启）</option></select></div>
           <div><label class="f" data-i18n="excHours">有效期（小时，1–72）</label><input id="excHours" type="number" min="1" max="72" value="4"></div>
-          <div><label class="f" data-i18n="excReason">申请理由</label><input id="excReason" placeholder="为什么这次调用需要放行"></div>
-          <div><label class="f" data-i18n="excScope">调用范围</label><input id="excScope" placeholder="模型 / 任务，如 mock-pro 汇总 XH-200 进度"></div>
+          <div><label class="f" data-i18n="excReason">申请理由</label><input id="excReason" data-i18n-ph="phExcReason" placeholder="为什么这次调用需要放行"></div>
+          <div><label class="f" data-i18n="excScope">调用范围</label><input id="excScope" data-i18n-ph="phExcScope" placeholder="模型 / 任务，如 mock-pro 汇总 XH-200 进度"></div>
         </div>
         <div class="row"><button class="btn" onclick="applyException()" data-i18n="excApplyBtn">提交申请</button><span id="excMsg" class="muted"></span></div>
         <p class="hint" style="margin-top:10px" data-i18n="excGrantHint">批准后放行凭证只显示一次：管理员须当即把它交给申请人，申请人在被拦截的调用上以 X-AgentGate-Exception-Grant 请求头携带；凭证用一次即作废，过期也作废。</p>
@@ -449,8 +449,8 @@
       <div class="pageActions"><button class="btn ghost" onclick="loadOrgProviders()" data-i18n="refresh">刷新</button></div></div>
       <div class="card"><h3 data-i18n="addOrgProvider">添加同步来源</h3>
         <div class="formGrid">
-          <div><label class="f" data-i18n="orgProvider">平台</label><select id="osProvider"><option value="dingtalk">dingtalk（钉钉）</option><option value="feishu">feishu（飞书）</option><option value="wecom">wecom（企业微信）</option></select></div>
-          <div><label class="f" data-i18n="name">名称</label><input id="osName" placeholder="e.g. 星河钉钉"></div>
+          <div><label class="f" data-i18n="orgProvider">平台</label><select id="osProvider"><option value="dingtalk" data-i18n="orgDingtalk">dingtalk（钉钉）</option><option value="feishu" data-i18n="orgFeishu">feishu（飞书）</option><option value="wecom" data-i18n="orgWecom">wecom（企业微信）</option></select></div>
+          <div><label class="f" data-i18n="name">名称</label><input id="osName" data-i18n-ph="phOrgName" placeholder="e.g. 星河钉钉"></div>
           <div><label class="f" data-i18n="orgCorpId">企业 CorpId（钉钉 / 企微；飞书可空）</label><input id="osCorp" placeholder="corp id"></div>
           <div><label class="f" data-i18n="orgAppKey">应用 AppKey（钉钉 appKey / 飞书 app_id；企微可空）</label><input id="osAppKey" placeholder="app key"></div>
           <div><label class="f" data-i18n="orgAppSecret">应用密钥（加密存储，永不回显）</label><input id="osSecret" type="password" placeholder="app secret"></div>
@@ -504,7 +504,7 @@
           <div class="wide"><label class="f">API Key</label><input id="chKey" type="password" placeholder="sk-…"></div>
           <div><label class="f" data-i18n="models">模型（逗号分隔）</label><input id="chModels" placeholder="mock-pro, mock-eco"></div>
           <div><label class="f" data-i18n="maxLevel">最高数据等级</label><select id="chLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select></div>
-          <div><label class="f" data-i18n="trustType">信任类型</label><select id="chTrust"><option value="signed_cloud">signed_cloud 签约云</option><option value="dedicated_cloud">dedicated_cloud 专有云/VPC</option><option value="local_model">local_model 本地模型</option></select></div>
+          <div><label class="f" data-i18n="trustType">信任类型</label><select id="chTrust"><option value="signed_cloud" data-i18n="trustSigned">signed_cloud（签约云）</option><option value="dedicated_cloud" data-i18n="trustDedicated">dedicated_cloud（专有云 / VPC）</option><option value="local_model" data-i18n="trustLocal">local_model（本地小模型）</option></select></div>
           <div class="wide"><label class="f" data-i18n="pricingL">单价（JSON，USD / 每百万 Token）</label><input id="chPricing" placeholder='{"mock-pro":{"input_per_million":2.5,"output_per_million":10}}'></div>
         </div>
         <p class="hint" id="chPresetNote" style="margin:8px 0 0"></p>
@@ -547,11 +547,11 @@
       <div class="card"><h3 data-i18n="semReviewPolicy">复核策略</h3>
         <div class="row" style="margin-bottom:10px"><span id="semReviewStats" class="muted"></span></div>
         <div class="formGrid">
-          <div><label class="f" data-i18n="semReviewEnabled">启用语义复核</label><select id="srEnabled"><option value="true">启用</option><option value="false">停用</option></select></div>
+          <div><label class="f" data-i18n="semReviewEnabled">启用语义复核</label><select id="srEnabled"><option value="true" data-i18n="orgEnabled">启用</option><option value="false" data-i18n="optDisable">停用</option></select></div>
           <div><label class="f" data-i18n="semReviewThreshold">样本相似度阈值（0–1）</label><input id="srThreshold" type="number" min="0" max="1" step="0.05" placeholder="0.35"></div>
           <div><label class="f" data-i18n="semReviewTimeout">深层复核超时（毫秒）</label><input id="srTimeout" type="number" min="100" max="60000" step="100" placeholder="3000"></div>
-          <div><label class="f" data-i18n="semReviewControversial">深层「有争议」处置</label><select id="srControversial"><option value="alert">告警放行</option><option value="block">拦截</option></select></div>
-          <div><label class="f" data-i18n="semReviewDeep">深层复核（自托管审核小模型）</label><select id="srDeepEnabled"><option value="false">关闭</option><option value="true">启用</option></select></div>
+          <div><label class="f" data-i18n="semReviewControversial">深层「有争议」处置</label><select id="srControversial"><option value="alert" data-i18n="semAlert">告警放行</option><option value="block" data-i18n="semBlock">拦截</option></select></div>
+          <div><label class="f" data-i18n="semReviewDeep">深层复核（自托管审核小模型）</label><select id="srDeepEnabled"><option value="false" data-i18n="optDisable">停用</option><option value="true" data-i18n="orgEnabled">启用</option></select></div>
           <div><label class="f" data-i18n="semReviewDeepChannel">深层复核渠道</label><select id="srDeepChannel"><option value="">—</option></select></div>
           <div class="wide"><label class="f" data-i18n="semReviewDeepModel">审核模型</label><input id="srDeepModel" placeholder="Qwen/Qwen3Guard-Gen-4B"></div>
         </div>
@@ -561,9 +561,9 @@
       <div class="card"><h3 data-i18n="semReviewSamples">风险样本库</h3>
         <div class="tableWrap"><table id="semSamples"><thead><tr><th data-i18n="semReviewCategory">类别</th><th data-i18n="semReviewSampleText">样本内容</th><th data-i18n="semReviewAction">处置</th><th></th></tr></thead><tbody></tbody></table></div>
         <div class="formGrid" style="margin-top:12px">
-          <div><label class="f" data-i18n="semReviewCategory">类别</label><select id="srCat"><option value="jailbreak">jailbreak 越狱</option><option value="inducement">inducement 诱导</option><option value="disguise">disguise 伪装</option><option value="split_exfil">split_exfil 拆分外发</option></select></div>
-          <div><label class="f" data-i18n="semReviewAction">处置</label><select id="srAct"><option value="block">拦截</option><option value="alert">告警放行</option></select></div>
-          <div class="wide"><label class="f" data-i18n="semReviewSampleText">样本内容</label><input id="srText" placeholder="越狱 / 诱导 / 伪装 / 拆分外发的典型表述"></div>
+          <div><label class="f" data-i18n="semReviewCategory">类别</label><select id="srCat"><option value="jailbreak" data-i18n="semCatJailbreak">jailbreak 越狱</option><option value="inducement" data-i18n="semCatInducement">inducement 诱导</option><option value="disguise" data-i18n="semCatDisguise">disguise 伪装</option><option value="split_exfil" data-i18n="semCatSplit">split_exfil 拆分外发</option></select></div>
+          <div><label class="f" data-i18n="semReviewAction">处置</label><select id="srAct"><option value="block" data-i18n="semBlock">拦截</option><option value="alert" data-i18n="semAlert">告警放行</option></select></div>
+          <div class="wide"><label class="f" data-i18n="semReviewSampleText">样本内容</label><input id="srText" data-i18n-ph="phSemSample" placeholder="越狱 / 诱导 / 伪装 / 拆分外发的典型表述"></div>
         </div>
         <div class="row"><button class="btn" onclick="addSemSample()" data-i18n="addBtn">添加</button><span id="srSampleMsg" class="msg"></span></div>
       </div>
@@ -576,7 +576,7 @@
       <div class="card"><h3 data-i18n="autoRoutePolicy">路由策略</h3>
         <div class="row" style="margin-bottom:10px"><span id="autoRouteStats" class="muted"></span></div>
         <div class="formGrid">
-          <div><label class="f" data-i18n="autoRouteEnabled">启用智能路由</label><select id="arEnabled"><option value="true">启用</option><option value="false">停用</option></select></div>
+          <div><label class="f" data-i18n="autoRouteEnabled">启用智能路由</label><select id="arEnabled"><option value="true" data-i18n="orgEnabled">启用</option><option value="false" data-i18n="optDisable">停用</option></select></div>
           <div><label class="f" data-i18n="autoRouteThreshold">样本相似度阈值（0–1）</label><input id="arThreshold" type="number" min="0" max="1" step="0.05" placeholder="0.35"></div>
           <div><label class="f" data-i18n="autoRouteSimpleGroup">简单模型组（便宜，逗号分隔）</label><input id="arSimpleGroup" placeholder="mock-eco"></div>
           <div><label class="f" data-i18n="autoRouteComplexGroup">复杂模型组（强，逗号分隔）</label><input id="arComplexGroup" placeholder="mock-pro"></div>
@@ -588,8 +588,8 @@
       <div class="card"><h3 data-i18n="autoRouteSamples">复杂度样本库</h3>
         <div class="tableWrap"><table id="autoSamples"><thead><tr><th data-i18n="autoRouteTier">层级</th><th data-i18n="autoRouteSampleText">样本内容</th><th></th></tr></thead><tbody></tbody></table></div>
         <div class="formGrid" style="margin-top:12px">
-          <div><label class="f" data-i18n="autoRouteTier">层级</label><select id="arTier"><option value="simple">simple 简单</option><option value="complex">complex 复杂</option></select></div>
-          <div class="wide"><label class="f" data-i18n="autoRouteSampleText">样本内容</label><input id="arText" placeholder="简单问答或复杂任务的典型表述"></div>
+          <div><label class="f" data-i18n="autoRouteTier">层级</label><select id="arTier"><option value="simple" data-i18n="arSimple">simple 简单</option><option value="complex" data-i18n="arComplex">complex 复杂</option></select></div>
+          <div class="wide"><label class="f" data-i18n="autoRouteSampleText">样本内容</label><input id="arText" data-i18n-ph="phArSample" placeholder="简单问答或复杂任务的典型表述"></div>
         </div>
         <div class="row"><button class="btn" onclick="addAutoSample()" data-i18n="addBtn">添加</button><span id="arSampleMsg" class="msg"></span></div>
       </div>
@@ -601,10 +601,10 @@
       <div class="pageActions"><button class="btn ghost" onclick="loadFolders()" data-i18n="refresh">刷新</button></div></div>
       <div class="card"><h3 data-i18n="addFolder">添加文件夹</h3>
         <div class="formGrid">
-          <div><label class="f" data-i18n="name">名称</label><input id="fbName" placeholder="e.g. 公司制度"></div>
+          <div><label class="f" data-i18n="name">名称</label><input id="fbName" data-i18n-ph="phFolderName" placeholder="e.g. 公司制度"></div>
           <div><label class="f" data-i18n="path">路径</label><input id="fbPath" placeholder="/path/to/shared/folder"></div>
           <div><label class="f" data-i18n="maxLevel">数据等级</label><select id="fbLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select></div>
-          <div><label class="f" data-i18n="department">所属部门（可选）</label><input id="fbDept" placeholder="e.g. 人力部"></div>
+          <div><label class="f" data-i18n="department">所属部门（可选）</label><input id="fbDept" data-i18n-ph="phFolderDept" placeholder="e.g. 人力部"></div>
         </div>
         <div class="row"><button class="btn" onclick="addFolder()" data-i18n="addBtn">添加</button><span id="fbMsg" class="msg"></span></div>
         <p class="hint" style="margin-top:10px" data-i18n="foldersHint">支持 .md / .txt / .docx / .pdf，增量更新只索引变化文件；引用精确到文件 + 章节 + 页码。摘要为抽取式（章节首句），不经过模型，不产生泄漏通道。</p>
@@ -625,14 +625,14 @@
       <div class="card"><h3 data-i18n="addKnowpack">新建知识包</h3>
         <div class="formGrid">
           <div><label class="f" data-i18n="name">名称</label><input id="kpName" placeholder="e.g. onboarding_essentials"></div>
-          <div><label class="f" data-i18n="desc2">描述</label><input id="kpDesc" placeholder="description"></div>
-          <div><label class="f" data-i18n="scope">范围</label><input id="kpScope" placeholder="* or 研发部,注册部"></div>
+          <div><label class="f" data-i18n="desc2">描述</label><input id="kpDesc" data-i18n-ph="phDesc" placeholder="description"></div>
+          <div><label class="f" data-i18n="scope">范围</label><input id="kpScope" data-i18n-ph="phScopeDepts" placeholder="* or 研发部,注册部"></div>
           <div><label class="f" data-i18n="kpRefsL">引用其他包（ID，逗号分隔）</label><input id="kpRefs" placeholder="kp_other"></div>
         </div>
         <div style="margin-bottom:10px"><label class="f" data-i18n="kpSourcesL">来源（JSON 数组：doc_id + 可选 node_id）</label><textarea id="kpSources" style="min-height:52px">[{"doc_id":"folder:kbf_demo_folders:考勤与请假制度.md"}]</textarea></div>
         <div style="margin-bottom:10px"><label class="f" data-i18n="kpContentL">综合正文（用途 / 证据用法 / 边界 + 结论）</label><textarea id="kpContent">综合：新员工入职须知——请假须提前提交申请，加班每月不得超过 36 小时。</textarea></div>
         <div style="margin-bottom:10px"><label class="f" data-i18n="kpCitesL">引用回指（JSON 数组：doc_id + node_id）</label><textarea id="kpCites" style="min-height:52px">[{"doc_id":"folder:kbf_demo_folders:考勤与请假制度.md","node_id":"n1"}]</textarea></div>
-        <div style="margin-bottom:12px"><label class="f" data-i18n="kpChangeNoteL">变更说明</label><input id="kpNote" placeholder="初版"></div>
+        <div style="margin-bottom:12px"><label class="f" data-i18n="kpChangeNoteL">变更说明</label><input id="kpNote" data-i18n-ph="phChangeNote" placeholder="初版"></div>
         <div class="row"><button class="btn" onclick="addKnowpack()" data-i18n="addBtn">添加</button><span id="kpMsg" class="msg"></span></div>
         <p class="hint" style="margin-top:10px" data-i18n="knowpackHint">包的密级取来源与引用包的最高密级；引用只能向下（低密级包不得嵌入高密级内容）；引用回指由索引树填入（文件 + 章节 + 页码），不接受手写回指；每次创建 / 加版 / 审核 / 发布 / 删除都记入审计（变更回执）。</p>
       </div>
@@ -666,8 +666,8 @@
       <div class="card"><h3 data-i18n="addPrompt">新建模板</h3>
         <div class="formGrid">
           <div><label class="f" data-i18n="name">名称</label><input id="ptName" placeholder="e.g. weekly_report"></div>
-          <div><label class="f" data-i18n="desc2">描述</label><input id="ptDesc" placeholder="description"></div>
-          <div><label class="f" data-i18n="scope">范围</label><input id="ptScope" placeholder="* or 研发部,注册部"></div>
+          <div><label class="f" data-i18n="desc2">描述</label><input id="ptDesc" data-i18n-ph="phDesc" placeholder="description"></div>
+          <div><label class="f" data-i18n="scope">范围</label><input id="ptScope" data-i18n-ph="phScopeDepts" placeholder="* or 研发部,注册部"></div>
           <div><label class="f" data-i18n="maxLevel">最高数据等级</label><select id="ptLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select></div>
           <div><label class="f" data-i18n="minTier">最低等级</label><select id="ptTier"><option value="byoa">byoa</option><option value="managed">managed</option></select></div>
         </div>
@@ -689,7 +689,7 @@
         <div class="formGrid">
           <div><label class="f" data-i18n="namespace">命名空间</label><input id="upName" placeholder="e.g. hr"></div>
           <div class="wide"><label class="f">URL</label><input id="upUrl" placeholder="https://…/mcp"></div>
-          <div><label class="f">Token（可选）</label><input id="upToken" type="password" placeholder="upstream token"></div>
+          <div><label class="f" data-i18n="optToken">Token（可选）</label><input id="upToken" type="password" placeholder="upstream token"></div>
           <div><label class="f" data-i18n="maxLevel">最高数据等级</label><select id="upLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select></div>
           <div><label class="f" data-i18n="minTier">最低等级</label><select id="upTier"><option value="byoa">byoa</option><option value="managed">managed</option></select></div>
         </div>
@@ -711,7 +711,7 @@
           <div class="wide"><label class="f">Base URL</label><input id="rtBase" placeholder="https://…/api"></div>
           <div><label class="f">Method</label><select id="rtMethod"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select></div>
           <div><label class="f">Path</label><input id="rtPath" placeholder="/path/{{param}}"></div>
-          <div><label class="f">Credential（可选）</label><input id="rtToken" type="password" placeholder="credential"></div>
+          <div><label class="f" data-i18n="optCredential">Credential（可选）</label><input id="rtToken" type="password" placeholder="credential"></div>
           <div><label class="f" data-i18n="maxLevel">最高数据等级</label><select id="rtLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select></div>
           <div><label class="f" data-i18n="minTier">最低等级</label><select id="rtTier"><option value="byoa">byoa</option><option value="managed">managed</option></select></div>
         </div>
@@ -733,7 +733,7 @@
           <div><label class="f" data-i18n="name">名称</label><input id="whName" placeholder="name"></div>
           <div class="wide"><label class="f">URL</label><input id="whUrl" placeholder="https://…/webhook/send?key=…"></div>
           <div><label class="f" data-i18n="kind">类型</label><select id="whKind"><option value="generic">generic</option><option value="wecom">wecom</option><option value="dingtalk">dingtalk</option><option value="feishu">feishu</option></select></div>
-          <div><label class="f">Signing secret（可选）</label><input id="whSecret" type="password" placeholder="secret"></div>
+          <div><label class="f" data-i18n="optSigningSecret">Signing secret（可选）</label><input id="whSecret" type="password" placeholder="secret"></div>
         </div>
         <div class="row"><button class="btn" onclick="addWebhook()" data-i18n="addBtn">添加</button><span id="whMsg" class="msg"></span></div>
         <p class="hint" style="margin-top:10px" data-i18n="alertsHint">告警只含事件类别与处置，不带请求原文；投递失败最多重试 3 次。</p>
@@ -754,7 +754,7 @@
           <div><label class="f" data-i18n="version">版本</label><input id="pkVersion" placeholder="1.0.0"></div>
           <div><label class="f" data-i18n="pkgAgentType">Agent 类型</label><input id="pkAgent" placeholder="dsh"></div>
           <div><label class="f" data-i18n="pkgSource">来源</label><select id="pkSource"><option value="upload">upload</option><option value="offline-import">offline-import</option></select></div>
-          <div><label class="f">SHA-256（期望校验和，可空）</label><input id="pkSha" placeholder="64 hex chars"></div>
+          <div><label class="f" data-i18n="optSha">SHA-256（期望校验和，可空）</label><input id="pkSha" placeholder="64 hex chars"></div>
           <div><label class="f" data-i18n="expiresAt">过期时间（可选，RFC3339）</label><input id="pkExpires" placeholder="2027-01-01T00:00:00Z"></div>
           <div><label class="f" data-i18n="pkgFile">文件</label><input id="pkFile" type="file"></div>
         </div>
@@ -768,8 +768,8 @@
           <div><label class="f" data-i18n="pkgAgentType">Agent 类型</label><input id="ubAgent" placeholder="dsh"></div>
           <div class="wide"><label class="f" data-i18n="gatewayUrl">网关地址</label><input id="ubGateway" placeholder="https://gw.example"></div>
           <div><label class="f" data-i18n="maxLevel">最高数据等级</label><select id="ubLevel"><option value="public">public</option><option value="internal" selected>internal</option><option value="confidential">confidential</option><option value="secret">secret</option></select></div>
-          <div><label class="f">ag-guard 组件包</label><select id="ubGuard"></select></div>
-          <div><label class="f">ag-setup 组件包</label><select id="ubSetup"></select></div>
+          <div><label class="f" data-i18n="pkgGuardBundle">ag-guard 组件包</label><select id="ubGuard"></select></div>
+          <div><label class="f" data-i18n="pkgSetupBundle">ag-setup 组件包</label><select id="ubSetup"></select></div>
           <div class="wide"><label class="f" data-i18n="egressAllowlist">出口白名单（逗号分隔主机名）</label><input id="ubEgress" placeholder="gw.example"></div>
           <div><label class="f" data-i18n="registerBaseline">登记为证明基准值</label><select id="ubBaseline"><option value="true" selected>yes</option><option value="false">no</option></select></div>
         </div>
@@ -824,11 +824,11 @@ const I18N = {
     foldersHint:"支持 .md / .txt / .docx / .pdf，增量更新只索引变化文件；引用精确到文件 + 章节 + 页码。摘要为抽取式（章节首句），不经过模型，不产生泄漏通道。",
     department:"部门",semTitle:"语义索引（FRAS）",semDesc:"每份文档的每个章节一行语义条目（职责 / 关联 / 适用范围 / 硬约束）加标签坐标（部门 / 类型 / 重要度），作为目录层供 Agent 判断相关性；每条带原文回指（文件 + 章节 + 页码）。默认抽取式生成，绝密文档只登记标题。",semRegen:"生成语义索引",semDocs:"篇文档",semSections:"个章节",semStale:"篇过期",
     skillsTitle:"技能（Skills）",skillsDesc:"SKILL.md 技能包的提交、审核与发布；发布后员工的 Agent 可按部门范围取用。",submitSkill:"提交技能",skillList:"技能列表",version:"版本",status:"状态",scope:"范围",updated:"更新",submitBtn:"提交审核",
-    promptsTitle:"Prompt 模板库",promptsDesc:"模板走提交 → 审核 → 发布：新版本只追加不改旧版，发布后才对 Agent 可见；回滚即重新发布旧版本。",addPrompt:"新建模板",promptList:"模板列表",desc2:"描述",minTier:"最低等级",versions:"版本",
+    promptsTitle:"Prompt 模板库",promptsDesc:"模板走提交 → 审核 → 发布：新版本只追加不改旧版，发布后才对 Agent 可见；回滚即重新发布旧版本。",addPrompt:"添加模板",promptList:"模板列表",desc2:"描述",minTier:"最低等级",versions:"版本",
     ptContentL:"模板正文（{{name}} 为占位符）",ptArgsL:"参数定义（JSON 数组）",promptsHint:"Agent 经 /mcp prompts/get 读取已发布版本；参数先过 DLP，渲染结果再过 DLP + 自带级脱敏。",
-    knowpackTitle:"专题知识包",knowpackDesc:"围绕一个具体工作问题，把若干文件精选成一个知识包：来源清单（配方）+ 综合说明；审批发布后 Agent 经 MCP 按包取用，综合中每条结论必须带原文回指。",addKnowpack:"新建知识包",knowpackList:"知识包列表",
+    knowpackTitle:"专题知识包",knowpackDesc:"围绕一个具体工作问题，把若干文件精选成一个知识包：来源清单（配方）+ 综合说明；审批发布后 Agent 经 MCP 按包取用，综合中每条结论必须带原文回指。",addKnowpack:"添加知识包",knowpackList:"知识包列表",
     kpSourcesL:"来源（JSON 数组：doc_id + 可选 node_id）",kpRefsL:"引用其他包（ID，逗号分隔）",kpContentL:"综合正文（用途 / 证据用法 / 边界 + 结论）",kpCitesL:"引用回指（JSON 数组：doc_id + node_id）",kpChangeNoteL:"变更说明",
-    kpStale:"配方过期",kpNewVersion:"＋版本",kpSources:"来源",kpRefs:"引用",
+    kpStale:"配方过期",kpNewVersion:"＋版本",
     knowpackHint:"包的密级取来源与引用包的最高密级；引用只能向下（低密级包不得嵌入高密级内容）；引用回指由索引树填入（文件 + 章节 + 页码），不接受手写回指；每次创建 / 加版 / 审核 / 发布 / 删除都记入审计（变更回执）。",
     fedTitle:"MCP 联邦上游",fedDesc:"把外部 MCP 服务器联邦进网关：工具以「命名空间.工具名」出现，调用同样过授权、DLP 与审计。",addUpstream:"添加上游",upstreamList:"上游列表",namespace:"命名空间",
     fedHint:"凭据加密存储、永不回显；调用前按上游的最高密级与最低等级做授权与 DLP。",
@@ -836,10 +836,10 @@ const I18N = {
     restHint:"以 rest.工具名 出现在 /mcp 的 tools/list 中；路径 {{参数}} 会被替换转义，其余参数走 query（GET/DELETE）或 JSON body（POST/PUT/PATCH）；调用前做 schema 校验、等级授权与 DLP，凭据加密存储、永不回显。",
     alertsTitle:"告警 Webhook",alertsDesc:"拦截、密级越权、渠道熔断、账号锁定等事件主动推送到企业微信 / 钉钉 / 飞书或通用 Webhook。",addWebhook:"添加 Webhook",webhookList:"Webhook 列表",kind:"类型",lastStatus:"最近投递",
     alertsHint:"告警只含事件类别与处置，不带请求原文；投递失败最多重试 3 次。",
-    packagesTitle:"安装包分发",packagesDesc:"受管 Agent 安装包的托管与分发：管理员上传或离线导入，员工自助下载；分发包的哈希可登记为 Agent 证明的基准值。",uploadPackage:"上传 / 离线导入安装包",packageList:"已托管安装包",pkgKind:"包类型",pkgManagement:"管理包（服务端）",pkgUser:"用户包（员工）",pkgFile:"文件",pkgSize:"大小",pkgSha:"SHA-256",pkgStatus:"校验状态",verified:"已校验",unverified:"未校验",pkgSource:"来源",pkgOfflineImport:"离线导入",pkgGenerated:"平台生成",pkgAgentType:"Agent 类型",registerBaseline:"登记为证明基准值",baselineRegistered:"已登记基准值",genUserBundle:"生成用户包（ag-guard + ag-setup）",gatewayUrl:"网关地址",egressAllowlist:"出口白名单（逗号分隔主机名）",expiresAt:"过期时间（可选，RFC3339）",cleanupExpired:"清理过期包",uploadBtn:"上传",genBundleBtn:"生成用户包",packagesHint:"管理包给 IT（agentgate 服务端，现有 Docker / 离线 bundle / systemd 形态，走现有离线部署通道）；用户包给员工（ag-guard + ag-setup，按策略生成：内置网关地址、密级与脱敏策略、出口白名单，员工装一次即常驻、零配置）。只有已校验的包才能登记为 F14 证明基准值——未校验的包即使哈希一致也不予登记。过期包可一键清理；导入中断的上传可断点续传（见接口文档）。",
+    packagesTitle:"安装包分发",packagesDesc:"受管 Agent 安装包的托管与分发：管理员上传或离线导入，员工自助下载；分发包的哈希可登记为 Agent 证明的基准值。",uploadPackage:"上传 / 离线导入安装包",packageList:"已托管安装包",pkgKind:"包类型",pkgFile:"文件",pkgSize:"大小",pkgSha:"SHA-256",pkgStatus:"校验状态",verified:"已校验",unverified:"未校验",pkgSource:"来源",pkgAgentType:"Agent 类型",registerBaseline:"登记为证明基准值",baselineRegistered:"已登记基准值",genUserBundle:"生成用户包（ag-guard + ag-setup）",gatewayUrl:"网关地址",egressAllowlist:"出口白名单（逗号分隔主机名）",expiresAt:"过期时间（可选，RFC3339）",cleanupExpired:"清理过期包",uploadBtn:"上传",genBundleBtn:"生成用户包",packagesHint:"管理包给 IT（agentgate 服务端，现有 Docker / 离线 bundle / systemd 形态，走现有离线部署通道）；用户包给员工（ag-guard + ag-setup，按策略生成：内置网关地址、密级与脱敏策略、出口白名单，员工装一次即常驻、零配置）。只有已校验的包才能登记为 F14 证明基准值——未校验的包即使哈希一致也不予登记。过期包可一键清理；导入中断的上传可断点续传（见接口文档）。",
     orgsyncTitle:"组织同步",orgsyncDesc:"从钉钉 / 飞书 / 企业微信同步部门与员工目录，登录时把第三方身份绑定到平台账号；同步只建 / 更新账号与部门映射，不授予受管级权限。",addOrgProvider:"添加同步来源",orgProviderList:"同步来源",orgProvider:"平台",orgCorpId:"企业 CorpId",orgAppKey:"AppKey",orgAppSecret:"应用密钥",orgBaseUrl:"API 地址",orgAutoCreate:"自动建号",orgDisableMissing:"离职禁用",orgEnabled:"启用",orgSecretMasked:"密钥（已打码）",orgLastSync:"最近同步",orgSyncBtn:"同步",orgBindTitle:"绑定第三方身份",orgBindBtn:"绑定",orgBindHint:"只能绑定已同步到的目录成员（同步快照里没有的 ID 会被拒绝）；同一身份不能绑到两个账号；解绑只解除关联、不删账号。",orgMyBindings:"我的第三方身份",orgNoBindings:"暂无绑定的第三方身份",orgExternalId:"第三方用户 ID",orgsyncHint:"同步只建 / 更新账号与部门映射，不自动授予受管级权限（权限仍走平台策略）；本地已禁用的账号同步不会自动恢复；目录里没看到的人不等于离职——只有平台明确说找不到时，开启「离职禁用」才会禁用账号。应用密钥只加密存储、不回显；同步与绑定全程审计。",
     usersTitle:"用户与角色",usersDesc:"分级管理员与职责分离：平台管理员、安全管理员、审计员、运维员各管一段，互相制约；角色分配本身只由平台管理员操作，全程审计。",roleMatrix:"角色分工",usersList:"用户列表",roleCol:"角色",roleSource:"角色来源",authSource:"账号来源",userDisabled:"已禁用",userEnabled:"启用中",userDisable:"禁用",userEnable:"启用",userOp:"操作",usersHintCol:"权限",usersHint:"只有平台管理员可以改角色（安全管理员也不行，避免自我提权）；不能改自己的角色、不能禁用自己、不能动最后一位启用的平台管理员。禁用账号会立即吊销其全部会话。角色来源为 oidc 的账号由 IdP 组映射管理，管理员在控制台改过角色后即转为本地管理、IdP 不再覆盖。",
-    saved:"✓ 已保存",deleted:"✓ 已删除",empty:"暂无数据",chainValid:"哈希链完整",chainInvalid:"哈希链校验失败",approve:"通过",reject:"驳回",download:"下载",publish:"发布/回滚",test:"测试",rescan:"重扫",save:"保存",wizardTitle:"开通向导",wizDesc:"五步完成首次开通：建管理员 → 选行业模板 → 接模型渠道 → 选上线阶段 → 自检完成。默认保守、默认观察模式，第一天先跑起来、再慢慢收紧。",wizStep1:"创建管理员",wizStep2:"选择行业模板",wizStep3:"接入模型渠道",wizStep4:"选择上线阶段",wizStep5:"自检与完成",wizNext:"下一步",wizBack:"上一步",wizSkip:"稍后添加",wizAdminDone:"首个管理员已创建",wizAdminHint:"首个管理员已由设置码创建。如需新增管理员，请在「用户与角色」页添加。",wizTemplateHint:"模板是一整套互相咬合的预置：预置词表、渠道信任与分级策略、上线阶段与报表节奏。应用后可在各功能页继续微调。",wizApplyTemplate:"应用此模板",wizTemplateApplied:"已应用",wizVendor:"模型厂商",wizApiKey:"API Key",wizAdvanced:"高级（已按厂商预填，可改）",wizAddChannel:"添加渠道",wizPhaseHint:"观察：只审计、不拦截；提醒：自带级发机密数据时仅提醒、不拦截（违禁词与语义复核仍拦截）；拦截：全部规则按配置拦截。随时可在仪表盘切换。",wizPhaseObserve:"观察",wizPhaseWarn:"提醒",wizPhaseBlock:"拦截",wizPhaseObserveD:"只审计、不拦截——配错了也没有代价",wizPhaseWarnD:"自带级机密调用仅提醒、不拦截；违禁词仍拦截",wizPhaseBlockD:"全部规则按配置拦截",wizSavePhase:"保存上线阶段",wizChecklist:"开通自检",wizComplete:"完成开通",wizDone:"开通完成",wizMasterKey:"我已备份主密钥（丢失将导致全部加密密钥无法恢复）",wizEmployeeHint:"员工接入：员工在终端运行 ag-setup 获得设备码，管理员在「设备接入」页批准即可。",setupTitle:"首次设置",setupSub:"创建第一个管理员",setupCode:"设置码",setupCodeHint:"服务器首次启动时打印在日志里的 12 位设置码（XXXX-XXXX-XXXX）。",setupBtn:"创建管理员并继续",setupUser:"管理员用户名",setupPass:"密码（至少 8 位）",setupPass2:"确认密码",obTitle:"开通进度",obPhase:"上线阶段",obWouldBlock:"观察模式下本应拦截",obWarned:"提醒模式下已提醒",obGoWizard:"进入开通向导",obAdvance:"进阶到拦截",obAllGreen:"全部通过，可以进阶",obComplete:"开通已完成"},
+    saved:"✓ 已保存",deleted:"✓ 已删除",empty:"暂无数据",chainValid:"哈希链完整",chainInvalid:"哈希链校验失败",approve:"通过",reject:"驳回",download:"下载",publish:"发布/回滚",test:"测试",rescan:"重扫",save:"保存",wizardTitle:"开通向导",wizDesc:"五步完成首次开通：建管理员 → 选行业模板 → 接模型渠道 → 选上线阶段 → 自检完成。默认保守、默认观察模式，第一天先跑起来、再慢慢收紧。",wizStep1:"创建管理员",wizStep2:"选择行业模板",wizStep3:"接入模型渠道",wizStep4:"选择上线阶段",wizStep5:"自检与完成",wizNext:"下一步",wizBack:"上一步",wizSkip:"稍后添加",wizAdminDone:"首个管理员已创建",wizAdminHint:"首个管理员已由设置码创建。如需新增管理员，请在「用户与角色」页添加。",wizTemplateHint:"模板是一整套互相咬合的预置：预置词表、渠道信任与分级策略、上线阶段与报表节奏。应用后可在各功能页继续微调。",wizApplyTemplate:"应用此模板",wizTemplateApplied:"已应用",wizVendor:"模型厂商",wizApiKey:"API Key",wizAdvanced:"高级（已按厂商预填，可改）",wizAddChannel:"添加渠道",wizPhaseHint:"观察：只审计、不拦截；提醒：自带级发机密数据时仅提醒、不拦截（违禁词与语义复核仍拦截）；拦截：全部规则按配置拦截。随时可在仪表盘切换。",wizPhaseObserve:"观察",wizPhaseWarn:"提醒",wizPhaseBlock:"拦截",wizPhaseObserveD:"只审计、不拦截——配错了也没有代价",wizPhaseWarnD:"自带级机密调用仅提醒、不拦截；违禁词仍拦截",wizPhaseBlockD:"全部规则按配置拦截",wizSavePhase:"保存上线阶段",wizComplete:"完成开通",wizDone:"开通完成",wizMasterKey:"我已备份主密钥（丢失将导致全部加密密钥无法恢复）",wizEmployeeHint:"员工接入：员工在终端运行 ag-setup 获得设备码，管理员在「设备接入」页批准即可。",setupTitle:"首次设置",setupSub:"创建第一个管理员",setupCode:"设置码",setupCodeHint:"服务器首次启动时打印在日志里的 12 位设置码（XXXX-XXXX-XXXX）。",setupBtn:"创建管理员并继续",setupUser:"管理员用户名",setupPass:"密码（至少 8 位）",setupPass2:"确认密码",obTitle:"开通进度",obPhase:"上线阶段",obWouldBlock:"观察模式下本应拦截",obWarned:"提醒模式下已提醒",obGoWizard:"进入开通向导",trustSigned:"signed_cloud（签约云）",trustDedicated:"dedicated_cloud（专有云 / VPC）",trustLocal:"local_model（本地小模型）",filterAll:"全部",filterDriftOnly:"仅漂移",filterNormalOnly:"仅正常",excConf:"confidential（机密）",excSecret:"secret（绝密，需另行开启）",orgDingtalk:"dingtalk（钉钉）",orgFeishu:"feishu（飞书）",orgWecom:"wecom（企业微信）",optDisable:"停用",semAlert:"告警放行",semBlock:"拦截",semCatJailbreak:"jailbreak 越狱",semCatInducement:"inducement 诱导",semCatDisguise:"disguise 伪装",semCatSplit:"split_exfil 拆分外发",arSimple:"simple 简单",arComplex:"complex 复杂",optToken:"Token（可选）",optCredential:"Credential（可选）",optSigningSecret:"Signing secret（可选）",optSha:"SHA-256（期望校验和，可空）",pkgGuardBundle:"ag-guard 组件包",pkgSetupBundle:"ag-setup 组件包",phDept:"研发部",phExcReason:"为什么这次调用需要放行",phExcScope:"模型 / 任务，如 mock-pro 汇总 XH-200 进度",phOrgName:"e.g. 星河钉钉",phSemSample:"越狱 / 诱导 / 伪装 / 拆分外发的典型表述",phArSample:"简单问答或复杂任务的典型表述",phFolderName:"e.g. 公司制度",phFolderDept:"e.g. 人力部",phScopeDepts:"* or 研发部,注册部",phChangeNote:"初版",phDeviceName:"设备名称，如 MacBook-lixiaofeng",phDesc:"描述…",roleAdmin:"平台管理员",roleSecurity:"安全管理员",roleAuditor:"审计员",roleOperator:"运维员",roleEmployee:"员工"},
   en: {loginTitle:"Sign in",loginSub:"Enterprise agent governance gateway · Admin console",loginBtn:"Sign in",logout:"Sign out",ssoBtn:"Sign in with enterprise SSO",username:"Username",password:"Password",
     loginHint:"Demo: admin / agentgate-admin, auditor: auditor / demo12345, operator: ops / demo12345, employee: lixiaofeng / demo12345",
     navMenu:"☰ Menu",navOps:"Operations",navAccess:"Access & identity",navModel:"Model gateway",navCap:"Capabilities",navSys:"System",navAdvanced:"Advanced",
@@ -878,11 +878,11 @@ const I18N = {
     foldersHint:"Supports .md / .txt / .docx / .pdf; rescans only re-index changed files. Citations are precise to file + section + pages. Summaries are extractive (the section's opening sentence), never produced by a model, so they open no leak channel.",
     department:"Department",semTitle:"Semantic index (FRAS)",semDesc:"One FRAS entry (function / relations / applicability / hard constraints) plus tag coordinates (department / type / importance) per section, as the catalog layer agents use to judge relevance; every entry cites its source (file + section + pages). Extractive by default; secret documents register titles only.",semRegen:"Generate semantic index",semDocs:"docs",semSections:"sections",semStale:"stale",
     skillsTitle:"Skills",skillsDesc:"Submit, review and publish SKILL.md packages; published skills are available to agents within their department scope.",submitSkill:"Submit a skill",skillList:"Skills",version:"Version",status:"Status",scope:"Scope",updated:"Updated",submitBtn:"Submit for review",
-    promptsTitle:"Prompt templates",promptsDesc:"Templates follow submit → review → publish: new versions only append; a version serves agents only after publishing, and rolling back means re-publishing an older version.",addPrompt:"New template",promptList:"Templates",desc2:"Description",minTier:"Min tier",versions:"Versions",
+    promptsTitle:"Prompt templates",promptsDesc:"Templates follow submit → review → publish: new versions only append; a version serves agents only after publishing, and rolling back means re-publishing an older version.",addPrompt:"Add template",promptList:"Templates",desc2:"Description",minTier:"Min tier",versions:"Versions",
     ptContentL:"Template body ({{name}} placeholders)",ptArgsL:"Arguments (JSON array)",promptsHint:"Agents read the published version via /mcp prompts/get; arguments pass DLP first, and the rendered text passes DLP + BYOA redaction.",
-    knowpackTitle:"Knowledge packages",knowpackDesc:"Curate several files around one work problem into a package: source list (recipe) + synthesis; after review and publication agents read it via MCP, every conclusion backed by a citation.",addKnowpack:"New knowledge package",knowpackList:"Knowledge packages",
+    knowpackTitle:"Knowledge packages",knowpackDesc:"Curate several files around one work problem into a package: source list (recipe) + synthesis; after review and publication agents read it via MCP, every conclusion backed by a citation.",addKnowpack:"Add knowledge package",knowpackList:"Knowledge packages",
     kpSourcesL:"Sources (JSON array: doc_id + optional node_id)",kpRefsL:"Reference other packages (IDs, comma-separated)",kpContentL:"Synthesis (purpose / evidence usage / boundaries + conclusions)",kpCitesL:"Citations (JSON array: doc_id + node_id)",kpChangeNoteL:"Change note",
-    kpStale:"recipe stale",kpNewVersion:"+ version",kpSources:"Sources",kpRefs:"References",
+    kpStale:"recipe stale",kpNewVersion:"+ version",
     knowpackHint:"A package's level is the highest of its sources and referenced packages; references are downward-only (a low-level package cannot embed high-level content); citations are filled in from the index tree (file + section + pages), never hand-written; every create / version / review / publish / delete is audited (change receipt).",
     fedTitle:"Federated MCP upstreams",fedDesc:"Federate external MCP servers through the gateway: tools appear as namespace.tool and calls pass the same authorization, DLP and audit.",addUpstream:"Add upstream",upstreamList:"Upstreams",namespace:"Namespace",
     fedHint:"Credentials are encrypted at rest and never echoed; calls are authorized by the upstream's max data level and minimum tier, with DLP applied.",
@@ -890,10 +890,10 @@ const I18N = {
     restHint:"Tools appear in /mcp tools/list as rest.<name>. {{param}} placeholders in the path are substituted and escaped; remaining arguments go to the query string (GET/DELETE) or a JSON body (POST/PUT/PATCH). Calls are schema-validated, tier-authorized and DLP-checked; credentials are encrypted at rest and never echoed.",
     alertsTitle:"Alert webhooks",alertsDesc:"Blocks, level violations, channel cooldowns and account lockouts are pushed to WeCom / DingTalk / Feishu or a generic webhook.",addWebhook:"Add webhook",webhookList:"Webhooks",kind:"Type",lastStatus:"Last delivery",
     alertsHint:"Alerts carry only event categories and decisions, never request content. Failed deliveries retry up to 3 times.",
-    packagesTitle:"Package distribution",packagesDesc:"Hosted distribution of managed-agent install packages: admins upload or import offline, employees download them; a distributed package's hash can be registered as the attestation baseline.",uploadPackage:"Upload / import a package offline",packageList:"Hosted packages",pkgKind:"Package kind",pkgManagement:"Management package (server)",pkgUser:"User package (employee)",pkgFile:"File",pkgSize:"Size",pkgSha:"SHA-256",pkgStatus:"Checksum status",verified:"verified",unverified:"unverified",pkgSource:"Source",pkgOfflineImport:"offline import",pkgGenerated:"generated",pkgAgentType:"Agent type",registerBaseline:"Register as attestation baseline",baselineRegistered:"baseline registered",genUserBundle:"Generate user package (ag-guard + ag-setup)",gatewayUrl:"Gateway URL",egressAllowlist:"Egress allowlist (comma-separated hostnames)",expiresAt:"Expires at (optional, RFC3339)",cleanupExpired:"Clean up expired packages",uploadBtn:"Upload",genBundleBtn:"Generate user package",packagesHint:"The management package is for IT (the agentgate server: Docker image / offline bundle / systemd, via the existing offline deployment channel); the user package is for employees (ag-guard + ag-setup, generated per policy with the gateway URL, data level and egress allowlist baked in — install once, zero-config, resident). Only a verified package can be registered as the F14 attestation baseline. Expired packages can be cleaned up in one click; an interrupted upload can be resumed (see docs).",
+    packagesTitle:"Package distribution",packagesDesc:"Hosted distribution of managed-agent install packages: admins upload or import offline, employees download them; a distributed package's hash can be registered as the attestation baseline.",uploadPackage:"Upload / import a package offline",packageList:"Hosted packages",pkgKind:"Package kind",pkgFile:"File",pkgSize:"Size",pkgSha:"SHA-256",pkgStatus:"Checksum status",verified:"verified",unverified:"unverified",pkgSource:"Source",pkgAgentType:"Agent type",registerBaseline:"Register as attestation baseline",baselineRegistered:"baseline registered",genUserBundle:"Generate user package (ag-guard + ag-setup)",gatewayUrl:"Gateway URL",egressAllowlist:"Egress allowlist (comma-separated hostnames)",expiresAt:"Expires at (optional, RFC3339)",cleanupExpired:"Clean up expired packages",uploadBtn:"Upload",genBundleBtn:"Generate user package",packagesHint:"The management package is for IT (the agentgate server: Docker image / offline bundle / systemd, via the existing offline deployment channel); the user package is for employees (ag-guard + ag-setup, generated per policy with the gateway URL, data level and egress allowlist baked in — install once, zero-config, resident). Only a verified package can be registered as the F14 attestation baseline. Expired packages can be cleaned up in one click; an interrupted upload can be resumed (see docs).",
     orgsyncTitle:"Organisation sync",orgsyncDesc:"Sync departments and employees from DingTalk / Feishu / WeCom, and bind the third-party identity to the platform account at login; sync only creates / updates accounts and department mappings, never grants a managed tier.",addOrgProvider:"Add sync source",orgProviderList:"Sync sources",orgProvider:"Platform",orgCorpId:"Corp ID",orgAppKey:"App key",orgAppSecret:"App secret",orgBaseUrl:"API base URL",orgAutoCreate:"Auto-create accounts",orgDisableMissing:"Disable departed accounts",orgEnabled:"Enabled",orgSecretMasked:"Secret (masked)",orgLastSync:"Last sync",orgSyncBtn:"Sync",orgBindTitle:"Bind a third-party identity",orgBindBtn:"Bind",orgBindHint:"Only members present in a synced directory snapshot can be bound; one identity cannot bind to two accounts; unbinding only removes the link, never the account.",orgMyBindings:"My third-party identities",orgNoBindings:"No third-party identity bound yet",orgExternalId:"Third-party user ID",orgsyncHint:"Sync only creates / updates accounts and department mappings and never grants a managed tier (permissions stay with platform policy). A locally disabled account is never restored by sync; absence from a fetched directory is not departure — only when the provider explicitly says the person is gone does \"disable departed\" disable the account. App secrets are encrypted at rest and never echoed; sync and binding are fully audited.",
     usersTitle:"Users & roles",usersDesc:"Tiered administrators with separation of duties: platform admin, security admin, auditor and operator each own a slice and check each other; role assignment itself is platform-admin-only and fully audited.",roleMatrix:"Role matrix",usersList:"Users",roleCol:"Role",roleSource:"Role source",authSource:"Account source",userDisabled:"disabled",userEnabled:"enabled",userDisable:"Disable",userEnable:"Enable",userOp:"Actions",usersHintCol:"Permissions",usersHint:"Only the platform admin may change roles (not even the security admin — no self-promotion); you cannot change your own role, disable yourself, or touch the last enabled platform admin. Disabling an account revokes all its sessions at once. Accounts with role source oidc are managed by the IdP group mapping; once an admin changes the role in the console it becomes locally managed and the IdP no longer overwrites it.",
-    saved:"✓ Saved",deleted:"✓ Deleted",empty:"No data yet",chainValid:"Hash chain intact",chainInvalid:"Hash chain verification FAILED",approve:"Approve",reject:"Reject",download:"Download",publish:"Publish / roll back",test:"Test",rescan:"Rescan",save:"Save",wizardTitle:"Onboarding wizard",wizDesc:"Finish first-run setup in five steps: create an admin → pick an industry template → connect a model channel → choose the launch phase → self-check. Conservative by default, observe by default — get running on day one, tighten later.",wizStep1:"Create an admin",wizStep2:"Pick an industry template",wizStep3:"Connect a model channel",wizStep4:"Choose the launch phase",wizStep5:"Self-check & finish",wizNext:"Next",wizBack:"Back",wizSkip:"Add later",wizAdminDone:"First admin created",wizAdminHint:"The first admin was created with the setup code. To add more admins, use the Users & roles page.",wizTemplateHint:"A template is a complete preset that fits together: preset word list, channel trust and classification policy, launch phase and report cadence. Keep fine-tuning on the feature pages afterwards.",wizApplyTemplate:"Apply this template",wizTemplateApplied:"Applied",wizVendor:"Model vendor",wizApiKey:"API key",wizAdvanced:"Advanced (prefilled per vendor, editable)",wizAddChannel:"Add channel",wizPhaseHint:"Observe: audit only, nothing blocks. Warn: BYOA confidential calls are warned, not blocked (banned words and semantic review still block). Block: every rule enforces as configured. Switch any time from the dashboard.",wizPhaseObserve:"Observe",wizPhaseWarn:"Warn",wizPhaseBlock:"Block",wizPhaseObserveD:"Audit only — a misconfiguration costs nothing",wizPhaseWarnD:"BYOA confidential calls are warned, not blocked; banned words still block",wizPhaseBlockD:"Every rule enforces as configured",wizSavePhase:"Save launch phase",wizChecklist:"Onboarding self-check",wizComplete:"Finish onboarding",wizDone:"Onboarding complete",wizMasterKey:"I have backed up the master key (losing it loses every encrypted key)",wizEmployeeHint:"Employee onboarding: an employee runs ag-setup to get a device code; an admin approves it on the Device access page.",setupTitle:"First-time setup",setupSub:"Create the first administrator",setupCode:"Setup code",setupCodeHint:"The 12-character code printed in the server log on first boot (XXXX-XXXX-XXXX).",setupBtn:"Create admin and continue",setupUser:"Admin username",setupPass:"Password (at least 8 characters)",setupPass2:"Confirm password",obTitle:"Onboarding progress",obPhase:"Launch phase",obWouldBlock:"Would have blocked in observe mode",obWarned:"Warned in warn mode",obGoWizard:"Open the onboarding wizard",obAdvance:"Advance to block",obAllGreen:"All green — ready to advance",obComplete:"Onboarding complete"}
+    saved:"✓ Saved",deleted:"✓ Deleted",empty:"No data yet",chainValid:"Hash chain intact",chainInvalid:"Hash chain verification FAILED",approve:"Approve",reject:"Reject",download:"Download",publish:"Publish / roll back",test:"Test",rescan:"Rescan",save:"Save",wizardTitle:"Onboarding wizard",wizDesc:"Finish first-run setup in five steps: create an admin → pick an industry template → connect a model channel → choose the launch phase → self-check. Conservative by default, observe by default — get running on day one, tighten later.",wizStep1:"Create an admin",wizStep2:"Pick an industry template",wizStep3:"Connect a model channel",wizStep4:"Choose the launch phase",wizStep5:"Self-check & finish",wizNext:"Next",wizBack:"Back",wizSkip:"Add later",wizAdminDone:"First admin created",wizAdminHint:"The first admin was created with the setup code. To add more admins, use the Users & roles page.",wizTemplateHint:"A template is a complete preset that fits together: preset word list, channel trust and classification policy, launch phase and report cadence. Keep fine-tuning on the feature pages afterwards.",wizApplyTemplate:"Apply this template",wizTemplateApplied:"Applied",wizVendor:"Model vendor",wizApiKey:"API key",wizAdvanced:"Advanced (prefilled per vendor, editable)",wizAddChannel:"Add channel",wizPhaseHint:"Observe: audit only, nothing blocks. Warn: BYOA confidential calls are warned, not blocked (banned words and semantic review still block). Block: every rule enforces as configured. Switch any time from the dashboard.",wizPhaseObserve:"Observe",wizPhaseWarn:"Warn",wizPhaseBlock:"Block",wizPhaseObserveD:"Audit only — a misconfiguration costs nothing",wizPhaseWarnD:"BYOA confidential calls are warned, not blocked; banned words still block",wizPhaseBlockD:"Every rule enforces as configured",wizSavePhase:"Save launch phase",wizComplete:"Finish onboarding",wizDone:"Onboarding complete",wizMasterKey:"I have backed up the master key (losing it loses every encrypted key)",wizEmployeeHint:"Employee onboarding: an employee runs ag-setup to get a device code; an admin approves it on the Device access page.",setupTitle:"First-time setup",setupSub:"Create the first administrator",setupCode:"Setup code",setupCodeHint:"The 12-character code printed in the server log on first boot (XXXX-XXXX-XXXX).",setupBtn:"Create admin and continue",setupUser:"Admin username",setupPass:"Password (at least 8 characters)",setupPass2:"Confirm password",obTitle:"Onboarding progress",obPhase:"Launch phase",obWouldBlock:"Would have blocked in observe mode",obWarned:"Warned in warn mode",obGoWizard:"Open the onboarding wizard",trustSigned:"signed_cloud (Signed cloud)",trustDedicated:"dedicated_cloud (Dedicated cloud / VPC)",trustLocal:"local_model (Local model)",filterAll:"All",filterDriftOnly:"Drifted only",filterNormalOnly:"Normal only",excConf:"confidential (Confidential)",excSecret:"secret (Top secret — opt-in required)",orgDingtalk:"dingtalk (DingTalk)",orgFeishu:"feishu (Feishu)",orgWecom:"wecom (WeCom)",optDisable:"Disabled",semAlert:"Alert and allow",semBlock:"Block",semCatJailbreak:"jailbreak (Jailbreak)",semCatInducement:"inducement (Inducement)",semCatDisguise:"disguise (Disguise)",semCatSplit:"split_exfil (Split exfiltration)",arSimple:"simple (Simple)",arComplex:"complex (Complex)",optToken:"Token (optional)",optCredential:"Credential (optional)",optSigningSecret:"Signing secret (optional)",optSha:"SHA-256 (expected checksum, optional)",pkgGuardBundle:"ag-guard component package",pkgSetupBundle:"ag-setup component package",phDept:"e.g. R&D",phExcReason:"Why this call needs an exception",phExcScope:"Model / task, e.g. mock-pro summarizing XH-200 progress",phOrgName:"e.g. Xinghe DingTalk",phSemSample:"Typical jailbreak / inducement / disguise / split-exfiltration wording",phArSample:"Typical simple question or complex task",phFolderName:"e.g. Company policies",phFolderDept:"e.g. HR",phScopeDepts:"* or R&D, Registry",phChangeNote:"First version",phDeviceName:"device name",phDesc:"description",roleAdmin:"Platform admin",roleSecurity:"Security admin",roleAuditor:"Auditor",roleOperator:"Operator",roleEmployee:"Employee"}
 };
 let lang = localStorage.getItem("ag_lang") || "zh";
 let session = localStorage.getItem("ag_session") || "";
@@ -1106,7 +1106,9 @@ function wizGo(n){
   if(n === 5) renderWizChecklist();
 }
 function checklistRows(d){
-  return (d.items||[]).map(it=>`<div>${it.ok ? "✓" : "○"} ${esc(it.label)}${it.detail ? ` <span class="muted">(${esc(it.detail)})</span>` : ""}</div>`).join("");
+  const lbl = it => lang==="zh" ? it.label : (it.label_en || it.label);
+  const det = it => lang==="zh" ? it.detail : (it.detail_en || it.detail);
+  return (d.items||[]).map(it=>`<div>${it.ok ? "✓" : "○"} ${esc(lbl(it))}${det(it) ? ` <span class="muted">(${esc(det(it))})</span>` : ""}</div>`).join("");
 }
 async function loadWizard(){
   loadPresets();
@@ -1308,8 +1310,8 @@ async function archiveAudit(){
 
 /* ---------- compliance reports ---------- */
 function repTable(title, head, rows){
-  if(!rows.length) return "";
-  return `<h4 style="margin:14px 0 6px">${esc(title)}</h4><div class="tableWrap"><table><thead><tr>${head.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  const body = rows.length ? rows : `<tr><td colspan="${head.length}" class="empty">${T("empty")}</td></tr>`;
+  return `<h4 style="margin:14px 0 6px">${esc(title)}</h4><div class="tableWrap"><table><thead><tr>${head.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 async function loadReports(){
   try{
@@ -1411,7 +1413,7 @@ async function loadUsers(){
       const st = u.disabled ? `<span class="pill bad">${T("userDisabled")}</span>` : `<span class="pill ok">${T("userEnabled")}</span>`;
       let op = "—";
       if(isAdmin){
-        op = `<select id="role-${u.id}" style="width:110px">${["admin","security","auditor","operator","employee"].map(r=>`<option value="${r}"${r===u.role?" selected":""}>${r}</option>`).join("")}</select> `+
+        op = `<select id="role-${u.id}" style="width:110px">${["admin","security","auditor","operator","employee"].map(r=>`<option value="${r}"${r===u.role?" selected":""}>${T("role"+r[0].toUpperCase()+r.slice(1))}</option>`).join("")}</select> `+
           `<button class="btn ghost small" onclick="saveUserRole('${u.id}')">${T("save")}</button> `+
           `<button class="btn ghost small" onclick="toggleUserDisabled('${u.id}',${!u.disabled})">${u.disabled?T("userEnable"):T("userDisable")}</button>`;
       }

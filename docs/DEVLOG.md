@@ -2,6 +2,18 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-25 · F36 第三切片：文案与信息架构深审（UX-005–UX-008）
+
+- 本轮按上一轮 DEVLOG「下一轮」计划执行 F36 第三切片（队列 F36 → F37；F36 保持 `doing`）。体内 12:26 特别指令与待办登记 1–13 均已在先前轮次执行完毕、作废。本地另有一条 docs 提交 9e56302（F36 第二切片推送结果记录）随本轮整包快照一并带上。
+- 审查方法（本轮新增）：静态核对（`measure-copy.py`：词典键中英对齐、全部 `data-i18n`/`T()` 引用无缺键、硬编码中文选项/标签/占位符枚举、空状态兜底核对）+ 运行时双语实测（`measure-i18n.js`：演示模式 + 无头浏览器逐页切 `ag_lang=en/zh`，取可见文本 + 全部 `placeholder` + 全部 `<option>` 文本并统计 CJK 字符数）。证据在 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/f36-audit/measure5/`（静态核对）与 `measure5-after2/i18n.json`（双语实测，前后对比）及 `verify-slice3.js`。
+- 修复 UX-005（中，EN 模式漏译）：修复前 EN 模式 24 页中有 17 页含中文（dashboard 116 字、semreview 235 字、autoroute 226 字等），根因四类——① 约 30 个 `<option>` 硬编码中文（向导/渠道信任类型、终端筛选、例外密级、组织同步平台、语义复核开关/处置/分类、智能路由开关/分层）；② 6 个 `<label>` 无 `data-i18n`；③ 11 个中文 `placeholder` 无 `data-i18n-ph`（反向另有 3 处英文占位符在中文模式下不翻译）；④ 后端 `GET /api/onboarding/checklist` 的 `label`/`detail` 是 Go 硬编码中文，前端原样渲染。修法：新增 43 个词典键（中英双语），全部选项/标签/占位符挂上 `data-i18n`/`data-i18n-ph`；渠道页信任类型中文写法统一为向导页的括号式；语义复核深层开关「关闭」统一为「停用」；后端 `checklistItem` 加 `label_en`/`detail_en`（`omitempty`，只加字段），前端 `checklistRows()` 按语言选用；用户页角色下拉改用 `T("role"+首字母大写)`。修复后 EN 模式 17 页 0 中文字符，剩余 480 字全部是数据（用户显示名/部门、词表内容、样本库正文、文件夹名与路径）。另记两个核对纠正：① 词典键解析须尊重字符串边界——初版脚本把 `loginHint` 文案里的冒号误算成键，报出不存在的 en 独有键 `auditor`/`employee`/`operator`，以按字符串边界扫描的复核为准（修复后 zh/en 各 433 键、0 缺失、0 重复）；② `T()` 查不到键时回落为键名本身——首版把角色键拼成 `role_Admin`（下划线），实测下拉显示原文，已改为 `roleAdmin` 并复测通过；③ 表格空状态初版启发式脚本误报 7 处，逐行核对后确认 24 张表均有 `class="empty"` 兜底（唯一例外即 UX-008）。
+- 修复 UX-006（低）：「新建知识包」「新建模板」与他处 9 个「添加…」混用，统一为「添加知识包」「添加模板」（中英双语）。
+- 修复 UX-007（低）：删除 10 个词典死键（`wizChecklist`、`obAdvance`/`obAllGreen`/`obComplete`、`kpSources`/`kpRefs`、`pkgManagement`/`pkgUser`/`pkgGenerated`/`pkgOfflineImport`）；`orgEnabled` 原先也是死键，本轮被复用为「启用」选项键，转为在用。
+- 修复 UX-008（低）：`repTable()` 空行时返回 `""`、整个预览小节消失，改为仍渲染标题与表头、正文为一行 `class="empty"` 的 `T("empty")`，与其他表同一写法；`verify-slice3.js` 直调确认空/非空行为均正确。
+- 已核对、无问题的项（记入 `docs/ux-audit.md`，不虚构为问题）：状态 pill 显示原始枚举码（中英一致、有意设计）；「通过」（知识包审核）与「批准」（设备码/例外审批）并存是有意的领域动词区分；EN 模式剩余中文均为数据。
+- 验证：`gofmt`/`go vet`/`go test ./...` 全绿（34 包，api 包新增 checklist 英文断言）；`make smoke` 314 项断言 0 失败（连跑确认 314 数）；双语实测前后对比（`measure5/i18n.json` → `measure5-after2/i18n.json`）+ `verify-slice3.js`（repTable 空行 + checklist 接口 8 条目 `label_en`/`detail_en` 齐全、0 控制台/页面错误）；`measure-overflow.js` 全量复测（`measure5-overflow/overflow.json`）：24 页 × 390px/1440px 共 48 项全过、0 错误（UX-001–UX-004 无回归）。本轮只改 `internal/webui/assets/index.html`（纯前端）、`internal/api/onboarding.go`（只加两个 `omitempty` 字段与英文文案，不改鉴权/审计/分级行为）与 `internal/api/onboarding_test.go`，不碰分级/脱敏/审计约束、不删测试。
+- 清单状态：UX-001–UX-008 全部已修复，高/中严重度清零；但 F36 仍保持 `doing`——「未覆盖」的交互流程点击验证尚未展开，下一切片先扩清单（交互流程）再修，全部高/中清零才标记 done。下一轮：F36 第四切片（交互流程点击验证）。
+
 ## 2026-11-25 · F36 第二切片：窄屏导航折叠（UX-003）+ 筛选行堆叠（UX-004）
 
 - 本轮按上一轮 DEVLOG「下一轮」计划执行 F36 第二切片（队列 F36 → F37；F36 保持 `doing`）。体内 12:26 特别指令与待办登记 1–13 均已在先前轮次执行完毕、作废。
@@ -10,6 +22,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 验证（演示模式 + 无头浏览器，证据在 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/f36-audit/measure-nav/`，脚本 `measure-nav.js`）：390px 默认态 `aside` 高 65px（修复前约 1400px）、导航 0 项可见、页面 `scrollW 390`；点菜单后导航展开（8 个默认页可见，`aria-expanded=true`）；点「渠道」后进渠道页且导航自动收起；设备/组织同步两行均为单列 312px、子控件全宽、无溢出；1440px 下按钮隐藏、导航 24 项常驻，设备行仍为 `504px 504px 58px`、组织同步行仍为 `331px 331px 331px 58px`。另跑 `measure-overflow.js` 全量复测（`measure4/overflow.json`）：24 页 × 390px/1440px 全部 `scrollW` 等于视口宽、0 控制台/页面/请求错误（UX-001/UX-002 无回归）。截图目视确认折叠态/展开态/设备页堆叠均正常。本轮只改 `internal/webui/assets/index.html`（纯前端、无后端行为变化、不碰分级/脱敏/审计约束、不删测试）。
 - 清单状态：UX-001–UX-004 全部已修复，高/中严重度清零；但 F36 仍保持 `doing`——「未覆盖」的逐页文案与信息架构深审、交互流程点击验证尚未展开，下一切片先扩清单再修，全部高/中清零才标记 done。下一轮：F36 第三切片（逐页文案与信息架构深审）。
 - 测试：`gofmt`/`go vet`/`go test ./...` 全绿（34 包）；`make smoke` 314 项断言 0 失败。
+- 推送结果：本地提交 8574e0c；复用远端分支 loop/f36（头为第一切片快照提交 28a8a711，已合入 main；推送前核对同步基点：4 个改动文件里 3 个远端 blob 与本地父提交 9ca0321 一致，DEVLOG.md 一处差异已核对——本地父提交多一段第一切片推送结果记录，正是随本轮带上的内容）；整包快照 4 文件一次推送（提交 2318f0e2），推送后 4 个文件远端 blob 与快照逐一核对一致；PR #40 文件清单与本轮一致（4/4；DEVLOG 行数 +10/-1 含随带的上一轮推送结果记录行）；未触发 contents API 回退；已合并进远端 main，远端 HEAD 499d507d（合并提交），读回 main 上 index.html 内容哈希与快照逐字节一致。待删分支仍为 loop/f36（共 28 个，需 Nathan 网页端手动删除；本轮复用同一分支，未新增）。下一轮：F36 第三切片（逐页文案与信息架构深审）。
 
 ## 2026-11-25 · F36 第一切片：审查清单 + 窄屏布局修复（UX-001、UX-002）
 
