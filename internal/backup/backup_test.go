@@ -202,3 +202,27 @@ func TestServiceRunPeriodic(t *testing.T) {
 		t.Fatal("periodic runner ran zero cycles")
 	}
 }
+
+func TestServiceRunOnceCreatesBucket(t *testing.T) {
+	// Registration 13: a backup cycle against a fresh endpoint
+	// (bucket never created) must create the bucket itself and
+	// succeed — the 2026-11-24 drill failed here before the fix.
+	srv := newFakeS3()
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	dir := testDataDir(t)
+	svc := NewService(dir,
+		func() (Config, error) { return testConfig(ts.URL), nil },
+		func() ([]byte, error) { return []byte(`{}`), nil },
+		nil, nil, nil)
+	rep, err := svc.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce on a fresh endpoint = %v", err)
+	}
+	if !rep.StateUploaded || len(rep.AuditUploaded) != 1 {
+		t.Fatalf("report = %+v, want state + 1 segment", rep)
+	}
+	if !srv.buckets["bkt"] {
+		t.Fatal("RunOnce did not create the bucket")
+	}
+}

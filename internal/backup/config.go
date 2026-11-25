@@ -15,7 +15,9 @@
 // The S3 client is hand-rolled on the standard library (SigV4
 // signing, path-style addressing): only PUT/GET/HEAD/LIST/DELETE are
 // needed, and a minio-go dependency would break the single-binary
-// zero-dependency positioning for a handful of calls. Signing is
+// zero-dependency positioning for a handful of calls. The client
+// also speaks bucket HEAD/PUT (EnsureBucket) so a fresh endpoint
+// needs no hand-created bucket. Signing is
 // verified against the AWS-documented SigV4 example vector in the
 // tests and against a real S3 server (rclone serve s3) in the drill.
 package backup

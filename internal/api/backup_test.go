@@ -21,9 +21,11 @@ import (
 
 // fakeS3Server is a minimal S3 stand-in for the backup API tests:
 // it accepts any PUT, answers LIST with an empty bucket, and answers
-// GET with 404. The backup client unit tests cover the protocol;
-// here only the API wiring (config storage, run trigger, masking)
-// is under test.
+// GET with 404. HEAD answers 200 for a path that was PUT before
+// and 404 otherwise — this models bucket existence for the
+// client's EnsureBucket (HEAD the bucket, PUT to create it). The
+// backup client unit tests cover the protocol; here only the API
+// wiring (config storage, run trigger, masking) is under test.
 func fakeS3Server(t *testing.T) *httptest.Server {
 	t.Helper()
 	var mu sync.Mutex
@@ -37,6 +39,12 @@ func fakeS3Server(t *testing.T) *httptest.Server {
 			return
 		}
 		switch r.Method {
+		case http.MethodHead:
+			if _, ok := stored[r.URL.Path]; ok {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
 		case http.MethodPut:
 			var buf bytes.Buffer
 			_, _ = buf.ReadFrom(r.Body)

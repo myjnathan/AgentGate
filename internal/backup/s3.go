@@ -68,6 +68,72 @@ func NewClient(cfg Config) *Client {
 	}
 }
 
+// HeadBucket reports whether the bucket exists: a 404 means it
+// does not. Other non-2xx statuses are errors (a 403 means the
+// credentials may not list this bucket, not that it is missing).
+func (c *Client) HeadBucket(ctx context.Context) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	req, err := c.newRequest(ctx, http.MethodHead, "", nil, nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if resp.StatusCode/100 != 2 {
+		return false, c.statusErr(resp)
+	}
+	return true, nil
+}
+
+// CreateBucket creates the bucket with a bare PUT (no
+// LocationConstraint body — the local-only servers this project
+// targets, rclone serve s3 / Garage / MinIO, all accept it). It
+// reports whether the bucket was created by this call: a 409 means
+// it already exists (another process created it in the meantime)
+// and is treated as success with created=false.
+func (c *Client) CreateBucket(ctx context.Context) (bool, error) {
+	req, err := c.newRequest(ctx, http.MethodPut, "", nil, nil)
+	if err != nil {
+		return false, err
+	}
+	_, err = c.do(req)
+	if err != nil {
+		var se *StatusError
+		if errors.As(err, &se) && se.Status == http.StatusConflict {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// EnsureBucket makes sure the bucket exists, creating it when it
+// does not. It reports whether this call created it. Uploads
+// (RunOnce) call this first: a fresh self-hosted endpoint has no
+// bucket yet, and without it every PUT fails with NoSuchBucket —
+// the failure the 2026-11-24 drill hit before the bucket was
+// created by hand. Read paths (restore/list/verify) deliberately do
+// not call it: a missing bucket there must stay a visible error,
+// not a silently created empty one.
+func (c *Client) EnsureBucket(ctx context.Context) (bool, error) {
+	exists, err := c.HeadBucket(ctx)
+	if err != nil {
+		return false, err
+	}
+	if exists {
+		return false, nil
+	}
+	return c.CreateBucket(ctx)
+}
+
 // PutObject uploads body as key.
 func (c *Client) PutObject(ctx context.Context, key string, body []byte, contentType string) error {
 	req, err := c.newRequest(ctx, http.MethodPut, key, nil, bytes.NewReader(body))
