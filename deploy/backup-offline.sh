@@ -6,7 +6,11 @@
 # as the data directory, or a dead volume takes the backup with it.
 #
 # Usage:
-#   AGENTGATE_DATA=/var/lib/agentgate deploy/backup-offline.sh [DEST_DIR]
+#   AGENTGATE_DATA=/var/lib/agentgate bash deploy/backup-offline.sh [DEST_DIR]
+#
+# (Run it with bash: the snapshot-push pipeline stores scripts without
+# the executable bit, like deploy/install.sh — direct execution needs
+# chmod +x first.)
 #
 # Output:
 #   DEST_DIR/agentgate-offline-YYYYMMDD-HHMMSS/

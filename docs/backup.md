@@ -34,7 +34,7 @@
 `deploy/backup-offline.sh` 把数据目录打包成一份带时间戳的离线备份：
 
 ```bash
-AGENTGATE_DATA=/var/lib/agentgate deploy/backup-offline.sh /mnt/backup-disk
+AGENTGATE_DATA=/var/lib/agentgate bash deploy/backup-offline.sh /mnt/backup-disk
 # 产出 /mnt/backup-disk/agentgate-offline-20261124-220000/
 #   state.json  audit.jsonl  audit-archive-*.jsonl.gz + .manifest.json
 #   SHA256SUMS（每份文件的 SHA-256 清单）  RESTORE.txt（恢复步骤速记）

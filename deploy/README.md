@@ -47,7 +47,7 @@ sudo systemctl enable --now agentgate
 备份两样东西：**数据目录**（或 docker 卷 `agentgate-data`）+ **`.env` 里的主密钥**，缺一不可。
 完整手册见 [docs/backup.md](../docs/backup.md)（F27 收尾 A+B1）：
 
-- **离线备份**：`deploy/backup-offline.sh`（state.json + audit.jsonl + 归档段，带 SHA-256 清单），
+- **离线备份**：`bash deploy/backup-offline.sh`（state.json + audit.jsonl + 归档段，带 SHA-256 清单），
   每天一次、放到另一台机器或网盘；**卷快照**（云盘/虚拟化层）每天一次。
 - **对象存储备份**：state 每小时快照 + 审计归档段自动上传到**本地/内网 S3 兼容桶**（Garage 或
   `rclone serve s3`，不接云端桶），保留 state 7 天、审计段 90 天；管理台可配（`POST /api/backup/config`），
