@@ -251,6 +251,16 @@ func TestOnboardingChecklist(t *testing.T) {
 			t.Fatalf("checklist missing item %q", want)
 		}
 	}
+	// Every item ships an English label/detail so the console can render
+	// the checklist in EN mode (F36: checklist labels used to be zh-only).
+	for id, m := range byID {
+		if m["label_en"] == nil || m["label_en"] == "" {
+			t.Fatalf("checklist item %q has no label_en", id)
+		}
+		if m["detail"] != nil && m["detail"] != "" && (m["detail_en"] == nil || m["detail_en"] == "") {
+			t.Fatalf("checklist item %q has detail but no detail_en", id)
+		}
+	}
 	// The demo seed has an admin, enabled healthy channels and audit
 	// events (the logins above); no tokens and no folder index here.
 	if byID["admin_created"]["ok"] != true {

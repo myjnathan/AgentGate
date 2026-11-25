@@ -333,10 +333,12 @@ func (a *API) setLaunchPhase(w http.ResponseWriter, r *http.Request, u *store.Us
 }
 
 type checklistItem struct {
-	ID     string `json:"id"`
-	Label  string `json:"label"`
-	OK     bool   `json:"ok"`
-	Detail string `json:"detail,omitempty"`
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	LabelEn  string `json:"label_en,omitempty"`
+	OK       bool   `json:"ok"`
+	Detail   string `json:"detail,omitempty"`
+	DetailEn string `json:"detail_en,omitempty"`
 }
 
 // GET /api/onboarding/checklist — the onboarding green-light list:
@@ -353,6 +355,7 @@ func (a *API) getChecklist(w http.ResponseWriter, r *http.Request, u *store.User
 	}
 	var adminOK, chanOK, chanHealthy, deviceOK, kbOK bool
 	var chanDetail, deviceDetail, kbDetail string
+	var chanDetailEn, deviceDetailEn, kbDetailEn string
 	a.st.Read(func(st *store.State) {
 		for _, usr := range st.Users {
 			if !usr.Disabled && (usr.Role == "admin" || usr.Role == "security") {
@@ -372,6 +375,7 @@ func (a *API) getChecklist(w http.ResponseWriter, r *http.Request, u *store.User
 		chanOK = nEnabled > 0
 		chanHealthy = nHealthy > 0
 		chanDetail = strconv.Itoa(nEnabled) + " 个已启用渠道，" + strconv.Itoa(nHealthy) + " 个健康"
+		chanDetailEn = strconv.Itoa(nEnabled) + " enabled channels, " + strconv.Itoa(nHealthy) + " healthy"
 		nTokens := 0
 		for _, tok := range st.Tokens {
 			if !tok.Revoked {
@@ -380,6 +384,7 @@ func (a *API) getChecklist(w http.ResponseWriter, r *http.Request, u *store.User
 		}
 		deviceOK = nTokens > 0
 		deviceDetail = strconv.Itoa(nTokens) + " 个有效令牌"
+		deviceDetailEn = strconv.Itoa(nTokens) + " active tokens"
 	})
 	if a.fk != nil {
 		nDocs := 0
@@ -390,6 +395,7 @@ func (a *API) getChecklist(w http.ResponseWriter, r *http.Request, u *store.User
 		}
 		kbOK = nDocs > 0
 		kbDetail = strconv.Itoa(nDocs) + " 篇已索引文档"
+		kbDetailEn = strconv.Itoa(nDocs) + " indexed docs"
 	}
 	events := a.audit.All()
 	auditOK := len(events) > 0 && a.audit.Verify()
@@ -404,15 +410,19 @@ func (a *API) getChecklist(w http.ResponseWriter, r *http.Request, u *store.User
 			warned++
 		}
 	}
+	phaseEn := map[string]string{"observe": "Observe", "warn": "Warn", "block": "Block"}[phase]
+	if phaseEn == "" {
+		phaseEn = phase
+	}
 	items := []checklistItem{
-		{ID: "admin_created", Label: "管理员已建", OK: adminOK},
-		{ID: "channel_configured", Label: "渠道已配置", OK: chanOK, Detail: chanDetail},
-		{ID: "channel_healthy", Label: "渠道健康（未冷却、未停用）", OK: chanHealthy, Detail: chanDetail},
-		{ID: "device_onboarded", Label: "至少一台设备已接入", OK: deviceOK, Detail: deviceDetail},
-		{ID: "kb_indexed", Label: "知识库已索引文件夹", OK: kbOK, Detail: kbDetail},
-		{ID: "audit_writing", Label: "审计在写且哈希链完整", OK: auditOK, Detail: strconv.Itoa(len(events)) + " 条事件"},
-		{ID: "master_key_backed_up", Label: "主密钥已备份确认", OK: ob.MasterKeyBackedUp, Detail: "人工确认：主密钥丢失将导致全部加密密钥无法恢复"},
-		{ID: "launch_phase", Label: "当前上线阶段", OK: true, Detail: phase},
+		{ID: "admin_created", Label: "管理员已建", LabelEn: "Admin created", OK: adminOK},
+		{ID: "channel_configured", Label: "渠道已配置", LabelEn: "Channels configured", OK: chanOK, Detail: chanDetail, DetailEn: chanDetailEn},
+		{ID: "channel_healthy", Label: "渠道健康（未冷却、未停用）", LabelEn: "Channels healthy (not cooling down, none disabled)", OK: chanHealthy, Detail: chanDetail, DetailEn: chanDetailEn},
+		{ID: "device_onboarded", Label: "至少一台设备已接入", LabelEn: "At least one device onboarded", OK: deviceOK, Detail: deviceDetail, DetailEn: deviceDetailEn},
+		{ID: "kb_indexed", Label: "知识库已索引文件夹", LabelEn: "Knowledge base has indexed folders", OK: kbOK, Detail: kbDetail, DetailEn: kbDetailEn},
+		{ID: "audit_writing", Label: "审计在写且哈希链完整", LabelEn: "Audit log writing, hash chain intact", OK: auditOK, Detail: strconv.Itoa(len(events)) + " 条事件", DetailEn: strconv.Itoa(len(events)) + " events"},
+		{ID: "master_key_backed_up", Label: "主密钥已备份确认", LabelEn: "Master key backup confirmed", OK: ob.MasterKeyBackedUp, Detail: "人工确认：主密钥丢失将导致全部加密密钥无法恢复", DetailEn: "Manual confirmation: losing the master key loses every encrypted key"},
+		{ID: "launch_phase", Label: "当前上线阶段", LabelEn: "Current launch phase", OK: true, Detail: phase, DetailEn: phaseEn},
 	}
 	allOK := true
 	for _, it := range items {
