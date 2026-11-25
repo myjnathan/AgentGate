@@ -111,7 +111,9 @@
   .quickCard:hover{border-color:var(--accent)}
   .quickCard .t{font-weight:650;color:var(--ink);margin-bottom:3px}
   .quickCard .d{color:var(--muted);font-size:12.5px}
-  #toast{position:fixed;right:22px;bottom:22px;background:var(--ink);color:#fff;padding:10px 16px;border-radius:9px;font-size:13.5px;box-shadow:0 8px 24px rgba(16,24,40,.25);display:none;z-index:50;max-width:min(480px,90vw)}
+  #toast{position:fixed;right:22px;bottom:22px;background:var(--ink);color:#fff;padding:10px 16px;border-radius:9px;font-size:13.5px;box-shadow:0 8px 24px rgba(16,24,40,.25);display:none;z-index:50;max-width:min(480px,90vw);cursor:pointer}
+  #confirmOverlay{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:60;display:none;align-items:center;justify-content:center}
+  #confirmCard{background:#fff;border-radius:12px;padding:20px;max-width:min(420px,90vw);box-shadow:0 12px 32px rgba(16,24,40,.3)}
   .chainOk{color:var(--ok);font-weight:600}.chainBad{color:var(--bad);font-weight:600}
   @media (max-width:960px){
     aside{position:static;width:auto;border-right:none;border-bottom:1px solid var(--border)}
@@ -782,7 +784,8 @@
     </section>
   </main>
 </div>
-<div id="toast"></div>
+<div id="toast" role="status" onclick="dismissToast()"></div>
+  <div id="confirmOverlay" onclick="if(event.target===this)closeConfirm(false)"><div id="confirmCard" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle"><h3 id="confirmTitle" style="margin:0 0 8px" data-i18n="confirmDeleteTitle">确认删除</h3><p id="confirmBody" class="muted" style="margin:0 0 16px"></p><div class="row" style="justify-content:flex-end"><button class="btn ghost" id="confirmCancelBtn" onclick="closeConfirm(false)" data-i18n="cancel">取消</button><button class="btn ghost danger" onclick="closeConfirm(true)" data-i18n="confirmDeleteOk">确认删除</button></div></div></div>
 
 <script>
 const I18N = {
@@ -839,7 +842,7 @@ const I18N = {
     packagesTitle:"安装包分发",packagesDesc:"受管 Agent 安装包的托管与分发：管理员上传或离线导入，员工自助下载；分发包的哈希可登记为 Agent 证明的基准值。",uploadPackage:"上传 / 离线导入安装包",packageList:"已托管安装包",pkgKind:"包类型",pkgFile:"文件",pkgSize:"大小",pkgSha:"SHA-256",pkgStatus:"校验状态",verified:"已校验",unverified:"未校验",pkgSource:"来源",pkgAgentType:"Agent 类型",registerBaseline:"登记为证明基准值",baselineRegistered:"已登记基准值",genUserBundle:"生成用户包（ag-guard + ag-setup）",gatewayUrl:"网关地址",egressAllowlist:"出口白名单（逗号分隔主机名）",expiresAt:"过期时间（可选，RFC3339）",cleanupExpired:"清理过期包",uploadBtn:"上传",genBundleBtn:"生成用户包",packagesHint:"管理包给 IT（agentgate 服务端，现有 Docker / 离线 bundle / systemd 形态，走现有离线部署通道）；用户包给员工（ag-guard + ag-setup，按策略生成：内置网关地址、密级与脱敏策略、出口白名单，员工装一次即常驻、零配置）。只有已校验的包才能登记为 F14 证明基准值——未校验的包即使哈希一致也不予登记。过期包可一键清理；导入中断的上传可断点续传（见接口文档）。",
     orgsyncTitle:"组织同步",orgsyncDesc:"从钉钉 / 飞书 / 企业微信同步部门与员工目录，登录时把第三方身份绑定到平台账号；同步只建 / 更新账号与部门映射，不授予受管级权限。",addOrgProvider:"添加同步来源",orgProviderList:"同步来源",orgProvider:"平台",orgCorpId:"企业 CorpId",orgAppKey:"AppKey",orgAppSecret:"应用密钥",orgBaseUrl:"API 地址",orgAutoCreate:"自动建号",orgDisableMissing:"离职禁用",orgEnabled:"启用",orgSecretMasked:"密钥（已打码）",orgLastSync:"最近同步",orgSyncBtn:"同步",orgBindTitle:"绑定第三方身份",orgBindBtn:"绑定",orgBindHint:"只能绑定已同步到的目录成员（同步快照里没有的 ID 会被拒绝）；同一身份不能绑到两个账号；解绑只解除关联、不删账号。",orgMyBindings:"我的第三方身份",orgNoBindings:"暂无绑定的第三方身份",orgExternalId:"第三方用户 ID",orgsyncHint:"同步只建 / 更新账号与部门映射，不自动授予受管级权限（权限仍走平台策略）；本地已禁用的账号同步不会自动恢复；目录里没看到的人不等于离职——只有平台明确说找不到时，开启「离职禁用」才会禁用账号。应用密钥只加密存储、不回显；同步与绑定全程审计。",
     usersTitle:"用户与角色",usersDesc:"分级管理员与职责分离：平台管理员、安全管理员、审计员、运维员各管一段，互相制约；角色分配本身只由平台管理员操作，全程审计。",roleMatrix:"角色分工",usersList:"用户列表",roleCol:"角色",roleSource:"角色来源",authSource:"账号来源",userDisabled:"已禁用",userEnabled:"启用中",userDisable:"禁用",userEnable:"启用",userOp:"操作",usersHintCol:"权限",usersHint:"只有平台管理员可以改角色（安全管理员也不行，避免自我提权）；不能改自己的角色、不能禁用自己、不能动最后一位启用的平台管理员。禁用账号会立即吊销其全部会话。角色来源为 oidc 的账号由 IdP 组映射管理，管理员在控制台改过角色后即转为本地管理、IdP 不再覆盖。",
-    saved:"✓ 已保存",deleted:"✓ 已删除",empty:"暂无数据",chainValid:"哈希链完整",chainInvalid:"哈希链校验失败",approve:"通过",reject:"驳回",download:"下载",publish:"发布/回滚",test:"测试",rescan:"重扫",save:"保存",wizardTitle:"开通向导",wizDesc:"五步完成首次开通：建管理员 → 选行业模板 → 接模型渠道 → 选上线阶段 → 自检完成。默认保守、默认观察模式，第一天先跑起来、再慢慢收紧。",wizStep1:"创建管理员",wizStep2:"选择行业模板",wizStep3:"接入模型渠道",wizStep4:"选择上线阶段",wizStep5:"自检与完成",wizNext:"下一步",wizBack:"上一步",wizSkip:"稍后添加",wizAdminDone:"首个管理员已创建",wizAdminHint:"首个管理员已由设置码创建。如需新增管理员，请在「用户与角色」页添加。",wizTemplateHint:"模板是一整套互相咬合的预置：预置词表、渠道信任与分级策略、上线阶段与报表节奏。应用后可在各功能页继续微调。",wizApplyTemplate:"应用此模板",wizTemplateApplied:"已应用",wizVendor:"模型厂商",wizApiKey:"API Key",wizAdvanced:"高级（已按厂商预填，可改）",wizAddChannel:"添加渠道",wizPhaseHint:"观察：只审计、不拦截；提醒：自带级发机密数据时仅提醒、不拦截（违禁词与语义复核仍拦截）；拦截：全部规则按配置拦截。随时可在仪表盘切换。",wizPhaseObserve:"观察",wizPhaseWarn:"提醒",wizPhaseBlock:"拦截",wizPhaseObserveD:"只审计、不拦截——配错了也没有代价",wizPhaseWarnD:"自带级机密调用仅提醒、不拦截；违禁词仍拦截",wizPhaseBlockD:"全部规则按配置拦截",wizSavePhase:"保存上线阶段",wizComplete:"完成开通",wizDone:"开通完成",wizMasterKey:"我已备份主密钥（丢失将导致全部加密密钥无法恢复）",wizEmployeeHint:"员工接入：员工在终端运行 ag-setup 获得设备码，管理员在「设备接入」页批准即可。",setupTitle:"首次设置",setupSub:"创建第一个管理员",setupCode:"设置码",setupCodeHint:"服务器首次启动时打印在日志里的 12 位设置码（XXXX-XXXX-XXXX）。",setupBtn:"创建管理员并继续",setupUser:"管理员用户名",setupPass:"密码（至少 8 位）",setupPass2:"确认密码",obTitle:"开通进度",obPhase:"上线阶段",obWouldBlock:"观察模式下本应拦截",obWarned:"提醒模式下已提醒",obGoWizard:"进入开通向导",trustSigned:"signed_cloud（签约云）",trustDedicated:"dedicated_cloud（专有云 / VPC）",trustLocal:"local_model（本地小模型）",filterAll:"全部",filterDriftOnly:"仅漂移",filterNormalOnly:"仅正常",excConf:"confidential（机密）",excSecret:"secret（绝密，需另行开启）",orgDingtalk:"dingtalk（钉钉）",orgFeishu:"feishu（飞书）",orgWecom:"wecom（企业微信）",optDisable:"停用",semAlert:"告警放行",semBlock:"拦截",semCatJailbreak:"jailbreak 越狱",semCatInducement:"inducement 诱导",semCatDisguise:"disguise 伪装",semCatSplit:"split_exfil 拆分外发",arSimple:"simple 简单",arComplex:"complex 复杂",optToken:"Token（可选）",optCredential:"Credential（可选）",optSigningSecret:"Signing secret（可选）",optSha:"SHA-256（期望校验和，可空）",pkgGuardBundle:"ag-guard 组件包",pkgSetupBundle:"ag-setup 组件包",phDept:"研发部",phExcReason:"为什么这次调用需要放行",phExcScope:"模型 / 任务，如 mock-pro 汇总 XH-200 进度",phOrgName:"e.g. 星河钉钉",phSemSample:"越狱 / 诱导 / 伪装 / 拆分外发的典型表述",phArSample:"简单问答或复杂任务的典型表述",phFolderName:"e.g. 公司制度",phFolderDept:"e.g. 人力部",phScopeDepts:"* or 研发部,注册部",phChangeNote:"初版",phDeviceName:"设备名称，如 MacBook-lixiaofeng",phDesc:"描述…",roleAdmin:"平台管理员",roleSecurity:"安全管理员",roleAuditor:"审计员",roleOperator:"运维员",roleEmployee:"员工"},
+    saved:"✓ 已保存",deleted:"✓ 已删除",empty:"暂无数据",chainValid:"哈希链完整",chainInvalid:"哈希链校验失败",approve:"通过",reject:"驳回",download:"下载",publish:"发布/回滚",test:"测试",rescan:"重扫",save:"保存",wizardTitle:"开通向导",wizDesc:"五步完成首次开通：建管理员 → 选行业模板 → 接模型渠道 → 选上线阶段 → 自检完成。默认保守、默认观察模式，第一天先跑起来、再慢慢收紧。",wizStep1:"创建管理员",wizStep2:"选择行业模板",wizStep3:"接入模型渠道",wizStep4:"选择上线阶段",wizStep5:"自检与完成",wizNext:"下一步",wizBack:"上一步",wizSkip:"稍后添加",wizAdminDone:"首个管理员已创建",wizAdminHint:"首个管理员已由设置码创建。如需新增管理员，请在「用户与角色」页添加。",wizTemplateHint:"模板是一整套互相咬合的预置：预置词表、渠道信任与分级策略、上线阶段与报表节奏。应用后可在各功能页继续微调。",wizApplyTemplate:"应用此模板",wizTemplateApplied:"已应用",wizVendor:"模型厂商",wizApiKey:"API Key",wizAdvanced:"高级（已按厂商预填，可改）",wizAddChannel:"添加渠道",wizPhaseHint:"观察：只审计、不拦截；提醒：自带级发机密数据时仅提醒、不拦截（违禁词与语义复核仍拦截）；拦截：全部规则按配置拦截。随时可在仪表盘切换。",wizPhaseObserve:"观察",wizPhaseWarn:"提醒",wizPhaseBlock:"拦截",wizPhaseObserveD:"只审计、不拦截——配错了也没有代价",wizPhaseWarnD:"自带级机密调用仅提醒、不拦截；违禁词仍拦截",wizPhaseBlockD:"全部规则按配置拦截",wizSavePhase:"保存上线阶段",wizComplete:"完成开通",wizDone:"开通完成",wizMasterKey:"我已备份主密钥（丢失将导致全部加密密钥无法恢复）",wizEmployeeHint:"员工接入：员工在终端运行 ag-setup 获得设备码，管理员在「设备接入」页批准即可。",setupTitle:"首次设置",setupSub:"创建第一个管理员",setupCode:"设置码",setupCodeHint:"服务器首次启动时打印在日志里的 12 位设置码（XXXX-XXXX-XXXX）。",setupBtn:"创建管理员并继续",setupUser:"管理员用户名",setupPass:"密码（至少 8 位）",setupPass2:"确认密码",obTitle:"开通进度",obPhase:"上线阶段",obWouldBlock:"观察模式下本应拦截",obWarned:"提醒模式下已提醒",obGoWizard:"进入开通向导",trustSigned:"signed_cloud（签约云）",trustDedicated:"dedicated_cloud（专有云 / VPC）",trustLocal:"local_model（本地小模型）",filterAll:"全部",filterDriftOnly:"仅漂移",filterNormalOnly:"仅正常",excConf:"confidential（机密）",excSecret:"secret（绝密，需另行开启）",orgDingtalk:"dingtalk（钉钉）",orgFeishu:"feishu（飞书）",orgWecom:"wecom（企业微信）",optDisable:"停用",semAlert:"告警放行",semBlock:"拦截",semCatJailbreak:"jailbreak 越狱",semCatInducement:"inducement 诱导",semCatDisguise:"disguise 伪装",semCatSplit:"split_exfil 拆分外发",arSimple:"simple 简单",arComplex:"complex 复杂",optToken:"Token（可选）",optCredential:"Credential（可选）",optSigningSecret:"Signing secret（可选）",optSha:"SHA-256（期望校验和，可空）",pkgGuardBundle:"ag-guard 组件包",pkgSetupBundle:"ag-setup 组件包",phDept:"研发部",phExcReason:"为什么这次调用需要放行",phExcScope:"模型 / 任务，如 mock-pro 汇总 XH-200 进度",phOrgName:"e.g. 星河钉钉",phSemSample:"越狱 / 诱导 / 伪装 / 拆分外发的典型表述",phArSample:"简单问答或复杂任务的典型表述",phFolderName:"e.g. 公司制度",phFolderDept:"e.g. 人力部",phScopeDepts:"* or 研发部,注册部",phChangeNote:"初版",phDeviceName:"设备名称，如 MacBook-lixiaofeng",phDesc:"描述…",roleAdmin:"平台管理员",roleSecurity:"安全管理员",roleAuditor:"审计员",roleOperator:"运维员",roleEmployee:"员工",confirmDeleteTitle:"确认删除",confirmDeleteBody:"删除后无法恢复，确定继续吗？",confirmDeleteOk:"确认删除",cancel:"取消",toastDismiss:"点击关闭",chNeedNameUrl:"请填写渠道名称与地址",chBadPricing:"pricing JSON 格式不正确",needWord:"请填写敏感词"},
   en: {loginTitle:"Sign in",loginSub:"Enterprise agent governance gateway · Admin console",loginBtn:"Sign in",logout:"Sign out",ssoBtn:"Sign in with enterprise SSO",username:"Username",password:"Password",
     loginHint:"Demo: admin / agentgate-admin, auditor: auditor / demo12345, operator: ops / demo12345, employee: lixiaofeng / demo12345",
     navMenu:"☰ Menu",navOps:"Operations",navAccess:"Access & identity",navModel:"Model gateway",navCap:"Capabilities",navSys:"System",navAdvanced:"Advanced",
@@ -893,7 +896,7 @@ const I18N = {
     packagesTitle:"Package distribution",packagesDesc:"Hosted distribution of managed-agent install packages: admins upload or import offline, employees download them; a distributed package's hash can be registered as the attestation baseline.",uploadPackage:"Upload / import a package offline",packageList:"Hosted packages",pkgKind:"Package kind",pkgFile:"File",pkgSize:"Size",pkgSha:"SHA-256",pkgStatus:"Checksum status",verified:"verified",unverified:"unverified",pkgSource:"Source",pkgAgentType:"Agent type",registerBaseline:"Register as attestation baseline",baselineRegistered:"baseline registered",genUserBundle:"Generate user package (ag-guard + ag-setup)",gatewayUrl:"Gateway URL",egressAllowlist:"Egress allowlist (comma-separated hostnames)",expiresAt:"Expires at (optional, RFC3339)",cleanupExpired:"Clean up expired packages",uploadBtn:"Upload",genBundleBtn:"Generate user package",packagesHint:"The management package is for IT (the agentgate server: Docker image / offline bundle / systemd, via the existing offline deployment channel); the user package is for employees (ag-guard + ag-setup, generated per policy with the gateway URL, data level and egress allowlist baked in — install once, zero-config, resident). Only a verified package can be registered as the F14 attestation baseline. Expired packages can be cleaned up in one click; an interrupted upload can be resumed (see docs).",
     orgsyncTitle:"Organisation sync",orgsyncDesc:"Sync departments and employees from DingTalk / Feishu / WeCom, and bind the third-party identity to the platform account at login; sync only creates / updates accounts and department mappings, never grants a managed tier.",addOrgProvider:"Add sync source",orgProviderList:"Sync sources",orgProvider:"Platform",orgCorpId:"Corp ID",orgAppKey:"App key",orgAppSecret:"App secret",orgBaseUrl:"API base URL",orgAutoCreate:"Auto-create accounts",orgDisableMissing:"Disable departed accounts",orgEnabled:"Enabled",orgSecretMasked:"Secret (masked)",orgLastSync:"Last sync",orgSyncBtn:"Sync",orgBindTitle:"Bind a third-party identity",orgBindBtn:"Bind",orgBindHint:"Only members present in a synced directory snapshot can be bound; one identity cannot bind to two accounts; unbinding only removes the link, never the account.",orgMyBindings:"My third-party identities",orgNoBindings:"No third-party identity bound yet",orgExternalId:"Third-party user ID",orgsyncHint:"Sync only creates / updates accounts and department mappings and never grants a managed tier (permissions stay with platform policy). A locally disabled account is never restored by sync; absence from a fetched directory is not departure — only when the provider explicitly says the person is gone does \"disable departed\" disable the account. App secrets are encrypted at rest and never echoed; sync and binding are fully audited.",
     usersTitle:"Users & roles",usersDesc:"Tiered administrators with separation of duties: platform admin, security admin, auditor and operator each own a slice and check each other; role assignment itself is platform-admin-only and fully audited.",roleMatrix:"Role matrix",usersList:"Users",roleCol:"Role",roleSource:"Role source",authSource:"Account source",userDisabled:"disabled",userEnabled:"enabled",userDisable:"Disable",userEnable:"Enable",userOp:"Actions",usersHintCol:"Permissions",usersHint:"Only the platform admin may change roles (not even the security admin — no self-promotion); you cannot change your own role, disable yourself, or touch the last enabled platform admin. Disabling an account revokes all its sessions at once. Accounts with role source oidc are managed by the IdP group mapping; once an admin changes the role in the console it becomes locally managed and the IdP no longer overwrites it.",
-    saved:"✓ Saved",deleted:"✓ Deleted",empty:"No data yet",chainValid:"Hash chain intact",chainInvalid:"Hash chain verification FAILED",approve:"Approve",reject:"Reject",download:"Download",publish:"Publish / roll back",test:"Test",rescan:"Rescan",save:"Save",wizardTitle:"Onboarding wizard",wizDesc:"Finish first-run setup in five steps: create an admin → pick an industry template → connect a model channel → choose the launch phase → self-check. Conservative by default, observe by default — get running on day one, tighten later.",wizStep1:"Create an admin",wizStep2:"Pick an industry template",wizStep3:"Connect a model channel",wizStep4:"Choose the launch phase",wizStep5:"Self-check & finish",wizNext:"Next",wizBack:"Back",wizSkip:"Add later",wizAdminDone:"First admin created",wizAdminHint:"The first admin was created with the setup code. To add more admins, use the Users & roles page.",wizTemplateHint:"A template is a complete preset that fits together: preset word list, channel trust and classification policy, launch phase and report cadence. Keep fine-tuning on the feature pages afterwards.",wizApplyTemplate:"Apply this template",wizTemplateApplied:"Applied",wizVendor:"Model vendor",wizApiKey:"API key",wizAdvanced:"Advanced (prefilled per vendor, editable)",wizAddChannel:"Add channel",wizPhaseHint:"Observe: audit only, nothing blocks. Warn: BYOA confidential calls are warned, not blocked (banned words and semantic review still block). Block: every rule enforces as configured. Switch any time from the dashboard.",wizPhaseObserve:"Observe",wizPhaseWarn:"Warn",wizPhaseBlock:"Block",wizPhaseObserveD:"Audit only — a misconfiguration costs nothing",wizPhaseWarnD:"BYOA confidential calls are warned, not blocked; banned words still block",wizPhaseBlockD:"Every rule enforces as configured",wizSavePhase:"Save launch phase",wizComplete:"Finish onboarding",wizDone:"Onboarding complete",wizMasterKey:"I have backed up the master key (losing it loses every encrypted key)",wizEmployeeHint:"Employee onboarding: an employee runs ag-setup to get a device code; an admin approves it on the Device access page.",setupTitle:"First-time setup",setupSub:"Create the first administrator",setupCode:"Setup code",setupCodeHint:"The 12-character code printed in the server log on first boot (XXXX-XXXX-XXXX).",setupBtn:"Create admin and continue",setupUser:"Admin username",setupPass:"Password (at least 8 characters)",setupPass2:"Confirm password",obTitle:"Onboarding progress",obPhase:"Launch phase",obWouldBlock:"Would have blocked in observe mode",obWarned:"Warned in warn mode",obGoWizard:"Open the onboarding wizard",trustSigned:"signed_cloud (Signed cloud)",trustDedicated:"dedicated_cloud (Dedicated cloud / VPC)",trustLocal:"local_model (Local model)",filterAll:"All",filterDriftOnly:"Drifted only",filterNormalOnly:"Normal only",excConf:"confidential (Confidential)",excSecret:"secret (Top secret — opt-in required)",orgDingtalk:"dingtalk (DingTalk)",orgFeishu:"feishu (Feishu)",orgWecom:"wecom (WeCom)",optDisable:"Disabled",semAlert:"Alert and allow",semBlock:"Block",semCatJailbreak:"jailbreak (Jailbreak)",semCatInducement:"inducement (Inducement)",semCatDisguise:"disguise (Disguise)",semCatSplit:"split_exfil (Split exfiltration)",arSimple:"simple (Simple)",arComplex:"complex (Complex)",optToken:"Token (optional)",optCredential:"Credential (optional)",optSigningSecret:"Signing secret (optional)",optSha:"SHA-256 (expected checksum, optional)",pkgGuardBundle:"ag-guard component package",pkgSetupBundle:"ag-setup component package",phDept:"e.g. R&D",phExcReason:"Why this call needs an exception",phExcScope:"Model / task, e.g. mock-pro summarizing XH-200 progress",phOrgName:"e.g. Xinghe DingTalk",phSemSample:"Typical jailbreak / inducement / disguise / split-exfiltration wording",phArSample:"Typical simple question or complex task",phFolderName:"e.g. Company policies",phFolderDept:"e.g. HR",phScopeDepts:"* or R&D, Registry",phChangeNote:"First version",phDeviceName:"device name",phDesc:"description",roleAdmin:"Platform admin",roleSecurity:"Security admin",roleAuditor:"Auditor",roleOperator:"Operator",roleEmployee:"Employee"}
+    saved:"✓ Saved",deleted:"✓ Deleted",empty:"No data yet",chainValid:"Hash chain intact",chainInvalid:"Hash chain verification FAILED",approve:"Approve",reject:"Reject",download:"Download",publish:"Publish / roll back",test:"Test",rescan:"Rescan",save:"Save",wizardTitle:"Onboarding wizard",wizDesc:"Finish first-run setup in five steps: create an admin → pick an industry template → connect a model channel → choose the launch phase → self-check. Conservative by default, observe by default — get running on day one, tighten later.",wizStep1:"Create an admin",wizStep2:"Pick an industry template",wizStep3:"Connect a model channel",wizStep4:"Choose the launch phase",wizStep5:"Self-check & finish",wizNext:"Next",wizBack:"Back",wizSkip:"Add later",wizAdminDone:"First admin created",wizAdminHint:"The first admin was created with the setup code. To add more admins, use the Users & roles page.",wizTemplateHint:"A template is a complete preset that fits together: preset word list, channel trust and classification policy, launch phase and report cadence. Keep fine-tuning on the feature pages afterwards.",wizApplyTemplate:"Apply this template",wizTemplateApplied:"Applied",wizVendor:"Model vendor",wizApiKey:"API key",wizAdvanced:"Advanced (prefilled per vendor, editable)",wizAddChannel:"Add channel",wizPhaseHint:"Observe: audit only, nothing blocks. Warn: BYOA confidential calls are warned, not blocked (banned words and semantic review still block). Block: every rule enforces as configured. Switch any time from the dashboard.",wizPhaseObserve:"Observe",wizPhaseWarn:"Warn",wizPhaseBlock:"Block",wizPhaseObserveD:"Audit only — a misconfiguration costs nothing",wizPhaseWarnD:"BYOA confidential calls are warned, not blocked; banned words still block",wizPhaseBlockD:"Every rule enforces as configured",wizSavePhase:"Save launch phase",wizComplete:"Finish onboarding",wizDone:"Onboarding complete",wizMasterKey:"I have backed up the master key (losing it loses every encrypted key)",wizEmployeeHint:"Employee onboarding: an employee runs ag-setup to get a device code; an admin approves it on the Device access page.",setupTitle:"First-time setup",setupSub:"Create the first administrator",setupCode:"Setup code",setupCodeHint:"The 12-character code printed in the server log on first boot (XXXX-XXXX-XXXX).",setupBtn:"Create admin and continue",setupUser:"Admin username",setupPass:"Password (at least 8 characters)",setupPass2:"Confirm password",obTitle:"Onboarding progress",obPhase:"Launch phase",obWouldBlock:"Would have blocked in observe mode",obWarned:"Warned in warn mode",obGoWizard:"Open the onboarding wizard",trustSigned:"signed_cloud (Signed cloud)",trustDedicated:"dedicated_cloud (Dedicated cloud / VPC)",trustLocal:"local_model (Local model)",filterAll:"All",filterDriftOnly:"Drifted only",filterNormalOnly:"Normal only",excConf:"confidential (Confidential)",excSecret:"secret (Top secret — opt-in required)",orgDingtalk:"dingtalk (DingTalk)",orgFeishu:"feishu (Feishu)",orgWecom:"wecom (WeCom)",optDisable:"Disabled",semAlert:"Alert and allow",semBlock:"Block",semCatJailbreak:"jailbreak (Jailbreak)",semCatInducement:"inducement (Inducement)",semCatDisguise:"disguise (Disguise)",semCatSplit:"split_exfil (Split exfiltration)",arSimple:"simple (Simple)",arComplex:"complex (Complex)",optToken:"Token (optional)",optCredential:"Credential (optional)",optSigningSecret:"Signing secret (optional)",optSha:"SHA-256 (expected checksum, optional)",pkgGuardBundle:"ag-guard component package",pkgSetupBundle:"ag-setup component package",phDept:"e.g. R&D",phExcReason:"Why this call needs an exception",phExcScope:"Model / task, e.g. mock-pro summarizing XH-200 progress",phOrgName:"e.g. Xinghe DingTalk",phSemSample:"Typical jailbreak / inducement / disguise / split-exfiltration wording",phArSample:"Typical simple question or complex task",phFolderName:"e.g. Company policies",phFolderDept:"e.g. HR",phScopeDepts:"* or R&D, Registry",phChangeNote:"First version",phDeviceName:"device name",phDesc:"description",roleAdmin:"Platform admin",roleSecurity:"Security admin",roleAuditor:"Auditor",roleOperator:"Operator",roleEmployee:"Employee",confirmDeleteTitle:"Confirm deletion",confirmDeleteBody:"This cannot be undone. Continue?",confirmDeleteOk:"Delete",cancel:"Cancel",toastDismiss:"Click to dismiss",chNeedNameUrl:"Channel name and base URL are required",chBadPricing:"pricing JSON is invalid",needWord:"Enter a word"}
 };
 let lang = localStorage.getItem("ag_lang") || "zh";
 let session = localStorage.getItem("ag_session") || "";
@@ -914,9 +917,31 @@ async function api(path, opts={}){
 }
 function toast(msg, ok=true){
   const t = document.getElementById("toast");
-  t.textContent = msg; t.style.display="block"; t.style.background = ok ? "#0f172a" : "#991b1b";
+  t.textContent = msg; t.title = T("toastDismiss"); t.style.display="block"; t.style.background = ok ? "#0f172a" : "#991b1b";
   clearTimeout(t._h); t._h = setTimeout(()=>{ t.style.display="none"; }, 3400);
 }
+/* UX-010: a toast is dismissible by clicking it (ruler 5: every press
+   can be taken back); the auto-hide timer is cleared so a dismissed
+   toast cannot pop back. */
+function dismissToast(){ const t = document.getElementById("toast"); clearTimeout(t._h); t.style.display="none"; }
+/* UX-009: one shared confirm-before-delete dialog for every destructive
+   action (ruler 7: losing things must be hard to do by accident).
+   Returns a promise; Esc / overlay click / Cancel resolve false.
+   Focus lands on Cancel so Enter never confirms a deletion. */
+let _confirmResolve = null;
+function confirmDelete(){
+  return new Promise((res)=>{
+    _confirmResolve = res;
+    document.getElementById("confirmBody").textContent = T("confirmDeleteBody");
+    document.getElementById("confirmOverlay").style.display = "flex";
+    document.getElementById("confirmCancelBtn").focus();
+  });
+}
+function closeConfirm(ok){
+  document.getElementById("confirmOverlay").style.display = "none";
+  if(_confirmResolve){ const r = _confirmResolve; _confirmResolve = null; r(ok); }
+}
+document.addEventListener("keydown", (e)=>{ if(e.key==="Escape" && document.getElementById("confirmOverlay").style.display==="flex") closeConfirm(false); });
 function setMsg(id, msg, ok=true){ const el=document.getElementById(id); if(el){ el.textContent=msg; el.className="msg "+(ok?"ok":"err"); } }
 function esc(s){ return String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function pill(v){ return v ? `<span class="pill ${esc(v)}">${esc(v)}</span>` : ""; }
@@ -1102,7 +1127,7 @@ function wizGo(n){
   document.querySelectorAll(".wizStep").forEach(el=>{ el.style.display = "none"; });
   document.getElementById("wizStep"+n).style.display = "block";
   document.getElementById("wizStepper").innerHTML = [1,2,3,4,5].map(i=>
-    `<span class="pill ${i===n?"":""}" style="${i===n?"background:var(--accent-soft);color:var(--accent);font-weight:600":""}">${i}. ${T("wizStep"+i)}</span>`).join(" ");
+    `<span class="pill ${i===n?"":""}" style="cursor:pointer;${i===n?"background:var(--accent-soft);color:var(--accent);font-weight:600":""}" onclick="wizGo(${i})">${i}. ${T("wizStep"+i)}</span>`).join(" ");
   if(n === 5) renderWizChecklist();
 }
 function checklistRows(d){
@@ -1236,6 +1261,7 @@ async function saveBudget(id){
   }catch(e){ toast(e.message, false); }
 }
 async function deleteBudget(id){
+  if(!(await confirmDelete())) return;
   try{ await api("/api/budgets/"+id,{method:"DELETE"});
     toast(T("deleted")); loadBudgets();
   }catch(e){ toast(e.message, false); }
@@ -1359,6 +1385,7 @@ async function exportReport(id){
   }catch(e){ toast(e.message, false); }
 }
 async function deleteReport(id){
+  if(!(await confirmDelete())) return;
   try{
     await api("/api/reports/"+id,{method:"DELETE"});
     toast(T("deleted"));
@@ -1450,6 +1477,7 @@ async function addAttestPolicy(){
   }catch(e){ setMsg("atMsg", e.message, false); }
 }
 async function deleteAttestPolicy(agent){
+  if(!(await confirmDelete())) return;
   try{ await api("/api/attestation/policies/"+encodeURIComponent(agent),{method:"DELETE"}); toast(T("deleted")); loadAttest();
   }catch(e){ toast(e.message, false); }
 }
@@ -1521,13 +1549,15 @@ async function keyToggle(id, idx, disabled){
   }catch(e){ toast(e.message, false); }
 }
 async function keyDelete(id, idx){
+  if(!(await confirmDelete())) return;
   try{ await api(`/api/channels/${id}/keys/${idx}`,{method:"DELETE"});
     toast(T("saved")); loadChannels();
   }catch(e){ toast(e.message, false); }
 }
 async function addChannel(){
+  if(!chName.value.trim() || !chUrl.value.trim()){ setMsg("chMsg", T("chNeedNameUrl"), false); return; }
   try{ const models = chModels.value.split(",").map(s=>s.trim()).filter(Boolean);
-    let pricing; if(chPricing.value.trim()){ try{ pricing = JSON.parse(chPricing.value); }catch(e){ setMsg("chMsg", "pricing JSON invalid", false); return; } }
+    let pricing; if(chPricing.value.trim()){ try{ pricing = JSON.parse(chPricing.value); }catch(e){ setMsg("chMsg", T("chBadPricing"), false); return; } }
     await api("/api/channels",{method:"POST",body:JSON.stringify({name:chName.value.trim(),base_url:chUrl.value.trim(),api_key:chKey.value,models,pricing,max_data_level:chLevel.value,trust_type:chTrust.value})});
     setMsg("chMsg", T("saved")); chName.value=""; chUrl.value=""; chKey.value=""; chModels.value=""; chPricing.value=""; loadChannels();
   }catch(e){ setMsg("chMsg", e.message, false); }
@@ -1548,13 +1578,14 @@ function renderDLPList(elId, entries, list){
 }
 async function addDLPWord(list){
   const input = document.getElementById(list==="banned" ? "dlpBannedNew" : "dlpCustomNew");
-  const word = input.value.trim(); if(!word) return;
+  const word = input.value.trim(); if(!word){ setMsg(list==="banned" ? "dlpBannedMsg" : "dlpCustomMsg", T("needWord"), false); return; }
   try{ await api("/api/dlp/words",{method:"POST",body:JSON.stringify({list, action:"add", word})});
     input.value=""; setMsg(list==="banned" ? "dlpBannedMsg" : "dlpCustomMsg", T("saved")); loadDLPWords();
   }catch(e){ setMsg(list==="banned" ? "dlpBannedMsg" : "dlpCustomMsg", e.message, false); }
 }
 async function removeDLPWord(list, enc){
-  try{ await api("/api/dlp/words",{method:"POST",body:JSON.stringify({list, action:"remove", word:decodeURIComponent(enc)})}); loadDLPWords(); }
+  if(!(await confirmDelete())) return;
+  try{ await api("/api/dlp/words",{method:"POST",body:JSON.stringify({list, action:"remove", word:decodeURIComponent(enc)})}); toast(T("deleted")); loadDLPWords(); }
   catch(e){ toast(e.message, false); }
 }
 
@@ -1598,6 +1629,7 @@ async function addSemSample(){
   }catch(e){ setMsg("srSampleMsg", e.message, false); }
 }
 async function delSemSample(id){
+  if(!(await confirmDelete())) return;
   try{ await api("/api/semantic-review/samples/"+id,{method:"DELETE"});
     toast(T("saved")); loadSemReview();
   }catch(e){ toast(e.message, false); }
@@ -1638,6 +1670,7 @@ async function addAutoSample(){
   }catch(e){ setMsg("arSampleMsg", e.message, false); }
 }
 async function delAutoSample(id){
+  if(!(await confirmDelete())) return;
   try{ await api("/api/auto-route/samples/"+id,{method:"DELETE"});
     toast(T("saved")); loadAutoRoute();
   }catch(e){ toast(e.message, false); }
@@ -1675,6 +1708,7 @@ async function rescanFolder(id){
   }catch(e){ toast(e.message, false); }
 }
 async function deleteFolder(id){
+  if(!(await confirmDelete())) return;
   try{ await api("/api/kb/folders/"+id,{method:"DELETE"}); toast(T("deleted")); loadFolders();
   }catch(e){ toast(e.message, false); }
 }
@@ -1727,6 +1761,7 @@ async function publishPrompt(id, currentVer){
   }catch(e){ toast(e.message, false); }
 }
 async function deletePrompt(id){
+  if(!(await confirmDelete())) return;
   try{ await api("/api/prompts/"+id,{method:"DELETE"}); toast(T("deleted")); loadPrompts();
   }catch(e){ toast(e.message, false); }
 }
@@ -1780,6 +1815,7 @@ async function publishKnowpack(id, currentVer){
   }catch(e){ toast(e.message, false); }
 }
 async function deleteKnowpack(id){
+  if(!(await confirmDelete())) return;
   try{ await api("/api/kb/packages/"+id,{method:"DELETE"}); toast(T("deleted")); loadKnowpacks();
   }catch(e){ toast(e.message, false); }
 }
@@ -1803,6 +1839,7 @@ async function testUpstream(id){
   }catch(e){ toast(e.message, false); }
 }
 async function deleteUpstream(id){
+  if(!(await confirmDelete())) return;
   try{ await api("/api/mcp/upstreams/"+id,{method:"DELETE"}); toast(T("deleted")); loadUpstreams();
   }catch(e){ toast(e.message, false); }
 }
@@ -1829,6 +1866,7 @@ async function testRESTTool(id){
   }catch(e){ toast(e.message, false); }
 }
 async function deleteRESTTool(id){
+  if(!(await confirmDelete())) return;
   try{ await api("/api/mcp/rest-tools/"+id,{method:"DELETE"}); toast(T("deleted")); loadRESTTools();
   }catch(e){ toast(e.message, false); }
 }
@@ -1853,6 +1891,7 @@ async function testWebhook(id){
   }catch(e){ toast(e.message, false); }
 }
 async function deleteWebhook(id){
+  if(!(await confirmDelete())) return;
   try{ await api("/api/alerts/webhooks/"+id,{method:"DELETE"}); toast(T("deleted")); loadAlerts();
   }catch(e){ toast(e.message, false); }
 }
@@ -1907,6 +1946,7 @@ async function registerBaseline(id){
   }catch(e){ toast(e.message, false); }
 }
 async function deletePackage(id){
+  if(!(await confirmDelete())) return;
   try{ await api("/api/packages/"+id,{method:"DELETE"}); toast(T("deleted")); loadPackages();
   }catch(e){ toast(e.message, false); }
 }
@@ -1964,6 +2004,7 @@ async function testOrgProvider(id){
   }catch(e){ setMsg("osSyncMsg", e.message, false); }
 }
 async function deleteOrgProvider(id){
+  if(!(await confirmDelete())) return;
   try{ await api("/api/orgsync/providers/"+id,{method:"DELETE"}); toast(T("deleted")); loadOrgProviders();
   }catch(e){ toast(e.message, false); }
 }
