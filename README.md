@@ -5,6 +5,8 @@
 **不绑定任何 Agent 的企业 AI 治理层。** 员工的 Agent 随便换，企业的能力、权限和账本不动。
 *An enterprise AI governance layer that doesn't bind to any agent. Employees keep their own agents; the company keeps its capabilities, permissions and audit trail.*
 
+![AgentGate 架构图](docs/architecture.svg)
+
 ## 适合谁 / 不适合谁
 
 适合没有自有模型、没有数据库、也没有知识库的传统公司——想让员工用 AI 干活，又怕公司数据跟着出去。部署只需一台服务器，不需要先整理知识库、不需要先有 GPU。
