@@ -1,127 +1,93 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1640 683" font-family="'PingFang SC','Microsoft YaHei',system-ui,sans-serif">
-<rect x="0" y="0" width="1640" height="683" fill="#f6f9fc"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1640 628" font-family="'PingFang SC','Microsoft YaHei',system-ui,sans-serif">
+<rect x="0" y="0" width="1640" height="628" fill="#f6f9fc"/>
 <text x="40" y="58" font-size="30" font-weight="700" fill="#0f172a"><tspan fill="#4f46e5">AgentGate</tspan> 架构图</text>
-<text x="40" y="86" font-size="15" fill="#64748b">不绑定任何 Agent 的企业 AI 治理层 —— 员工用自己顺手的 Agent，企业守住模型、能力、网络三道门</text>
-<rect x="378" y="112" width="884" height="441" rx="14" fill="#ffffff" stroke="#a5b4fc" stroke-width="1.5"/>
+<rect x="378" y="112" width="884" height="386" rx="14" fill="#ffffff" stroke="#a5b4fc" stroke-width="1.5"/>
 <text x="820.0" y="146" font-size="19" font-weight="700" fill="#0f172a" text-anchor="middle">AgentGate <tspan fill="#4f46e5">治理网关</tspan></text>
-<text x="820.0" y="170" font-size="13" fill="#64748b" text-anchor="middle">单二进制 · 零外部依赖 · 数据不出企业边界的治理内核</text>
-<rect x="398" y="186" width="844" height="71" rx="10" fill="#fbfcfe" stroke="#e2e8f0"/>
-<text x="410" y="211" font-size="15" font-weight="700" fill="#3730a3">身份与准入</text>
-<rect x="495.0" y="195" width="98.5" height="19" rx="9.5" fill="#4f46e5"/>
-<text x="504.0" y="209" font-size="11.5" fill="#ffffff">守不住的就不给</text>
-<rect x="410" y="222" width="91.5" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="422" y="240" font-size="13.5" fill="#334155">设备码登录</text>
-<rect x="508.5" y="222" width="188.16000000000003" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="520.5" y="240" font-size="13.5" fill="#334155">受管证明（Attestation）</text>
-<rect x="703.6600000000001" y="222" width="78.0" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="715.6600000000001" y="240" font-size="13.5" fill="#334155">统一令牌</text>
-<rect x="788.6600000000001" y="222" width="115.80000000000001" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="800.6600000000001" y="240" font-size="13.5" fill="#334155">OIDC 单点登录</text>
-<rect x="911.46" y="222" width="105.0" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="923.46" y="240" font-size="13.5" fill="#334155">组织架构同步</text>
-<rect x="1023.46" y="222" width="154.68" height="27" rx="8" fill="#eef2ff" stroke="#c7d2fe"/>
-<text x="1035.46" y="240" font-size="13.5" fill="#3730a3" font-weight="600">受管级 / 自带级分级</text>
-<rect x="398" y="269" width="844" height="104" rx="10" fill="#fbfcfe" stroke="#e2e8f0"/>
-<text x="410" y="294" font-size="15" font-weight="700" fill="#3730a3">模型门 · 模型网关</text>
-<rect x="410" y="305" width="235.68" height="27" rx="8" fill="#eef2ff" stroke="#c7d2fe"/>
-<text x="422" y="323" font-size="13.5" fill="#3730a3" font-weight="600">数据分级（公开/内部/机密/绝密）</text>
-<rect x="652.6800000000001" y="305" width="132.0" height="27" rx="8" fill="#eef2ff" stroke="#c7d2fe"/>
-<text x="664.6800000000001" y="323" font-size="13.5" fill="#3730a3" font-weight="600">渠道信任类型路由</text>
-<rect x="791.6800000000001" y="305" width="136.86" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="803.6800000000001" y="323" font-size="13.5" fill="#334155">DLP + 归一化管线</text>
-<rect x="935.5400000000001" y="305" width="78.0" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="947.5400000000001" y="323" font-size="13.5" fill="#334155">语义复核</text>
-<rect x="1020.5400000000001" y="305" width="145.5" height="27" rx="8" fill="#eef2ff" stroke="#c7d2fe"/>
-<text x="1032.54" y="323" font-size="13.5" fill="#3730a3" font-weight="600">可逆脱敏（含流式）</text>
-<rect x="410" y="338" width="118.5" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="422" y="356" font-size="13.5" fill="#334155">复杂度智能路由</text>
-<rect x="535.5" y="338" width="177.36" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="547.5" y="356" font-size="13.5" fill="#334155">限流 / 配额 / 部门预算</text>
-<rect x="719.86" y="338" width="91.5" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="731.86" y="356" font-size="13.5" fill="#334155">多密钥轮换</text>
-<rect x="818.36" y="338" width="154.68" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="830.36" y="356" font-size="13.5" fill="#334155">熔断 · 失败分类重试</text>
-<rect x="980.04" y="338" width="78.0" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="992.04" y="356" font-size="13.5" fill="#334155">响应缓存</text>
-<rect x="398" y="385" width="844" height="71" rx="10" fill="#fbfcfe" stroke="#e2e8f0"/>
-<text x="410" y="410" font-size="15" font-weight="700" fill="#3730a3">能力门 · MCP 能力中枢</text>
-<rect x="410" y="421" width="118.5" height="27" rx="8" fill="#eef2ff" stroke="#c7d2fe"/>
-<text x="422" y="439" font-size="13.5" fill="#3730a3" font-weight="600">文件夹即知识库</text>
-<rect x="535.5" y="421" width="81.24000000000001" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="547.5" y="439" font-size="13.5" fill="#334155">MCP 联邦</text>
-<rect x="623.74" y="421" width="88.80000000000001" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="635.74" y="439" font-size="13.5" fill="#334155">REST 适配</text>
-<rect x="719.54" y="421" width="141.18" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="731.54" y="439" font-size="13.5" fill="#334155">技能 / 提示词分发</text>
-<rect x="867.72" y="421" width="91.5" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="879.72" y="439" font-size="13.5" fill="#334155">专题知识包</text>
-<rect x="966.22" y="421" width="222.18" height="27" rx="8" fill="#eef2ff" stroke="#c7d2fe"/>
-<text x="978.22" y="439" font-size="13.5" fill="#3730a3" font-weight="600">工具按身份过滤 · 凭据不出网关</text>
-<rect x="398" y="468" width="844" height="71" rx="10" fill="#fbfcfe" stroke="#e2e8f0"/>
-<text x="410" y="493" font-size="15" font-weight="700" fill="#3730a3">治理与审计</text>
-<rect x="410" y="504" width="132.0" height="27" rx="8" fill="#eef2ff" stroke="#c7d2fe"/>
-<text x="422" y="522" font-size="13.5" fill="#3730a3" font-weight="600">哈希链防篡改审计</text>
-<rect x="549.0" y="504" width="91.5" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="561.0" y="522" font-size="13.5" fill="#334155">例外审批流</text>
-<rect x="647.5" y="504" width="105.0" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="659.5" y="522" font-size="13.5" fill="#334155">合规周期报表</text>
-<rect x="759.5" y="504" width="111.48000000000002" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="771.5" y="522" font-size="13.5" fill="#334155">告警 Webhook</text>
-<rect x="877.98" y="504" width="129.3" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="889.98" y="522" font-size="13.5" fill="#334155">OTel 可观测导出</text>
-<rect x="1014.28" y="504" width="91.5" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="1026.28" y="522" font-size="13.5" fill="#334155">分级管理员</text>
+<rect x="398" y="164" width="844" height="71" rx="10" fill="#fbfcfe" stroke="#e2e8f0"/>
+<text x="410" y="189" font-size="15" font-weight="700" fill="#3730a3">身份与准入</text>
+<rect x="410" y="200" width="91.5" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="422" y="218" font-size="13.5" fill="#334155">设备码登录</text>
+<rect x="508.5" y="200" width="78.0" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="520.5" y="218" font-size="13.5" fill="#334155">受管证明</text>
+<rect x="593.5" y="200" width="78.0" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="605.5" y="218" font-size="13.5" fill="#334155">统一令牌</text>
+<rect x="678.5" y="200" width="127.68" height="27" rx="8" fill="#eef2ff" stroke="#c7d2fe"/>
+<text x="690.5" y="218" font-size="13.5" fill="#3730a3" font-weight="600">受管 / 自带分级</text>
+<rect x="398" y="247" width="844" height="71" rx="10" fill="#fbfcfe" stroke="#e2e8f0"/>
+<text x="410" y="272" font-size="15" font-weight="700" fill="#3730a3">模型门</text>
+<rect x="410" y="283" width="78.0" height="27" rx="8" fill="#eef2ff" stroke="#c7d2fe"/>
+<text x="422" y="301" font-size="13.5" fill="#3730a3" font-weight="600">数据分级</text>
+<rect x="495.0" y="283" width="78.0" height="27" rx="8" fill="#eef2ff" stroke="#c7d2fe"/>
+<text x="507.0" y="301" font-size="13.5" fill="#3730a3" font-weight="600">可逆脱敏</text>
+<rect x="580.0" y="283" width="78.0" height="27" rx="8" fill="#eef2ff" stroke="#c7d2fe"/>
+<text x="592.0" y="301" font-size="13.5" fill="#3730a3" font-weight="600">信任路由</text>
+<rect x="665.0" y="283" width="78.0" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="677.0" y="301" font-size="13.5" fill="#334155">语义复核</text>
+<rect x="750.0" y="283" width="78.0" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="762.0" y="301" font-size="13.5" fill="#334155">限流配额</text>
+<rect x="835.0" y="283" width="78.0" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="847.0" y="301" font-size="13.5" fill="#334155">熔断重试</text>
+<rect x="398" y="330" width="844" height="71" rx="10" fill="#fbfcfe" stroke="#e2e8f0"/>
+<text x="410" y="355" font-size="15" font-weight="700" fill="#3730a3">能力门</text>
+<rect x="410" y="366" width="105.0" height="27" rx="8" fill="#eef2ff" stroke="#c7d2fe"/>
+<text x="422" y="384" font-size="13.5" fill="#3730a3" font-weight="600">文件夹知识库</text>
+<rect x="522.0" y="366" width="81.24000000000001" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="534.0" y="384" font-size="13.5" fill="#334155">MCP 联邦</text>
+<rect x="610.24" y="366" width="88.80000000000001" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="622.24" y="384" font-size="13.5" fill="#334155">REST 适配</text>
+<rect x="706.04" y="366" width="78.0" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="718.04" y="384" font-size="13.5" fill="#334155">技能分发</text>
+<rect x="791.04" y="366" width="118.5" height="27" rx="8" fill="#eef2ff" stroke="#c7d2fe"/>
+<text x="803.04" y="384" font-size="13.5" fill="#3730a3" font-weight="600">工具按身份过滤</text>
+<rect x="398" y="413" width="844" height="71" rx="10" fill="#fbfcfe" stroke="#e2e8f0"/>
+<text x="410" y="438" font-size="15" font-weight="700" fill="#3730a3">治理与审计</text>
+<rect x="410" y="449" width="91.5" height="27" rx="8" fill="#eef2ff" stroke="#c7d2fe"/>
+<text x="422" y="467" font-size="13.5" fill="#3730a3" font-weight="600">哈希链审计</text>
+<rect x="508.5" y="449" width="78.0" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="520.5" y="467" font-size="13.5" fill="#334155">例外审批</text>
+<rect x="593.5" y="449" width="78.0" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="605.5" y="467" font-size="13.5" fill="#334155">合规报表</text>
+<rect x="678.5" y="449" width="78.0" height="27" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="690.5" y="467" font-size="13.5" fill="#334155">告警通知</text>
 <text x="166.0" y="118" font-size="13" font-weight="600" fill="#64748b" text-anchor="middle" letter-spacing="2">调用方</text>
-<rect x="40" y="180.25" width="252" height="78" rx="10" fill="#eef2ff" stroke="#c7d2fe"/>
-<text x="54" y="206.25" font-size="15.5" font-weight="700" fill="#0f172a">员工桌面 Agent</text>
-<text x="54" y="228.25" font-size="13" fill="#64748b">DSH · WorkBuddy · Claude Code ·</text>
-<text x="54" y="247.25" font-size="13" fill="#64748b">Codex 等任意 Agent</text>
-<rect x="40" y="310.5" width="252" height="78" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="54" y="336.5" font-size="15.5" font-weight="700" fill="#0f172a">员工终端 ag-guard</text>
-<text x="54" y="358.5" font-size="13" fill="#64748b">本地隐私网关：出口前扫描脱敏</text>
-<text x="54" y="377.5" font-size="13" fill="#64748b">· 断网策略缓存</text>
-<rect x="40" y="440.75" width="252" height="60" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="54" y="466.75" font-size="15.5" font-weight="700" fill="#0f172a">业务系统 / 开发者</text>
-<text x="54" y="488.75" font-size="13" fill="#64748b">OpenAI 兼容 API 直接调用</text>
+<rect x="40" y="205.33333333333331" width="252" height="78" rx="10" fill="#eef2ff" stroke="#c7d2fe"/>
+<text x="54" y="231.33333333333331" font-size="15.5" font-weight="700" fill="#0f172a">桌面 Agent</text>
+<text x="54" y="253.33333333333331" font-size="13" fill="#64748b">DSH · WorkBuddy · Claude Code ·</text>
+<text x="54" y="272.3333333333333" font-size="13" fill="#64748b">Codex</text>
+<rect x="40" y="360.66666666666663" width="252" height="60" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="54" y="386.66666666666663" font-size="15.5" font-weight="700" fill="#0f172a">ag-guard 终端守卫</text>
+<text x="54" y="408.66666666666663" font-size="13" fill="#64748b">本地脱敏 · 断网策略缓存</text>
 <text x="1474.0" y="118" font-size="13" font-weight="600" fill="#64748b" text-anchor="middle" letter-spacing="2">模型与能力来源</text>
-<rect x="1348" y="148.83333333333334" width="252" height="60" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="1362" y="174.83333333333334" font-size="15.5" font-weight="700" fill="#0f172a">签约云模型</text>
-<text x="1362" y="196.83333333333334" font-size="13" fill="#64748b">零留存 / 不训练承诺的云厂商 API</text>
-<rect x="1348" y="229.66666666666669" width="252" height="60" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="1362" y="255.66666666666669" font-size="15.5" font-weight="700" fill="#0f172a">厂商专有云 / VPC</text>
-<text x="1362" y="277.6666666666667" font-size="13" fill="#64748b">专有部署通道</text>
-<rect x="1348" y="310.5" width="252" height="60" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="1362" y="336.5" font-size="15.5" font-weight="700" fill="#0f172a">本地小模型</text>
-<text x="1362" y="358.5" font-size="13" fill="#64748b">绝密级数据的唯一出口</text>
-<rect x="1348" y="391.3333333333333" width="252" height="60" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="1362" y="417.3333333333333" font-size="15.5" font-weight="700" fill="#0f172a">企业内部系统</text>
-<text x="1362" y="439.3333333333333" font-size="13" fill="#64748b">文件共享 · 业务 API · 已有知识库</text>
-<rect x="1348" y="472.16666666666663" width="252" height="60" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
-<text x="1362" y="498.16666666666663" font-size="15.5" font-weight="700" fill="#0f172a">外部 MCP 服务</text>
-<text x="1362" y="520.1666666666666" font-size="13" fill="#64748b">经联邦接入，同样过治理</text>
-<text x="335.0" y="298.5" font-size="26" fill="#4f46e5" text-anchor="middle">⟶</text>
-<text x="335.0" y="320.5" font-size="12" fill="#64748b" text-anchor="middle">统一令牌</text>
-<text x="335.0" y="335.5" font-size="12" fill="#64748b" text-anchor="middle">模型 / MCP 请求</text>
-<text x="335.0" y="366.5" font-size="26" fill="#4f46e5" text-anchor="middle">⟵</text>
-<text x="335.0" y="388.5" font-size="12" fill="#64748b" text-anchor="middle">脱敏后转发</text>
-<text x="335.0" y="403.5" font-size="12" fill="#64748b" text-anchor="middle">响应还原</text>
-<text x="1305.0" y="298.5" font-size="26" fill="#4f46e5" text-anchor="middle">⟶</text>
-<text x="1305.0" y="320.5" font-size="12" fill="#64748b" text-anchor="middle">按分级与信任</text>
-<text x="1305.0" y="335.5" font-size="12" fill="#64748b" text-anchor="middle">选择通道</text>
-<text x="1305.0" y="366.5" font-size="26" fill="#4f46e5" text-anchor="middle">⟵</text>
-<text x="1305.0" y="388.5" font-size="12" fill="#64748b" text-anchor="middle">响应 / 工具结果</text>
-<text x="1305.0" y="403.5" font-size="12" fill="#64748b" text-anchor="middle">（再扫描）</text>
-<rect x="40" y="573" width="1560" height="58" rx="12" fill="#0f172a"/>
-<text x="62" y="609" font-size="14.5" font-weight="700" fill="#ffffff">部署与高可用</text>
-<rect x="190" y="588" width="181.68" height="27" rx="8" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.16)"/>
-<text x="202" y="606" font-size="13.5" fill="#cbd5e1">单二进制 · 不要求数据库</text>
-<rect x="378.68" y="588" width="208.14000000000001" height="27" rx="8" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.16)"/>
-<text x="390.68" y="606" font-size="13.5" fill="#cbd5e1">Docker / systemd / 离线包</text>
-<rect x="593.82" y="588" width="208.68" height="27" rx="8" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.16)"/>
-<text x="605.82" y="606" font-size="13.5" fill="#cbd5e1">主备热备（实测约 2 秒接管）</text>
-<rect x="809.5" y="588" width="199.5" height="27" rx="8" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.16)"/>
-<text x="821.5" y="606" font-size="13.5" fill="#cbd5e1">本地对象存储备份与验链恢复</text>
-<rect x="1016.0" y="588" width="199.5" height="27" rx="8" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.16)"/>
-<text x="1028.0" y="606" font-size="13.5" fill="#cbd5e1">与透明加密按进程白名单配合</text>
-<text x="820.0" y="661" font-size="12.5" fill="#94a3b8" text-anchor="middle">AgentGate · GNU AGPL-3.0 开源 · 边界明说：只防电脑内的数字数据流，拍照、默记、口述等人的行为归客户保密制度</text>
+<rect x="1348" y="153.0" width="252" height="44" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="1362" y="179.0" font-size="15.5" font-weight="700" fill="#0f172a">签约云模型</text>
+<rect x="1348" y="222.0" width="252" height="44" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="1362" y="248.0" font-size="15.5" font-weight="700" fill="#0f172a">专有云 / VPC</text>
+<rect x="1348" y="291.0" width="252" height="44" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="1362" y="317.0" font-size="15.5" font-weight="700" fill="#0f172a">本地模型</text>
+<rect x="1348" y="360.0" width="252" height="44" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="1362" y="386.0" font-size="15.5" font-weight="700" fill="#0f172a">企业内部系统</text>
+<rect x="1348" y="429.0" width="252" height="44" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="1362" y="455.0" font-size="15.5" font-weight="700" fill="#0f172a">外部 MCP 服务</text>
+<text x="335.0" y="271.0" font-size="26" fill="#4f46e5" text-anchor="middle">⟶</text>
+<text x="335.0" y="293.0" font-size="12" fill="#64748b" text-anchor="middle">请求</text>
+<text x="335.0" y="308.0" font-size="12" fill="#64748b" text-anchor="middle"></text>
+<text x="335.0" y="339.0" font-size="26" fill="#4f46e5" text-anchor="middle">⟵</text>
+<text x="335.0" y="361.0" font-size="12" fill="#64748b" text-anchor="middle">响应</text>
+<text x="335.0" y="376.0" font-size="12" fill="#64748b" text-anchor="middle"></text>
+<text x="1305.0" y="271.0" font-size="26" fill="#4f46e5" text-anchor="middle">⟶</text>
+<text x="1305.0" y="293.0" font-size="12" fill="#64748b" text-anchor="middle">转发</text>
+<text x="1305.0" y="308.0" font-size="12" fill="#64748b" text-anchor="middle"></text>
+<text x="1305.0" y="339.0" font-size="26" fill="#4f46e5" text-anchor="middle">⟵</text>
+<text x="1305.0" y="361.0" font-size="12" fill="#64748b" text-anchor="middle">返回</text>
+<text x="1305.0" y="376.0" font-size="12" fill="#64748b" text-anchor="middle"></text>
+<rect x="40" y="518" width="1560" height="58" rx="12" fill="#0f172a"/>
+<text x="62" y="554" font-size="14.5" font-weight="700" fill="#ffffff">部署与高可用</text>
+<rect x="190" y="533" width="78.0" height="27" rx="8" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.16)"/>
+<text x="202" y="551" font-size="13.5" fill="#cbd5e1">单二进制</text>
+<rect x="275.0" y="533" width="91.5" height="27" rx="8" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.16)"/>
+<text x="287.0" y="551" font-size="13.5" fill="#cbd5e1">零外部依赖</text>
+<rect x="373.5" y="533" width="78.0" height="27" rx="8" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.16)"/>
+<text x="385.5" y="551" font-size="13.5" fill="#cbd5e1">主备热备</text>
+<rect x="458.5" y="533" width="78.0" height="27" rx="8" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.16)"/>
+<text x="470.5" y="551" font-size="13.5" fill="#cbd5e1">本地备份</text>
 </svg>
