@@ -2,6 +2,16 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-25 · F36 第一切片：审查清单 + 窄屏布局修复（UX-001、UX-002）
+
+- 本轮按上一轮 DEVLOG「下一轮」计划执行 F36 第一切片（F27 已 done，队列 F36 → F37；F36 状态由 `todo` 改为 `doing`）。体内 12:26 特别指令与待办登记 1–13 均已在先前轮次执行完毕、作废。
+- 审查地基（上一轮底稿 + 本轮实测）：演示模式 + 无头浏览器逐页截图 24 个管理台页面（桌面 1440px 全页 + 登录页 + 390px 窄屏三页），0 控制台/页面/请求错误；本轮新增 `measure-overflow.js`（逐页量 `documentElement.scrollWidth` vs `innerWidth` 并列出超宽元素，390px/1440px 双宽），修复前实测：1440px 下 24 页全部无溢出，390px 下 12 页溢出（channels 816、users 740、prompts 658、resttools 638、packages 512、skills 473、orgsync 472、exceptions 465、terminals 448、tokens 429、stats 459），超宽元素一律是裸 `<table>`。证据在 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/f36-audit/`（`shots/`、`audit-shots.js`、`measure-overflow.js`、`measure1/2/3/overflow.json`）。
+- 修复 UX-001（高）：新增 `.tableWrap{overflow-x:auto}`，包裹全部 26 张静态表与 `repTable()` 生成的报表预览表（同一件事处处一样）；宽表在卡片内横向滚动，页面本身不再溢出。复测：390px 与 1440px 下 24 页 `scrollW` 全部等于视口宽；渠道表实测 `wrapScrollW 777 > wrapClientW 312`、页面 `scrollW 390`。
+- 修复 UX-002（高，本轮探查新发现）：窄屏下添加渠道表单仍为两列，厂商预设下拉宽仅 78px 显示为 "Deep…"、信任类型显示为 "signe…"（页面不溢出，目测漏网，`getComputedStyle` 探查确认）。根因：`.formGrid .wide{grid-column:span 2}` 在 `≤960px` 媒体查询下未复位——`grid-template-columns:1fr` 只有一列显式轨道，`span 2` 的字段撑出一条内容宽的隐式第二列，其余字段随之两两配对（同款 CSS 在空白页最小复现确认）；修法为媒体查询内补 `.formGrid .wide{grid-column:auto}`。复测：390px 下 `gridTemplateColumns` 为单列 `312px`，厂商预设下拉宽 312px 显示完整 "DeepSeek"，信任类型显示完整 "signed_cloud 签约云"；1440px 下仍为三列。修复前后窄屏截图对比见 `shots/shot-narrow-channels-fixed.png`。
+- 清单：新建 `docs/ux-audit.md`（方法与基线、UX-001/UX-002 已修复、UX-003 窄屏导航全量平铺待修、UX-004 两处内联多列筛选行待验证、未覆盖项：逐页文案深审、交互流程点击验证、登录页窄屏、深色模式）。验收进度：高严重度 2/2 已修复，中 1 待修、低 1 待验证，F36 未达验收标准、保持 `doing`。下一轮首选：UX-003 窄屏导航折叠。
+- 测试：`gofmt`/`go vet`/`go test ./...` 全绿（34 包）；`make smoke` 314 项断言 0 失败；另有浏览器实测三轮（修复前 measure1、表修复后 measure2、表单修复后 measure3）+ 修复前后窄屏截图目视确认。本轮只改 `internal/webui/assets/index.html`（纯前端、无后端行为变化、不碰分级/脱敏/审计约束、不删测试）。
+- 推送结果：（待填，合并后补记）
+
 ## 2026-11-25 · 渠道密钥持久化（F27 演练遗留，演练第 19 项根因）
 
 - 本轮按上一轮 DEVLOG「下一轮」计划执行：持久化加密后的渠道密钥，再重跑 EnsureBucket 演练使第 19 项变绿；之后 F36 第一切片顺延下一轮。体内的 12:26 特别指令与待办登记 1–13 均已在先前轮次执行完毕、作废。队列仍为 F36 → F37（F27 已 done）。
@@ -10,6 +20,7 @@ Loop 与人工开发的统一记录，最新在最上面。
 - 关键决策：① 只持久化密文 + 脱敏值，不持久化停用态（见上）；② 旧快照无 `keys` 字段时按原行为加载为无密钥渠道，不做迁移——密钥本来就没落过盘，没有可迁移的旧值，管理员重录一次即持久化；③ 主密钥更换后旧密文解不开（与 Webhook 密钥同款约束），属已知行为，不另做密钥轮换机制。
 - 测试：store 包新增 `TestChannelKeysPersistAcrossSaveAndReload`（Save → 磁盘快照含 `enc`、不含明文 → 重载后两把密钥均可解密、停用态已复位、旧快照加载为无密钥渠道；并以反向验证确认该测试在旧标签下失败）+ api 包新增 `TestChannelKeysSurviveRestart`（经 API 建渠道、加第二把密钥、手动停用第二把 → 列表响应既无明文也无 `enc` → 重开 store 后两把密钥均可解密、均已重新启用）。`gofmt`/`go vet`/`go test ./...` 全绿（34 包）；`make smoke` 314 项断言 0 失败。
 - 本轮实测（EnsureBucket 演练重跑，全新桶，脚本与记录见 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/f27-ensurebucket-drill/`）：21 项检查全部通过（含新增 11a）——桶由首个备份周期自动创建、上传/取回/验链/恢复全流程通过，**第 19 项（恢复后服务器上模型调用）首次变绿、返回 200**。演练中修掉一个上一轮的脚本缺口：恢复服务器 demo 关闭故不挂载 `/mock/`，而演示渠道指向已停的 8801，密钥修好后调用仍到不了上游——本轮在演练里补了一个专用的 mock 上游服务器（8801 上的 demo 模式空数据目录、无备份环境，只供 `/mock/v1`）。另以恢复目录的 `state.json` 实测核对：4 个渠道共 5 把密钥均有 `enc` 密文、无 `disabled` 字段落盘、无明文密钥。演练第 19 项根因至此闭环；下一轮：F36 第一切片（按上一轮已拍好的 24 页截图写 `docs/ux-audit.md`）。
+- 推送结果：本地提交 355543a；远端建分支 loop/channel-keys（基点远端 main 10843110；推送前核对同步基点：5 个改动文件里 4 个远端 blob 与本地父提交 a99f30f 一致，DEVLOG.md 一处差异已核对——本地父提交多一段 EnsureBucket 推送结果记录，正是随本轮带上的内容；新文件 0 个）；整包快照 5 文件一次推送（提交 03abcaa0），推送后 5 个文件远端 blob 与快照逐一核对一致；PR #38 文件清单与本轮一致（5/5，+245/-17，本地 diff 为 +244，差 1 行为 DEVLOG 末尾换行符归一，与上一轮同款）；未触发 contents API 回退；已合并进远端 main，远端 HEAD 43c11a8a（合并提交），读回 main 上 5 个文件内容经 git hash-object 核对与快照逐字节一致。另记：① 开 PR 与合并调用各一次因服务重启中断，每次中断后先用只读通道核对 PR/main 状态、确认未落盘再重试（开 PR 重试一次成功；合并重试一次、等待约 28 分钟后获批成功）；② get_file_contents 返回的文本 SHA 与 blob SHA 不一致（main 上 5 文件该 SHA 均与快照不符、但内容哈希逐字节一致），以后轮次以内容哈希为准。待删分支新增 loop/channel-keys（共 26 个，需 Nathan 网页端手动删除）。下一轮：F36 第一切片。
 
 ## 2026-11-25 · 备份自动建桶（EnsureBucket，待办登记 13）
 
