@@ -112,8 +112,8 @@
   .quickCard .t{font-weight:650;color:var(--ink);margin-bottom:3px}
   .quickCard .d{color:var(--muted);font-size:12.5px}
   #toast{position:fixed;right:22px;bottom:22px;background:var(--ink);color:#fff;padding:10px 16px;border-radius:9px;font-size:13.5px;box-shadow:0 8px 24px rgba(16,24,40,.25);display:none;z-index:50;max-width:min(480px,90vw);cursor:pointer}
-  #confirmOverlay{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:60;display:none;align-items:center;justify-content:center}
-  #confirmCard{background:#fff;border-radius:12px;padding:20px;max-width:min(420px,90vw);box-shadow:0 12px 32px rgba(16,24,40,.3)}
+  #confirmOverlay,#inputOverlay{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:60;display:none;align-items:center;justify-content:center}
+  #confirmCard,#inputCard{background:#fff;border-radius:12px;padding:20px;max-width:min(420px,90vw);box-shadow:0 12px 32px rgba(16,24,40,.3)}
   .chainOk{color:var(--ok);font-weight:600}.chainBad{color:var(--bad);font-weight:600}
   @media (max-width:960px){
     aside{position:static;width:auto;border-right:none;border-bottom:1px solid var(--border)}
@@ -786,6 +786,7 @@
 </div>
 <div id="toast" role="status" onclick="dismissToast()"></div>
   <div id="confirmOverlay" onclick="if(event.target===this)closeConfirm(false)"><div id="confirmCard" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle"><h3 id="confirmTitle" style="margin:0 0 8px" data-i18n="confirmDeleteTitle">确认删除</h3><p id="confirmBody" class="muted" style="margin:0 0 16px"></p><div class="row" style="justify-content:flex-end"><button class="btn ghost" id="confirmCancelBtn" onclick="closeConfirm(false)" data-i18n="cancel">取消</button><button class="btn ghost danger" onclick="closeConfirm(true)" data-i18n="confirmDeleteOk">确认删除</button></div></div></div>
+  <div id="inputOverlay" onclick="if(event.target===this)closeInput(null)"><div id="inputCard" role="dialog" aria-modal="true" aria-labelledby="inputTitle"><h3 id="inputTitle" style="margin:0 0 8px"></h3><p id="inputBody" class="muted" style="margin:0 0 12px"></p><input id="inputField" style="width:100%"><textarea id="inputArea" style="width:100%;min-height:90px;display:none"></textarea><p id="inputErr" style="color:var(--bad);font-size:13px;min-height:18px;margin:8px 0 0"></p><div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn ghost" id="inputCancelBtn" onclick="closeInput(null)" data-i18n="cancel">取消</button><button class="btn" id="inputOkBtn" onclick="submitInput()" data-i18n="inputConfirm">确定</button></div></div></div>
 
 <script>
 const I18N = {
@@ -842,7 +843,7 @@ const I18N = {
     packagesTitle:"安装包分发",packagesDesc:"受管 Agent 安装包的托管与分发：管理员上传或离线导入，员工自助下载；分发包的哈希可登记为 Agent 证明的基准值。",uploadPackage:"上传 / 离线导入安装包",packageList:"已托管安装包",pkgKind:"包类型",pkgFile:"文件",pkgSize:"大小",pkgSha:"SHA-256",pkgStatus:"校验状态",verified:"已校验",unverified:"未校验",pkgSource:"来源",pkgAgentType:"Agent 类型",registerBaseline:"登记为证明基准值",baselineRegistered:"已登记基准值",genUserBundle:"生成用户包（ag-guard + ag-setup）",gatewayUrl:"网关地址",egressAllowlist:"出口白名单（逗号分隔主机名）",expiresAt:"过期时间（可选，RFC3339）",cleanupExpired:"清理过期包",uploadBtn:"上传",genBundleBtn:"生成用户包",packagesHint:"管理包给 IT（agentgate 服务端，现有 Docker / 离线 bundle / systemd 形态，走现有离线部署通道）；用户包给员工（ag-guard + ag-setup，按策略生成：内置网关地址、密级与脱敏策略、出口白名单，员工装一次即常驻、零配置）。只有已校验的包才能登记为 F14 证明基准值——未校验的包即使哈希一致也不予登记。过期包可一键清理；导入中断的上传可断点续传（见接口文档）。",
     orgsyncTitle:"组织同步",orgsyncDesc:"从钉钉 / 飞书 / 企业微信同步部门与员工目录，登录时把第三方身份绑定到平台账号；同步只建 / 更新账号与部门映射，不授予受管级权限。",addOrgProvider:"添加同步来源",orgProviderList:"同步来源",orgProvider:"平台",orgCorpId:"企业 CorpId",orgAppKey:"AppKey",orgAppSecret:"应用密钥",orgBaseUrl:"API 地址",orgAutoCreate:"自动建号",orgDisableMissing:"离职禁用",orgEnabled:"启用",orgSecretMasked:"密钥（已打码）",orgLastSync:"最近同步",orgSyncBtn:"同步",orgBindTitle:"绑定第三方身份",orgBindBtn:"绑定",orgBindHint:"只能绑定已同步到的目录成员（同步快照里没有的 ID 会被拒绝）；同一身份不能绑到两个账号；解绑只解除关联、不删账号。",orgMyBindings:"我的第三方身份",orgNoBindings:"暂无绑定的第三方身份",orgExternalId:"第三方用户 ID",orgsyncHint:"同步只建 / 更新账号与部门映射，不自动授予受管级权限（权限仍走平台策略）；本地已禁用的账号同步不会自动恢复；目录里没看到的人不等于离职——只有平台明确说找不到时，开启「离职禁用」才会禁用账号。应用密钥只加密存储、不回显；同步与绑定全程审计。",
     usersTitle:"用户与角色",usersDesc:"分级管理员与职责分离：平台管理员、安全管理员、审计员、运维员各管一段，互相制约；角色分配本身只由平台管理员操作，全程审计。",roleMatrix:"角色分工",usersList:"用户列表",roleCol:"角色",roleSource:"角色来源",authSource:"账号来源",userDisabled:"已禁用",userEnabled:"启用中",userDisable:"禁用",userEnable:"启用",userOp:"操作",usersHintCol:"权限",usersHint:"只有平台管理员可以改角色（安全管理员也不行，避免自我提权）；不能改自己的角色、不能禁用自己、不能动最后一位启用的平台管理员。禁用账号会立即吊销其全部会话。角色来源为 oidc 的账号由 IdP 组映射管理，管理员在控制台改过角色后即转为本地管理、IdP 不再覆盖。",
-    saved:"✓ 已保存",deleted:"✓ 已删除",empty:"暂无数据",chainValid:"哈希链完整",chainInvalid:"哈希链校验失败",approve:"通过",reject:"驳回",download:"下载",publish:"发布/回滚",test:"测试",rescan:"重扫",save:"保存",wizardTitle:"开通向导",wizDesc:"五步完成首次开通：建管理员 → 选行业模板 → 接模型渠道 → 选上线阶段 → 自检完成。默认保守、默认观察模式，第一天先跑起来、再慢慢收紧。",wizStep1:"创建管理员",wizStep2:"选择行业模板",wizStep3:"接入模型渠道",wizStep4:"选择上线阶段",wizStep5:"自检与完成",wizNext:"下一步",wizBack:"上一步",wizSkip:"稍后添加",wizAdminDone:"首个管理员已创建",wizAdminHint:"首个管理员已由设置码创建。如需新增管理员，请在「用户与角色」页添加。",wizTemplateHint:"模板是一整套互相咬合的预置：预置词表、渠道信任与分级策略、上线阶段与报表节奏。应用后可在各功能页继续微调。",wizApplyTemplate:"应用此模板",wizTemplateApplied:"已应用",wizVendor:"模型厂商",wizApiKey:"API Key",wizAdvanced:"高级（已按厂商预填，可改）",wizAddChannel:"添加渠道",wizPhaseHint:"观察：只审计、不拦截；提醒：自带级发机密数据时仅提醒、不拦截（违禁词与语义复核仍拦截）；拦截：全部规则按配置拦截。随时可在仪表盘切换。",wizPhaseObserve:"观察",wizPhaseWarn:"提醒",wizPhaseBlock:"拦截",wizPhaseObserveD:"只审计、不拦截——配错了也没有代价",wizPhaseWarnD:"自带级机密调用仅提醒、不拦截；违禁词仍拦截",wizPhaseBlockD:"全部规则按配置拦截",wizSavePhase:"保存上线阶段",wizComplete:"完成开通",wizDone:"开通完成",wizMasterKey:"我已备份主密钥（丢失将导致全部加密密钥无法恢复）",wizEmployeeHint:"员工接入：员工在终端运行 ag-setup 获得设备码，管理员在「设备接入」页批准即可。",setupTitle:"首次设置",setupSub:"创建第一个管理员",setupCode:"设置码",setupCodeHint:"服务器首次启动时打印在日志里的 12 位设置码（XXXX-XXXX-XXXX）。",setupBtn:"创建管理员并继续",setupUser:"管理员用户名",setupPass:"密码（至少 8 位）",setupPass2:"确认密码",obTitle:"开通进度",obPhase:"上线阶段",obWouldBlock:"观察模式下本应拦截",obWarned:"提醒模式下已提醒",obGoWizard:"进入开通向导",trustSigned:"signed_cloud（签约云）",trustDedicated:"dedicated_cloud（专有云 / VPC）",trustLocal:"local_model（本地小模型）",filterAll:"全部",filterDriftOnly:"仅漂移",filterNormalOnly:"仅正常",excConf:"confidential（机密）",excSecret:"secret（绝密，需另行开启）",orgDingtalk:"dingtalk（钉钉）",orgFeishu:"feishu（飞书）",orgWecom:"wecom（企业微信）",optDisable:"停用",semAlert:"告警放行",semBlock:"拦截",semCatJailbreak:"jailbreak 越狱",semCatInducement:"inducement 诱导",semCatDisguise:"disguise 伪装",semCatSplit:"split_exfil 拆分外发",arSimple:"simple 简单",arComplex:"complex 复杂",optToken:"Token（可选）",optCredential:"Credential（可选）",optSigningSecret:"Signing secret（可选）",optSha:"SHA-256（期望校验和，可空）",pkgGuardBundle:"ag-guard 组件包",pkgSetupBundle:"ag-setup 组件包",phDept:"研发部",phExcReason:"为什么这次调用需要放行",phExcScope:"模型 / 任务，如 mock-pro 汇总 XH-200 进度",phOrgName:"e.g. 星河钉钉",phSemSample:"越狱 / 诱导 / 伪装 / 拆分外发的典型表述",phArSample:"简单问答或复杂任务的典型表述",phFolderName:"e.g. 公司制度",phFolderDept:"e.g. 人力部",phScopeDepts:"* or 研发部,注册部",phChangeNote:"初版",phDeviceName:"设备名称，如 MacBook-lixiaofeng",phDesc:"描述…",roleAdmin:"平台管理员",roleSecurity:"安全管理员",roleAuditor:"审计员",roleOperator:"运维员",roleEmployee:"员工",confirmDeleteTitle:"确认删除",confirmDeleteBody:"删除后无法恢复，确定继续吗？",confirmDeleteOk:"确认删除",cancel:"取消",toastDismiss:"点击关闭",chNeedNameUrl:"请填写渠道名称与地址",chBadPricing:"pricing JSON 格式不正确",needWord:"请填写敏感词"},
+    saved:"✓ 已保存",deleted:"✓ 已删除",empty:"暂无数据",chainValid:"哈希链完整",chainInvalid:"哈希链校验失败",approve:"通过",reject:"驳回",download:"下载",publish:"发布/回滚",test:"测试",rescan:"重扫",save:"保存",wizardTitle:"开通向导",wizDesc:"五步完成首次开通：建管理员 → 选行业模板 → 接模型渠道 → 选上线阶段 → 自检完成。默认保守、默认观察模式，第一天先跑起来、再慢慢收紧。",wizStep1:"创建管理员",wizStep2:"选择行业模板",wizStep3:"接入模型渠道",wizStep4:"选择上线阶段",wizStep5:"自检与完成",wizNext:"下一步",wizBack:"上一步",wizSkip:"稍后添加",wizAdminDone:"首个管理员已创建",wizAdminHint:"首个管理员已由设置码创建。如需新增管理员，请在「用户与角色」页添加。",wizTemplateHint:"模板是一整套互相咬合的预置：预置词表、渠道信任与分级策略、上线阶段与报表节奏。应用后可在各功能页继续微调。",wizApplyTemplate:"应用此模板",wizTemplateApplied:"已应用",wizVendor:"模型厂商",wizApiKey:"API Key",wizAdvanced:"高级（已按厂商预填，可改）",wizAddChannel:"添加渠道",wizPhaseHint:"观察：只审计、不拦截；提醒：自带级发机密数据时仅提醒、不拦截（违禁词与语义复核仍拦截）；拦截：全部规则按配置拦截。随时可在仪表盘切换。",wizPhaseObserve:"观察",wizPhaseWarn:"提醒",wizPhaseBlock:"拦截",wizPhaseObserveD:"只审计、不拦截——配错了也没有代价",wizPhaseWarnD:"自带级机密调用仅提醒、不拦截；违禁词仍拦截",wizPhaseBlockD:"全部规则按配置拦截",wizSavePhase:"保存上线阶段",wizComplete:"完成开通",wizDone:"开通完成",wizMasterKey:"我已备份主密钥（丢失将导致全部加密密钥无法恢复）",wizEmployeeHint:"员工接入：员工在终端运行 ag-setup 获得设备码，管理员在「设备接入」页批准即可。",setupTitle:"首次设置",setupSub:"创建第一个管理员",setupCode:"设置码",setupCodeHint:"服务器首次启动时打印在日志里的 12 位设置码（XXXX-XXXX-XXXX）。",setupBtn:"创建管理员并继续",setupUser:"管理员用户名",setupPass:"密码（至少 8 位）",setupPass2:"确认密码",obTitle:"开通进度",obPhase:"上线阶段",obWouldBlock:"观察模式下本应拦截",obWarned:"提醒模式下已提醒",obGoWizard:"进入开通向导",trustSigned:"signed_cloud（签约云）",trustDedicated:"dedicated_cloud（专有云 / VPC）",trustLocal:"local_model（本地小模型）",filterAll:"全部",filterDriftOnly:"仅漂移",filterNormalOnly:"仅正常",excConf:"confidential（机密）",excSecret:"secret（绝密，需另行开启）",orgDingtalk:"dingtalk（钉钉）",orgFeishu:"feishu（飞书）",orgWecom:"wecom（企业微信）",optDisable:"停用",semAlert:"告警放行",semBlock:"拦截",semCatJailbreak:"jailbreak 越狱",semCatInducement:"inducement 诱导",semCatDisguise:"disguise 伪装",semCatSplit:"split_exfil 拆分外发",arSimple:"simple 简单",arComplex:"complex 复杂",optToken:"Token（可选）",optCredential:"Credential（可选）",optSigningSecret:"Signing secret（可选）",optSha:"SHA-256（期望校验和，可空）",pkgGuardBundle:"ag-guard 组件包",pkgSetupBundle:"ag-setup 组件包",phDept:"研发部",phExcReason:"为什么这次调用需要放行",phExcScope:"模型 / 任务，如 mock-pro 汇总 XH-200 进度",phOrgName:"e.g. 星河钉钉",phSemSample:"越狱 / 诱导 / 伪装 / 拆分外发的典型表述",phArSample:"简单问答或复杂任务的典型表述",phFolderName:"e.g. 公司制度",phFolderDept:"e.g. 人力部",phScopeDepts:"* or 研发部,注册部",phChangeNote:"初版",phDeviceName:"设备名称，如 MacBook-lixiaofeng",phDesc:"描述…",roleAdmin:"平台管理员",roleSecurity:"安全管理员",roleAuditor:"审计员",roleOperator:"运维员",roleEmployee:"员工",confirmDeleteTitle:"确认删除",confirmDeleteBody:"删除后无法恢复，确定继续吗？",confirmDeleteOk:"确认删除",cancel:"取消",toastDismiss:"点击关闭",chNeedNameUrl:"请填写渠道名称与地址",chBadPricing:"pricing JSON 格式不正确",needWord:"请填写敏感词",errBadLogin:"用户名或密码不正确",errUnauthorized:"登录已过期，请重新登录",errAdminOnly:"需要平台管理员权限",errBadSetupCode:"设置码不正确",errNoSetupCode:"未签发设置码，请重启服务器",errSetupExhausted:"设置码已因多次失败而失效，请重启服务器签发新的设置码",errSetupDone:"首次设置已完成",errCantDisableSelf:"不能停用自己的账号",errCantRemoveLastAdmin:"不能移除最后一个在用的管理员",errCantChangeOwnRole:"不能修改自己的角色",errUserExists:"用户名已存在",errBadUsername:"用户名须为 3–32 位字母、数字、点、下划线或连字符",errShortPassword:"密码至少 8 位",errBadDeviceCode:"设备码无效或已过期",errBadRequest:"请求不正确，请检查输入后重试",errBadJson:"输入的 JSON 格式不正确",errNeedNameUrl:"请填写名称与地址",errNeedNameContent:"请填写名称与内容",errNeedName:"请填写名称",errNeedContent:"请填写内容",errDupApiKey:"该 API Key 已存在",errEmptyApiKey:"API Key 不能为空",errTooManyKeys:"每个渠道最多 10 把密钥",errHttpsOnly:"地址须为 https（本地测试可用 http）",errNeedVersion:"请填写版本号",errVersionMissing:"该版本不存在",errBadVersion:"版本号须为正整数",errExpireFuture:"过期时间须在未来",errExpireFormat:"过期时间格式须为 RFC3339",errUntilAfterSince:"结束时间须晚于开始时间",errBadTier:"层级须为 byoa 或 managed",errBadDataLevel:"数据等级须为 public、internal、confidential 或 secret",errBadTrustType:"信任类型须为 signed_cloud、dedicated_cloud 或 local_model",errBadPhase:"上线阶段须为 observe、warn 或 block",errBadWord:"敏感词须为 1–128 字符，不能含控制字符",errWordNotInList:"该词不在词表中",errBadBudget:"预算不正确",errBadCap:"月度上限须大于 0",errBadRate:"限流值不能小于 0",errTooManyPricing:"定价条目最多 32 条",errBadPricingEntry:"定价条目须有模型名且价格不能为负",errDeptBudget:"该部门已有预算，请改用修改",errFolderRegistered:"该文件夹已登记",errExcNotPending:"例外申请不存在或已处理",errNotYourExc:"这不是你发起的例外申请",errOnlyAuthorAdmin:"只有作者或管理员可以添加版本",errSaveFailed:"保存失败，请重试",errEncryptFailed:"加密失败，请重试",errExportFailed:"导出失败，请重试",errSyncFailed:"同步失败，请重试",errArchiveFailed:"归档失败，请重试",errHashFailed:"哈希计算失败，请重试",errStoreSecret:"保存密钥失败，请重试",errDecryptSecret:"解密服务商密钥失败",errPersistConfig:"保存配置失败，请重试",errOidcStart:"启动 OIDC 登录失败",errOtelExport:"遥测导出失败",errNotAvailable:"该功能未配置或不可用",errNoSemEntries:"该文档暂无语义条目",errNoPolicy:"该 Agent 类型未配置策略",errExternalIdentity:"外部身份不在任何已同步目录中，请先同步该来源",errSemModel:"语义模型未配置",errNotFound:"未找到该记录，请刷新后重试",errAlreadyExists:"同名记录已存在",errFailed:"操作失败，请重试",errCheckInput:"请检查输入后重试",errGeneric:"操作失败，请稍后重试",errNetwork:"无法连接服务器，请检查网络后重试",errDuplicate:"存在重复项，请检查后重试",errNeedSource:"知识包至少需要一个来源文件",errNeedCitation:"综合稿每条结论都须带原文回指",errBadArgs:"参数不正确，请检查输入后重试",errSnakeCase:"名称须为小写下划线格式",errBadTrust:"信任类型不正确",errBadLevel:"数据等级不正确",inputConfirm:"确定",inputVersionTitle:"发布版本",inputVersionBody:"请输入要发布的版本号（正整数）。",inputArgsTitle:"测试参数",inputArgsBody:"请输入调用参数（JSON 格式）。"},
   en: {loginTitle:"Sign in",loginSub:"Enterprise agent governance gateway · Admin console",loginBtn:"Sign in",logout:"Sign out",ssoBtn:"Sign in with enterprise SSO",username:"Username",password:"Password",
     loginHint:"Demo: admin / agentgate-admin, auditor: auditor / demo12345, operator: ops / demo12345, employee: lixiaofeng / demo12345",
     navMenu:"☰ Menu",navOps:"Operations",navAccess:"Access & identity",navModel:"Model gateway",navCap:"Capabilities",navSys:"System",navAdvanced:"Advanced",
@@ -896,7 +897,7 @@ const I18N = {
     packagesTitle:"Package distribution",packagesDesc:"Hosted distribution of managed-agent install packages: admins upload or import offline, employees download them; a distributed package's hash can be registered as the attestation baseline.",uploadPackage:"Upload / import a package offline",packageList:"Hosted packages",pkgKind:"Package kind",pkgFile:"File",pkgSize:"Size",pkgSha:"SHA-256",pkgStatus:"Checksum status",verified:"verified",unverified:"unverified",pkgSource:"Source",pkgAgentType:"Agent type",registerBaseline:"Register as attestation baseline",baselineRegistered:"baseline registered",genUserBundle:"Generate user package (ag-guard + ag-setup)",gatewayUrl:"Gateway URL",egressAllowlist:"Egress allowlist (comma-separated hostnames)",expiresAt:"Expires at (optional, RFC3339)",cleanupExpired:"Clean up expired packages",uploadBtn:"Upload",genBundleBtn:"Generate user package",packagesHint:"The management package is for IT (the agentgate server: Docker image / offline bundle / systemd, via the existing offline deployment channel); the user package is for employees (ag-guard + ag-setup, generated per policy with the gateway URL, data level and egress allowlist baked in — install once, zero-config, resident). Only a verified package can be registered as the F14 attestation baseline. Expired packages can be cleaned up in one click; an interrupted upload can be resumed (see docs).",
     orgsyncTitle:"Organisation sync",orgsyncDesc:"Sync departments and employees from DingTalk / Feishu / WeCom, and bind the third-party identity to the platform account at login; sync only creates / updates accounts and department mappings, never grants a managed tier.",addOrgProvider:"Add sync source",orgProviderList:"Sync sources",orgProvider:"Platform",orgCorpId:"Corp ID",orgAppKey:"App key",orgAppSecret:"App secret",orgBaseUrl:"API base URL",orgAutoCreate:"Auto-create accounts",orgDisableMissing:"Disable departed accounts",orgEnabled:"Enabled",orgSecretMasked:"Secret (masked)",orgLastSync:"Last sync",orgSyncBtn:"Sync",orgBindTitle:"Bind a third-party identity",orgBindBtn:"Bind",orgBindHint:"Only members present in a synced directory snapshot can be bound; one identity cannot bind to two accounts; unbinding only removes the link, never the account.",orgMyBindings:"My third-party identities",orgNoBindings:"No third-party identity bound yet",orgExternalId:"Third-party user ID",orgsyncHint:"Sync only creates / updates accounts and department mappings and never grants a managed tier (permissions stay with platform policy). A locally disabled account is never restored by sync; absence from a fetched directory is not departure — only when the provider explicitly says the person is gone does \"disable departed\" disable the account. App secrets are encrypted at rest and never echoed; sync and binding are fully audited.",
     usersTitle:"Users & roles",usersDesc:"Tiered administrators with separation of duties: platform admin, security admin, auditor and operator each own a slice and check each other; role assignment itself is platform-admin-only and fully audited.",roleMatrix:"Role matrix",usersList:"Users",roleCol:"Role",roleSource:"Role source",authSource:"Account source",userDisabled:"disabled",userEnabled:"enabled",userDisable:"Disable",userEnable:"Enable",userOp:"Actions",usersHintCol:"Permissions",usersHint:"Only the platform admin may change roles (not even the security admin — no self-promotion); you cannot change your own role, disable yourself, or touch the last enabled platform admin. Disabling an account revokes all its sessions at once. Accounts with role source oidc are managed by the IdP group mapping; once an admin changes the role in the console it becomes locally managed and the IdP no longer overwrites it.",
-    saved:"✓ Saved",deleted:"✓ Deleted",empty:"No data yet",chainValid:"Hash chain intact",chainInvalid:"Hash chain verification FAILED",approve:"Approve",reject:"Reject",download:"Download",publish:"Publish / roll back",test:"Test",rescan:"Rescan",save:"Save",wizardTitle:"Onboarding wizard",wizDesc:"Finish first-run setup in five steps: create an admin → pick an industry template → connect a model channel → choose the launch phase → self-check. Conservative by default, observe by default — get running on day one, tighten later.",wizStep1:"Create an admin",wizStep2:"Pick an industry template",wizStep3:"Connect a model channel",wizStep4:"Choose the launch phase",wizStep5:"Self-check & finish",wizNext:"Next",wizBack:"Back",wizSkip:"Add later",wizAdminDone:"First admin created",wizAdminHint:"The first admin was created with the setup code. To add more admins, use the Users & roles page.",wizTemplateHint:"A template is a complete preset that fits together: preset word list, channel trust and classification policy, launch phase and report cadence. Keep fine-tuning on the feature pages afterwards.",wizApplyTemplate:"Apply this template",wizTemplateApplied:"Applied",wizVendor:"Model vendor",wizApiKey:"API key",wizAdvanced:"Advanced (prefilled per vendor, editable)",wizAddChannel:"Add channel",wizPhaseHint:"Observe: audit only, nothing blocks. Warn: BYOA confidential calls are warned, not blocked (banned words and semantic review still block). Block: every rule enforces as configured. Switch any time from the dashboard.",wizPhaseObserve:"Observe",wizPhaseWarn:"Warn",wizPhaseBlock:"Block",wizPhaseObserveD:"Audit only — a misconfiguration costs nothing",wizPhaseWarnD:"BYOA confidential calls are warned, not blocked; banned words still block",wizPhaseBlockD:"Every rule enforces as configured",wizSavePhase:"Save launch phase",wizComplete:"Finish onboarding",wizDone:"Onboarding complete",wizMasterKey:"I have backed up the master key (losing it loses every encrypted key)",wizEmployeeHint:"Employee onboarding: an employee runs ag-setup to get a device code; an admin approves it on the Device access page.",setupTitle:"First-time setup",setupSub:"Create the first administrator",setupCode:"Setup code",setupCodeHint:"The 12-character code printed in the server log on first boot (XXXX-XXXX-XXXX).",setupBtn:"Create admin and continue",setupUser:"Admin username",setupPass:"Password (at least 8 characters)",setupPass2:"Confirm password",obTitle:"Onboarding progress",obPhase:"Launch phase",obWouldBlock:"Would have blocked in observe mode",obWarned:"Warned in warn mode",obGoWizard:"Open the onboarding wizard",trustSigned:"signed_cloud (Signed cloud)",trustDedicated:"dedicated_cloud (Dedicated cloud / VPC)",trustLocal:"local_model (Local model)",filterAll:"All",filterDriftOnly:"Drifted only",filterNormalOnly:"Normal only",excConf:"confidential (Confidential)",excSecret:"secret (Top secret — opt-in required)",orgDingtalk:"dingtalk (DingTalk)",orgFeishu:"feishu (Feishu)",orgWecom:"wecom (WeCom)",optDisable:"Disabled",semAlert:"Alert and allow",semBlock:"Block",semCatJailbreak:"jailbreak (Jailbreak)",semCatInducement:"inducement (Inducement)",semCatDisguise:"disguise (Disguise)",semCatSplit:"split_exfil (Split exfiltration)",arSimple:"simple (Simple)",arComplex:"complex (Complex)",optToken:"Token (optional)",optCredential:"Credential (optional)",optSigningSecret:"Signing secret (optional)",optSha:"SHA-256 (expected checksum, optional)",pkgGuardBundle:"ag-guard component package",pkgSetupBundle:"ag-setup component package",phDept:"e.g. R&D",phExcReason:"Why this call needs an exception",phExcScope:"Model / task, e.g. mock-pro summarizing XH-200 progress",phOrgName:"e.g. Xinghe DingTalk",phSemSample:"Typical jailbreak / inducement / disguise / split-exfiltration wording",phArSample:"Typical simple question or complex task",phFolderName:"e.g. Company policies",phFolderDept:"e.g. HR",phScopeDepts:"* or R&D, Registry",phChangeNote:"First version",phDeviceName:"device name",phDesc:"description",roleAdmin:"Platform admin",roleSecurity:"Security admin",roleAuditor:"Auditor",roleOperator:"Operator",roleEmployee:"Employee",confirmDeleteTitle:"Confirm deletion",confirmDeleteBody:"This cannot be undone. Continue?",confirmDeleteOk:"Delete",cancel:"Cancel",toastDismiss:"Click to dismiss",chNeedNameUrl:"Channel name and base URL are required",chBadPricing:"pricing JSON is invalid",needWord:"Enter a word"}
+    saved:"✓ Saved",deleted:"✓ Deleted",empty:"No data yet",chainValid:"Hash chain intact",chainInvalid:"Hash chain verification FAILED",approve:"Approve",reject:"Reject",download:"Download",publish:"Publish / roll back",test:"Test",rescan:"Rescan",save:"Save",wizardTitle:"Onboarding wizard",wizDesc:"Finish first-run setup in five steps: create an admin → pick an industry template → connect a model channel → choose the launch phase → self-check. Conservative by default, observe by default — get running on day one, tighten later.",wizStep1:"Create an admin",wizStep2:"Pick an industry template",wizStep3:"Connect a model channel",wizStep4:"Choose the launch phase",wizStep5:"Self-check & finish",wizNext:"Next",wizBack:"Back",wizSkip:"Add later",wizAdminDone:"First admin created",wizAdminHint:"The first admin was created with the setup code. To add more admins, use the Users & roles page.",wizTemplateHint:"A template is a complete preset that fits together: preset word list, channel trust and classification policy, launch phase and report cadence. Keep fine-tuning on the feature pages afterwards.",wizApplyTemplate:"Apply this template",wizTemplateApplied:"Applied",wizVendor:"Model vendor",wizApiKey:"API key",wizAdvanced:"Advanced (prefilled per vendor, editable)",wizAddChannel:"Add channel",wizPhaseHint:"Observe: audit only, nothing blocks. Warn: BYOA confidential calls are warned, not blocked (banned words and semantic review still block). Block: every rule enforces as configured. Switch any time from the dashboard.",wizPhaseObserve:"Observe",wizPhaseWarn:"Warn",wizPhaseBlock:"Block",wizPhaseObserveD:"Audit only — a misconfiguration costs nothing",wizPhaseWarnD:"BYOA confidential calls are warned, not blocked; banned words still block",wizPhaseBlockD:"Every rule enforces as configured",wizSavePhase:"Save launch phase",wizComplete:"Finish onboarding",wizDone:"Onboarding complete",wizMasterKey:"I have backed up the master key (losing it loses every encrypted key)",wizEmployeeHint:"Employee onboarding: an employee runs ag-setup to get a device code; an admin approves it on the Device access page.",setupTitle:"First-time setup",setupSub:"Create the first administrator",setupCode:"Setup code",setupCodeHint:"The 12-character code printed in the server log on first boot (XXXX-XXXX-XXXX).",setupBtn:"Create admin and continue",setupUser:"Admin username",setupPass:"Password (at least 8 characters)",setupPass2:"Confirm password",obTitle:"Onboarding progress",obPhase:"Launch phase",obWouldBlock:"Would have blocked in observe mode",obWarned:"Warned in warn mode",obGoWizard:"Open the onboarding wizard",trustSigned:"signed_cloud (Signed cloud)",trustDedicated:"dedicated_cloud (Dedicated cloud / VPC)",trustLocal:"local_model (Local model)",filterAll:"All",filterDriftOnly:"Drifted only",filterNormalOnly:"Normal only",excConf:"confidential (Confidential)",excSecret:"secret (Top secret — opt-in required)",orgDingtalk:"dingtalk (DingTalk)",orgFeishu:"feishu (Feishu)",orgWecom:"wecom (WeCom)",optDisable:"Disabled",semAlert:"Alert and allow",semBlock:"Block",semCatJailbreak:"jailbreak (Jailbreak)",semCatInducement:"inducement (Inducement)",semCatDisguise:"disguise (Disguise)",semCatSplit:"split_exfil (Split exfiltration)",arSimple:"simple (Simple)",arComplex:"complex (Complex)",optToken:"Token (optional)",optCredential:"Credential (optional)",optSigningSecret:"Signing secret (optional)",optSha:"SHA-256 (expected checksum, optional)",pkgGuardBundle:"ag-guard component package",pkgSetupBundle:"ag-setup component package",phDept:"e.g. R&D",phExcReason:"Why this call needs an exception",phExcScope:"Model / task, e.g. mock-pro summarizing XH-200 progress",phOrgName:"e.g. Xinghe DingTalk",phSemSample:"Typical jailbreak / inducement / disguise / split-exfiltration wording",phArSample:"Typical simple question or complex task",phFolderName:"e.g. Company policies",phFolderDept:"e.g. HR",phScopeDepts:"* or R&D, Registry",phChangeNote:"First version",phDeviceName:"device name",phDesc:"description",roleAdmin:"Platform admin",roleSecurity:"Security admin",roleAuditor:"Auditor",roleOperator:"Operator",roleEmployee:"Employee",confirmDeleteTitle:"Confirm deletion",confirmDeleteBody:"This cannot be undone. Continue?",confirmDeleteOk:"Delete",cancel:"Cancel",toastDismiss:"Click to dismiss",chNeedNameUrl:"Channel name and base URL are required",chBadPricing:"pricing JSON is invalid",needWord:"Enter a word",errBadLogin:"Incorrect username or password",errUnauthorized:"Your session has expired, please sign in again",errAdminOnly:"Platform admin role required",errBadSetupCode:"Invalid setup code",errNoSetupCode:"No setup code issued; restart the server to issue one",errSetupExhausted:"Setup code exhausted after too many failed attempts; restart the server to issue a new one",errSetupDone:"First-time setup is already complete",errCantDisableSelf:"You cannot disable your own account",errCantRemoveLastAdmin:"Cannot remove the last enabled admin",errCantChangeOwnRole:"You cannot change your own role",errUserExists:"Username already exists",errBadUsername:"Username must be 3–32 letters, digits, dot, underscore or hyphen",errShortPassword:"Password must be at least 8 characters",errBadDeviceCode:"Device code invalid or expired",errBadRequest:"Invalid request, please check your input and retry",errBadJson:"The JSON input is invalid",errNeedNameUrl:"Name and URL are required",errNeedNameContent:"Name and content are required",errNeedName:"Name is required",errNeedContent:"Content is required",errDupApiKey:"Duplicate API key",errEmptyApiKey:"API key must not be empty",errTooManyKeys:"Too many keys (max 10 per channel)",errHttpsOnly:"URL must be https (loopback http allowed for testing)",errNeedVersion:"Version is required",errVersionMissing:"That version does not exist",errBadVersion:"Version must be a positive integer",errExpireFuture:"Expiry must be in the future",errExpireFormat:"Expiry must be RFC3339",errUntilAfterSince:"End must be after start",errBadTier:"Tier must be byoa or managed",errBadDataLevel:"Data level must be public, internal, confidential or secret",errBadTrustType:"Trust type must be signed_cloud, dedicated_cloud or local_model",errBadPhase:"Phase must be observe, warn or block",errBadWord:"Word must be 1–128 characters without control characters",errWordNotInList:"Word not in list",errBadBudget:"Invalid budget",errBadCap:"Monthly cap must be positive",errBadRate:"Rate limits must be >= 0",errTooManyPricing:"Too many pricing entries (max 32)",errBadPricingEntry:"Pricing entries need a model name and non-negative prices",errDeptBudget:"Department already has a budget; patch it instead",errFolderRegistered:"Folder already registered",errExcNotPending:"Exception not found or not pending",errNotYourExc:"Not your exception request",errOnlyAuthorAdmin:"Only the author or an admin may add a version",errSaveFailed:"Save failed, please retry",errEncryptFailed:"Encryption failed, please retry",errExportFailed:"Export failed, please retry",errSyncFailed:"Sync failed, please retry",errArchiveFailed:"Archive failed, please retry",errHashFailed:"Hash failed, please retry",errStoreSecret:"Cannot store secret, please retry",errDecryptSecret:"Cannot decrypt provider secret",errPersistConfig:"Cannot persist configuration, please retry",errOidcStart:"Failed to start OIDC login",errOtelExport:"Telemetry export failed",errNotAvailable:"This feature is not configured or unavailable",errNoSemEntries:"Document has no semantic entries",errNoPolicy:"No policy for agent type",errExternalIdentity:"External identity not found in any synced directory; sync the provider first",errSemModel:"Semantic model not configured",errNotFound:"Record not found, please refresh and retry",errAlreadyExists:"A record with this name already exists",errFailed:"Operation failed, please retry",errCheckInput:"Please check your input and retry",errGeneric:"Operation failed, please try again later",errNetwork:"Cannot reach the server, please check your network and retry",errDuplicate:"Duplicate entry, please check and retry",errNeedSource:"At least one source is required",errNeedCitation:"At least one citation is required: every synthesis must carry a source back-reference",errBadArgs:"Invalid arguments, please check and retry",errSnakeCase:"Name must be lowercase snake_case",errBadTrust:"Invalid trust type",errBadLevel:"Invalid data level",inputConfirm:"Confirm",inputVersionTitle:"Publish version",inputVersionBody:"Enter the version number to publish (a positive integer).",inputArgsTitle:"Test arguments",inputArgsBody:"Enter call arguments (JSON format)."}
 };
 let lang = localStorage.getItem("ag_lang") || "zh";
 let session = localStorage.getItem("ag_session") || "";
@@ -914,6 +915,118 @@ async function api(path, opts={}){
   const data = await res.json().catch(()=>({}));
   if(!res.ok) throw new Error(data.error || ("HTTP "+res.status));
   return data;
+}
+/* UX-014: server errors used to reach the user as raw English
+   (raw error text passed straight to toast / setMsg). errText()
+   localizes them: an exact table for the frequent, user-actionable
+   messages,
+   prefix patterns for dynamic ones (quoted identifiers), then suffix
+   patterns for the long tail (not found / not configured / already
+   exists / failed / required). Anything still unknown shows a generic
+   localized message in zh; in en the raw server text already matches
+   the UI language, so it passes through. Accepts an Error or a raw
+   string (200-responses carry d.error the same way). */
+const ERR_EXACT = {
+  "invalid credentials":"errBadLogin",
+  "unauthorized":"errUnauthorized",
+  "admin role required":"errAdminOnly",
+  "invalid setup code":"errBadSetupCode",
+  "no setup code issued (restart the server to issue one)":"errNoSetupCode",
+  "setup code exhausted after too many failed attempts (restart the server to issue a new one)":"errSetupExhausted",
+  "setup already complete":"errSetupDone",
+  "cannot disable yourself":"errCantDisableSelf",
+  "cannot remove the last enabled admin":"errCantRemoveLastAdmin",
+  "cannot change your own role":"errCantChangeOwnRole",
+  "username already exists":"errUserExists",
+  "username must be 3-32 letters, digits, dot, underscore or hyphen":"errBadUsername",
+  "password must be at least 8 characters":"errShortPassword",
+  "device code invalid or expired":"errBadDeviceCode",
+  "bad request":"errBadRequest",
+  "invalid request":"errBadRequest",
+  "invalid request body":"errBadRequest",
+  "invalid JSON body":"errBadRequest",
+  "invalid JSON":"errBadRequest",
+  "name and base_url required":"chNeedNameUrl",
+  "name and url required":"errNeedNameUrl",
+  "name and content required":"errNeedNameContent",
+  "name is required":"errNeedName",
+  "content required":"errNeedContent",
+  "duplicate api key":"errDupApiKey",
+  "empty api key":"errEmptyApiKey",
+  "too many keys (max 10 per channel)":"errTooManyKeys",
+  "base_url must be https (or loopback http for testing)":"errHttpsOnly",
+  "url must be https (or loopback http for testing)":"errHttpsOnly",
+  "version required":"errNeedVersion",
+  "version does not exist":"errVersionMissing",
+  "expires_at must be in the future":"errExpireFuture",
+  "expires_at must be RFC3339":"errExpireFormat",
+  "until must be after since":"errUntilAfterSince",
+  "min_tier must be byoa or managed":"errBadTier",
+  "max_data_level must be public, internal, confidential or secret":"errBadDataLevel",
+  "invalid level (public|internal|confidential|secret)":"errBadDataLevel",
+  "invalid trust_type (signed_cloud|dedicated_cloud|local_model)":"errBadTrustType",
+  "invalid phase (observe|warn|block)":"errBadPhase",
+  "word must be 1-128 characters without control characters":"errBadWord",
+  "word not in list":"errWordNotInList",
+  "invalid budget":"errBadBudget",
+  "monthly_cap_usd must be positive":"errBadCap",
+  "rate limits must be >= 0":"errBadRate",
+  "too many pricing entries (max 32)":"errTooManyPricing",
+  "pricing entries need a model name and non-negative prices":"errBadPricingEntry",
+  "department already has a budget (patch it instead)":"errDeptBudget",
+  "a REST tool with this name already exists":"errAlreadyExists",
+  "a knowledge package with this name already exists":"errAlreadyExists",
+  "a prompt template with this name already exists":"errAlreadyExists",
+  "an upstream with this name already exists":"errAlreadyExists",
+  "folder already registered":"errFolderRegistered",
+  "exception not found or not pending":"errExcNotPending",
+  "not your exception request":"errNotYourExc",
+  "only the author or an admin may add a version":"errOnlyAuthorAdmin",
+  "save failed":"errSaveFailed",
+  "encrypt failed":"errEncryptFailed",
+  "export failed":"errExportFailed",
+  "sync failed":"errSyncFailed",
+  "archive failed":"errArchiveFailed",
+  "hash failed":"errHashFailed",
+  "cannot store secret":"errStoreSecret",
+  "cannot decrypt provider secret":"errDecryptSecret",
+  "cannot persist semantic review policy":"errPersistConfig",
+  "cannot persist semantic review sample":"errPersistConfig",
+  "cannot persist smart routing policy":"errPersistConfig",
+  "cannot persist smart routing sample":"errPersistConfig",
+  "failed to start oidc login":"errOidcStart",
+  "otel_export_failed":"errOtelExport",
+  "org sync is not configured":"errNotAvailable",
+  "document has no semantic entries":"errNoSemEntries",
+  "no policy for agent type":"errNoPolicy",
+  "external identity not found in any synced directory (sync the provider first)":"errExternalIdentity",
+  "semantic model not configured (set AGENTGATE_SEMANTIC_MODEL_URL or pass model_url)":"errSemModel"
+};
+function errText(e){
+  const m = typeof e === "string" ? e : (e && e.message) || "";
+  if(!m) return T("errGeneric");
+  if(e && e.name === "SyntaxError") return T("errBadJson");
+  if(e && e.name === "TypeError" && /Failed to fetch|NetworkError|Load failed/i.test(m)) return T("errNetwork");
+  if(/^HTTP \d+/.test(m)) return T("errGeneric");
+  const k = ERR_EXACT[m];
+  if(k) return T(k);
+  if(m.indexOf("must be lowercase snake_case") !== -1) return T("errSnakeCase");
+  if(m.indexOf("invalid character") === 0 || m.indexOf("unexpected end of JSON input") !== -1 || m.indexOf("json:") === 0) return T("errBadJson");
+  if(m.indexOf("invalid trust type") === 0) return T("errBadTrust");
+  if(m.indexOf("invalid data level") === 0) return T("errBadLevel");
+  if(m.indexOf("device code invalid") === 0) return T("errBadDeviceCode");
+  if(m.indexOf("duplicate source") === 0 || m.indexOf("duplicate citation") === 0 || m.indexOf("duplicate reference") === 0 || m.indexOf("duplicate argument") === 0) return T("errDuplicate");
+  if(m.indexOf("at least one source") === 0) return T("errNeedSource");
+  if(m.indexOf("at least one citation") === 0) return T("errNeedCitation");
+  if(m.indexOf("unknown argument") !== -1 || m.indexOf("missing required argument") !== -1 || m.indexOf("invalid arguments") === 0 || m.indexOf("argument \"") === 0) return T("errBadArgs");
+  if(m.indexOf("component package not found") === 0 || m.indexOf("component file missing") === 0) return T("errNotFound");
+  if(/not found$/.test(m) || m.indexOf("no such ") === 0 || m === "package file missing") return T("errNotFound");
+  if(/not configured$/.test(m) || /not available$/.test(m) || /unavailable$/.test(m) || m === "backup_not_configured" || m === "otel_disabled") return T("errNotAvailable");
+  if(/already exists$/.test(m)) return T("errAlreadyExists");
+  if(/failed$/.test(m)) return T("errFailed");
+  if(/required$/.test(m) || /must be /.test(m) || /must not /.test(m) || /must start with/.test(m)) return T("errCheckInput");
+  if(/^(invalid|unknown) /.test(m)) return T("errCheckInput");
+  return lang === "zh" ? T("errGeneric") : m;
 }
 function toast(msg, ok=true){
   const t = document.getElementById("toast");
@@ -941,7 +1054,45 @@ function closeConfirm(ok){
   document.getElementById("confirmOverlay").style.display = "none";
   if(_confirmResolve){ const r = _confirmResolve; _confirmResolve = null; r(ok); }
 }
-document.addEventListener("keydown", (e)=>{ if(e.key==="Escape" && document.getElementById("confirmOverlay").style.display==="flex") closeConfirm(false); });
+/* UX-015: one shared input dialog for the flows that used the
+   browser's bare prompt dialog (publish version, REST test arguments).
+   Same overlay card as confirmDelete, so the dialog explains itself
+   (ruler 8) and validates before submitting (ruler 5: a bad version
+   or bad JSON is rejected inline instead of failing on the server).
+   Resolves the entered string, or null on Esc / overlay click /
+   Cancel. Enter confirms for single-line input. */
+let _inputResolve = null, _inputValidate = null, _inputMultiline = false;
+function promptInput(opts){
+  return new Promise((res)=>{
+    _inputResolve = res; _inputValidate = opts.validate || null; _inputMultiline = !!opts.multiline;
+    document.getElementById("inputTitle").textContent = opts.title;
+    document.getElementById("inputBody").textContent = opts.body || "";
+    document.getElementById("inputErr").textContent = "";
+    const f = document.getElementById("inputField"), a = document.getElementById("inputArea");
+    f.style.display = _inputMultiline ? "none" : "block";
+    a.style.display = _inputMultiline ? "block" : "none";
+    const target = _inputMultiline ? a : f;
+    target.value = opts.value || "";
+    target.placeholder = opts.placeholder || "";
+    document.getElementById("inputOverlay").style.display = "flex";
+    target.focus(); target.select();
+  });
+}
+function closeInput(v){
+  document.getElementById("inputOverlay").style.display = "none";
+  if(_inputResolve){ const r = _inputResolve; _inputResolve = null; _inputValidate = null; r(v); }
+}
+function submitInput(){
+  const ov = document.getElementById("inputOverlay");
+  if(ov.style.display !== "flex") return;
+  const target = _inputMultiline ? document.getElementById("inputArea") : document.getElementById("inputField");
+  if(_inputValidate){
+    const err = _inputValidate(target.value);
+    if(err){ document.getElementById("inputErr").textContent = err; return; }
+  }
+  closeInput(target.value);
+}
+document.addEventListener("keydown", (e)=>{ if(e.key==="Escape" && document.getElementById("confirmOverlay").style.display==="flex") closeConfirm(false); if(e.key==="Escape" && document.getElementById("inputOverlay").style.display==="flex") closeInput(null); if(e.key==="Enter" && !_inputMultiline && document.getElementById("inputOverlay").style.display==="flex" && document.activeElement === document.getElementById("inputField")) submitInput(); });
 function setMsg(id, msg, ok=true){ const el=document.getElementById(id); if(el){ el.textContent=msg; el.className="msg "+(ok?"ok":"err"); } }
 function esc(s){ return String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function pill(v){ return v ? `<span class="pill ${esc(v)}">${esc(v)}</span>` : ""; }
@@ -1009,7 +1160,7 @@ async function login(){
     const d = await api("/api/login",{method:"POST",body:JSON.stringify({username:lu.value,password:lp.value})});
     session = d.session; localStorage.setItem("ag_session", session);
     me = d; enterApp();
-  }catch(e){ document.getElementById("lerr").textContent = e.message; }
+  }catch(e){ document.getElementById("lerr").textContent = errText(e); }
 }
 /* F34: first-run setup — the console shows this form instead of
    login when the server reports no users yet. */
@@ -1029,7 +1180,7 @@ async function doSetup(){
     const d = await api("/api/login",{method:"POST",body:JSON.stringify({username:user, password:pw})});
     session = d.session; localStorage.setItem("ag_session", session);
     me = d; sessionStorage.setItem("ag_wizard_first", "1"); enterApp();
-  }catch(e){ document.getElementById("lerr").textContent = e.message; }
+  }catch(e){ document.getElementById("lerr").textContent = errText(e); }
 }
 fetch("/api/auth/providers").then(r=>r.json()).then(d=>{
   if(d.oidc_enabled){ document.getElementById("ssoRow").style.display="block";
@@ -1067,7 +1218,7 @@ async function loadDashboard(){
     document.getElementById("kpiBlocked").textContent = fmtNum(d.totals.blocked);
     bars(document.getElementById("dashDept"), (d.by_department||[]).slice(0,6), r=>r.calls);
     bars(document.getElementById("dashDecision"), d.by_decision||[], r=>r.calls, r=>{ const k=(r.key||"").split(":")[0]; return k==="allow"?"ok":k==="block"?"blocked":k==="redact"?"redact":k==="reroute"?"tokens":""; });
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
   try{ const v = await api("/api/audit/verify");
     const el = document.getElementById("kpiChain");
     el.textContent = v.chain_valid ? "✓ "+T("chainValid") : "✗ "+T("chainInvalid");
@@ -1152,7 +1303,7 @@ async function loadWizard(){
       </label>`;
     }).join("");
     document.getElementById("wizAdminState").textContent = "✓ " + T("wizAdminDone") + " — " + (me ? (me.display_name || me.username) : "");
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
   try{
     const d = await api("/api/onboarding/checklist");
     wizPhase = d.launch_phase || "observe";
@@ -1173,7 +1324,7 @@ async function applyWizTemplate(){
     const d = await api("/api/onboarding/apply-template",{method:"POST",body:JSON.stringify({template_id:wizTemplate})});
     wizPhase = d.launch_phase || wizPhase; renderPhaseCards();
     setMsg("wizTplMsg", T("wizTemplateApplied") + " · " + T("wizPhase" + wizPhase.charAt(0).toUpperCase() + wizPhase.slice(1)));
-  }catch(e){ setMsg("wizTplMsg", e.message, false); }
+  }catch(e){ setMsg("wizTplMsg", errText(e), false); }
 }
 async function addWizChannel(){
   const key = wizKey.value.trim();
@@ -1184,13 +1335,13 @@ async function addWizChannel(){
       api_key: key, models: wizModels.value.split(",").map(s=>s.trim()).filter(Boolean),
       trust_type: wizTrust.value, max_data_level: wizLevel.value})});
     setMsg("wizChanMsg", T("saved") + " · " + d.id); wizKey.value = "";
-  }catch(e){ setMsg("wizChanMsg", e.message, false); }
+  }catch(e){ setMsg("wizChanMsg", errText(e), false); }
 }
 async function saveWizPhase(){
   try{
     await api("/api/onboarding/launch-phase",{method:"POST",body:JSON.stringify({phase:wizPhase})});
     setMsg("wizPhaseMsg", T("saved"));
-  }catch(e){ setMsg("wizPhaseMsg", e.message, false); }
+  }catch(e){ setMsg("wizPhaseMsg", errText(e), false); }
 }
 async function renderWizChecklist(){
   try{
@@ -1198,7 +1349,7 @@ async function renderWizChecklist(){
     document.getElementById("wizChecklist").innerHTML = checklistRows(d) +
       `<div class="muted" style="margin-top:8px">${T("obWouldBlock")}: ${d.would_block_count||0} · ${T("obWarned")}: ${d.warned_count||0}</div>`;
     if(d.completed_at) document.getElementById("wizDoneMsg").textContent = T("wizDone");
-  }catch(e){ document.getElementById("wizChecklist").textContent = e.message; }
+  }catch(e){ document.getElementById("wizChecklist").textContent = errText(e); }
 }
 async function completeWizard(){
   try{
@@ -1207,7 +1358,7 @@ async function completeWizard(){
     }
     await api("/api/onboarding/complete",{method:"POST",body:"{}"});
     setMsg("wizDoneMsg", T("wizDone")); loadDashboard(); go("dashboard");
-  }catch(e){ setMsg("wizDoneMsg", e.message, false); }
+  }catch(e){ setMsg("wizDoneMsg", errText(e), false); }
 }
 async function loadOnboardingCard(){
   const card = document.getElementById("onboardCard");
@@ -1223,7 +1374,7 @@ async function loadOnboardingCard(){
 }
 async function setPhase(p){
   try{ await api("/api/onboarding/launch-phase",{method:"POST",body:JSON.stringify({phase:p})}); loadOnboardingCard(); toast(T("saved")); }
-  catch(e){ toast(e.message, false); }
+  catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- stats ---------- */
@@ -1232,7 +1383,7 @@ async function loadStats(){
     `<tr><td>${esc(b.key)}</td><td class="num">${b.calls}</td><td class="num">${fmtNum(b.tokens)}</td><td class="num">${b.blocked||0}</td><td class="num">${fmtUSD(b.cost_usd)}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">${T("empty")}</td></tr>`; };
   try{ const d = await api("/api/stats");
     fill("#statsDept", d.by_department); fill("#statsModel", d.by_model); fill("#statsChannel", d.by_channel);
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- department budgets (F13) ---------- */
@@ -1245,26 +1396,26 @@ async function loadBudgets(){
       `<td class="num">${fmtUSD(b.spent_usd)}</td><td class="num">${fmtUSD(b.remaining_usd)}</td>`+
       `<td class="num">${pct}%${b.alert_threshold?(" · ⚠ "+Math.round(b.alert_threshold*100)+"%"):""}</td>`+
       `<td style="white-space:nowrap"><button class="btn ghost small" onclick="saveBudget('${b.id}')">${T("save")}</button> <button class="btn ghost small danger" onclick="deleteBudget('${b.id}')">✕</button></td></tr>`;}).join("") || `<tr><td colspan="6" class="empty">${T("empty")}</td></tr>`;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function addBudget(){
   try{ const cap = parseFloat(document.getElementById("budCap").value);
     const th = parseFloat(document.getElementById("budThreshold").value);
     await api("/api/budgets",{method:"POST",body:JSON.stringify({department:budDept.value.trim(),monthly_cap_usd:cap,alert_threshold:isNaN(th)?0:th})});
     setMsg("budMsg", T("saved")); budDept.value=""; budCap.value=""; budThreshold.value=""; loadBudgets();
-  }catch(e){ setMsg("budMsg", e.message, false); }
+  }catch(e){ setMsg("budMsg", errText(e), false); }
 }
 async function saveBudget(id){
   try{ const cap = parseFloat(document.getElementById("budCap-"+id).value);
     await api("/api/budgets/"+id,{method:"PATCH",body:JSON.stringify({monthly_cap_usd:cap})});
     toast(T("saved")); loadBudgets();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function deleteBudget(id){
   if(!(await confirmDelete())) return;
   try{ await api("/api/budgets/"+id,{method:"DELETE"});
     toast(T("deleted")); loadBudgets();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- response cache (F11) ---------- */
@@ -1274,7 +1425,7 @@ async function loadCache(){
     cacheEnabled = d.enabled;
     document.getElementById("cacheStats").textContent = `enabled ${d.enabled} · hits ${d.hits} · misses ${d.misses} · entries ${d.entries} · ttl ${d.ttl_seconds}s`;
     document.getElementById("cacheToggleBtn").textContent = d.enabled ? (lang==="zh"?"停用":"Disable") : (lang==="zh"?"启用":"Enable");
-  }catch(e){ const el=document.getElementById("cacheStats"); if(el) el.textContent = e.message; }
+  }catch(e){ const el=document.getElementById("cacheStats"); if(el) el.textContent = errText(e); }
 }
 
 /* ---------- OpenTelemetry export (F16) ---------- */
@@ -1284,22 +1435,22 @@ async function loadOtel(){
       (d.enabled?("✓ "+(d.endpoint||"")):(lang==="zh"?"未启用":"disabled"))+
       " · spans "+fmtNum(d.spans_exported||0)+" · dropped "+fmtNum(d.spans_dropped||0)+" · errors "+fmtNum(d.export_errors||0)+
       (d.last_error?(" · "+d.last_error):"");
-  }catch(e){ const el=document.getElementById("otelStats"); if(el) el.textContent = e.message; }
+  }catch(e){ const el=document.getElementById("otelStats"); if(el) el.textContent = errText(e); }
 }
 async function testOtel(){
   try{ const d = await api("/api/otel/test",{method:"POST"});
     setMsg("otelMsg", "✓ exported "+(d.spans_exported||0)+" spans"); loadOtel();
-  }catch(e){ setMsg("otelMsg", e.message, false); }
+  }catch(e){ setMsg("otelMsg", errText(e), false); }
 }
 async function toggleCache(){
   try{ const d = await api("/api/cache",{method:"POST",body:JSON.stringify({enabled:!cacheEnabled})});
     setMsg("cacheMsg", "✓ "+(d.enabled?"enabled":"disabled")); loadCache();
-  }catch(e){ setMsg("cacheMsg", e.message, false); }
+  }catch(e){ setMsg("cacheMsg", errText(e), false); }
 }
 async function clearCache(){
   try{ const d = await api("/api/cache/clear",{method:"POST",body:"{}"});
     setMsg("cacheMsg", "✓ cleared "+d.cleared); loadCache();
-  }catch(e){ setMsg("cacheMsg", e.message, false); }
+  }catch(e){ setMsg("cacheMsg", errText(e), false); }
 }
 
 /* ---------- audit ---------- */
@@ -1309,7 +1460,7 @@ async function loadAudit(){
     const v = await api("/api/audit/verify");
     const c = document.getElementById("chain");
     c.innerHTML = v.chain_valid ? `<span class="chainOk">✓ ${T("chainValid")}</span>` : `<span class="chainBad">✗ ${T("chainInvalid")}</span>`;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function exportAudit(){
   try{
@@ -1323,7 +1474,7 @@ async function exportAudit(){
     a.href = URL.createObjectURL(blob); a.download = "agentgate-audit.ndjson"; a.click();
     setMsg("expMsg", "chain_valid: "+res.headers.get("X-Audit-Chain-Valid")+" · "+res.headers.get("X-Audit-Event-Count")+" events");
     loadAudit();
-  }catch(e){ setMsg("expMsg", e.message, false); }
+  }catch(e){ setMsg("expMsg", errText(e), false); }
 }
 async function archiveAudit(){
   try{
@@ -1331,7 +1482,7 @@ async function archiveAudit(){
     const d = await api("/api/audit/archive",{method:"POST",body:JSON.stringify({before})});
     setMsg("expMsg", "archived "+d.archived+" events → "+(d.archive_file||"(none)"));
     loadAudit();
-  }catch(e){ setMsg("expMsg", e.message, false); }
+  }catch(e){ setMsg("expMsg", errText(e), false); }
 }
 
 /* ---------- compliance reports ---------- */
@@ -1345,7 +1496,7 @@ async function loadReports(){
     const d = await api("/api/reports");
     document.querySelector("#reports tbody").innerHTML = (d.reports||[]).map(r=>
       `<tr><td>${esc(r.period)}<br><span class="muted">${timeShort(r.period_start)} → ${timeShort(r.period_end)}</span></td><td class="muted">${timeShort(r.generated_at)}</td><td class="muted">${esc(r.generated_by)}</td><td>${fmtNum(r.calls)}</td><td>${fmtNum(r.blocked)}</td><td style="white-space:nowrap"><button class="btn ghost small" onclick="previewReport('${r.id}')">${T("repPreview")}</button> <button class="btn ghost small" onclick="exportReport('${r.id}')">${T("repExport")}</button> <button class="btn ghost small danger" onclick="deleteReport('${r.id}')">${T("repDelete")}</button></td></tr>`).join("") || `<tr><td colspan="6" class="empty">${T("empty")}</td></tr>`;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function generateReport(){
   try{
@@ -1353,7 +1504,7 @@ async function generateReport(){
     if(repDate.value) body.date = repDate.value;
     const d = await api("/api/reports",{method:"POST",body:JSON.stringify(body)});
     setMsg("repMsg", T("saved")); loadReports(); previewReport(d.id);
-  }catch(e){ setMsg("repMsg", e.message, false); }
+  }catch(e){ setMsg("repMsg", errText(e), false); }
 }
 async function previewReport(id){
   try{
@@ -1373,7 +1524,7 @@ async function previewReport(id){
       + repTable(T("repAudit"), [T("repKey"),T("repCount")], [[T("repAudit"), r.audit.events_in_window],["chain_valid", r.audit.chain_valid ? "✓" : "✗"]].map(([k,v])=>`<tr><td>${esc(k)}</td><td>${esc(String(v))}</td></tr>`).join(""));
     document.getElementById("repPreview").innerHTML = h + tables;
     document.getElementById("repPreviewCard").style.display = "block";
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function exportReport(id){
   try{
@@ -1382,7 +1533,7 @@ async function exportReport(id){
     const blob = await res.blob();
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob); a.download = "agentgate-report-"+id+".csv"; a.click();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function deleteReport(id){
   if(!(await confirmDelete())) return;
@@ -1391,14 +1542,14 @@ async function deleteReport(id){
     toast(T("deleted"));
     document.getElementById("repPreviewCard").style.display = "none";
     loadReports();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- device & tokens ---------- */
 async function approve(){
   try{ await api("/api/device/approve",{method:"POST",body:JSON.stringify({code:dcode.value.trim(),device_name:dname.value})});
     setMsg("dmsg", "✓ approved"); toast("✓ approved"); loadAudit();
-  }catch(e){ setMsg("dmsg", e.message, false); }
+  }catch(e){ setMsg("dmsg", errText(e), false); }
 }
 async function loadSidecar(){
   try{ const d = await api("/api/sidecar/stats");
@@ -1406,7 +1557,7 @@ async function loadSidecar(){
     document.getElementById("scCacheHits").textContent = fmtNum(d.sidecar_cache_hits||0);
     document.getElementById("scLastSeen").textContent = d.last_seen ? timeShort(d.last_seen) : "—";
     document.getElementById("scAgents").textContent = (d.by_agent||[]).map(a=>a.agent_type+" × "+fmtNum(a.calls)).join(" · ");
-  }catch(e){ setMsg("scMsg", e.message, false); }
+  }catch(e){ setMsg("scMsg", errText(e), false); }
 }
 async function loadTokens(){
   try{ const d = await api("/api/tokens");
@@ -1418,14 +1569,14 @@ async function loadTokens(){
       `<td>${fmtNum(tk.used_tokens||0)}${tk.monthly_cap_tokens?(" / "+fmtNum(tk.monthly_cap_tokens)):""}</td>`+
       `<td class="muted">${(tk.expires_at||"").slice(0,10)}</td>`+
       `<td><button class="btn ghost small" onclick="saveToken('${tk.id}')">${T("save")}</button></td></tr>`).join("") || `<tr><td colspan="9" class="empty">${T("empty")}</td></tr>`;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function saveToken(id){
   try{ const rpm = parseInt(document.getElementById("rpm-"+id).value, 10);
     const tpm = parseInt(document.getElementById("tpm-"+id).value, 10);
     await api("/api/tokens/"+id,{method:"PATCH",body:JSON.stringify({rpm_limit:rpm,tpm_limit:tpm})});
     toast(T("saved")); loadAudit();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- users & roles ---------- */
@@ -1433,7 +1584,7 @@ async function loadUsers(){
   try{ const d = await api("/api/users/roles");
     document.querySelector("#roleMatrix tbody").innerHTML = (d.roles||[]).map(r=>
       `<tr><td>${pill(r.role)}</td><td>${esc(lang==="zh"?r.name_zh:r.name_en)}</td><td>${esc(lang==="zh"?r.summary_zh:r.summary_en)}</td></tr>`).join("") || `<tr><td colspan="3" class="empty">${T("empty")}</td></tr>`;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
   try{ const d = await api("/api/users");
     const isAdmin = me && me.role==="admin";
     document.querySelector("#users tbody").innerHTML = (d.users||[]).map(u=>{
@@ -1445,17 +1596,17 @@ async function loadUsers(){
           `<button class="btn ghost small" onclick="toggleUserDisabled('${u.id}',${!u.disabled})">${u.disabled?T("userEnable"):T("userDisable")}</button>`;
       }
       return `<tr><td style="font-weight:600;color:var(--ink)">${esc(u.username)}</td><td>${esc(u.display_name)}</td><td>${esc(u.department||"—")}</td><td>${pill(u.role)}</td><td class="muted">${esc(u.role_source||"—")}</td><td class="muted">${esc(u.auth_source||"local")}</td><td>${st}</td><td style="white-space:nowrap">${op}</td></tr>`;}).join("") || `<tr><td colspan="8" class="empty">${T("empty")}</td></tr>`;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function saveUserRole(id){
   try{ await api("/api/users/"+id,{method:"PATCH",body:JSON.stringify({role:document.getElementById("role-"+id).value})});
     setMsg("usersMsg", T("saved")); loadUsers();
-  }catch(e){ setMsg("usersMsg", e.message, false); }
+  }catch(e){ setMsg("usersMsg", errText(e), false); }
 }
 async function toggleUserDisabled(id, disabled){
   try{ await api("/api/users/"+id,{method:"PATCH",body:JSON.stringify({disabled})});
     setMsg("usersMsg", T("saved")); loadUsers();
-  }catch(e){ setMsg("usersMsg", e.message, false); }
+  }catch(e){ setMsg("usersMsg", errText(e), false); }
 }
 
 /* ---------- attestation ---------- */
@@ -1464,22 +1615,22 @@ async function loadAttest(){
     document.querySelector("#attestPolicies tbody").innerHTML = (d.policies||[]).map(p=>
       `<tr><td style="font-weight:600;color:var(--ink)">${esc(p.agent_type)}</td><td>${esc(p.min_version||"—")}</td><td>${p.require_report?"✓":"—"}</td><td>${p.require_guard?"✓":"—"}</td>`+
       `<td><button class="btn ghost small danger" onclick="deleteAttestPolicy('${esc(p.agent_type)}')">✕</button></td></tr>`).join("") || `<tr><td colspan="5" class="empty">${T("empty")}</td></tr>`;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
   try{ const d = await api("/api/attestation/reports");
     document.querySelector("#attestReports tbody").innerHTML = (d.reports||[]).map(ev=>
       `<tr><td class="muted">${timeShort(ev.time)}</td><td>${esc(ev.agent_type||"")}</td><td>${esc(ev.action)}</td><td class="decision-${esc((ev.decision||"").split(":")[0])}">${esc(ev.decision||"")}</td><td>${esc((ev.detail&&ev.detail.verdict)||"")}${ev.detail&&ev.detail.reasons?(" · "+esc(ev.detail.reasons)):""}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">${T("empty")}</td></tr>`;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 function splitList(s){ return s.split(",").map(x=>x.trim()).filter(Boolean); }
 async function addAttestPolicy(){
   try{ await api("/api/attestation/policies",{method:"POST",body:JSON.stringify({agent_type:atAgent.value.trim(),min_version:atMinVersion.value.trim(),allowed_config_hashes:splitList(atHashes.value),allowed_plugins:splitList(atAllowedPlugins.value),blocked_plugins:splitList(atBlockedPlugins.value),require_guard:atGuard.value==="true",require_report:atRequire.value==="true"})});
     setMsg("atMsg", T("saved")); atAgent.value=""; atMinVersion.value=""; atHashes.value=""; atAllowedPlugins.value=""; atBlockedPlugins.value=""; loadAttest();
-  }catch(e){ setMsg("atMsg", e.message, false); }
+  }catch(e){ setMsg("atMsg", errText(e), false); }
 }
 async function deleteAttestPolicy(agent){
   if(!(await confirmDelete())) return;
   try{ await api("/api/attestation/policies/"+encodeURIComponent(agent),{method:"DELETE"}); toast(T("deleted")); loadAttest();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- terminal inventory ---------- */
@@ -1496,7 +1647,7 @@ async function loadTerminals(){
       const drift = (t.drift_reasons||[]).length ? `<span style="color:var(--bad);font-weight:600">${esc(t.drift_reasons.join(", "))}</span>` : "—";
       const off = t.last_offline_audit ? `${esc(String(t.last_offline_audit.events||0))} (${T("termOffline")})` : "—";
       return `<tr><td style="font-weight:600;color:var(--ink)">${esc(t.username)}</td><td>${esc(t.agent_type)}</td><td>${esc(t.version)}</td><td class="muted">${esc(t.department||"—")}</td><td>${statusPill(t.status)}</td><td class="muted">${timeShort(t.last_seen)}</td><td>${drift}</td><td class="muted">${off}</td></tr>`;}).join("") || `<tr><td colspan="8" class="empty">${T("empty")}</td></tr>`;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- exception approvals ---------- */
@@ -1508,18 +1659,18 @@ async function loadExceptions(){
       if(x.status==="pending") acts = `<button class="btn ghost small" onclick="decideException('${x.id}','approve')">${T("excApprove")}</button> <button class="btn ghost small danger" onclick="decideException('${x.id}','reject')">${T("excReject")}</button>`;
       else if(x.status==="approved") acts = `<button class="btn ghost small danger" onclick="decideException('${x.id}','revoke')">${T("excRevoke")}</button>`;
       return `<tr><td style="font-weight:600;color:var(--ink)">${esc(x.applicant)}</td><td>${pill(x.data_level)}</td><td class="muted">${esc(x.reason)}</td><td class="muted">${esc(x.scope)}</td><td>${stPill}</td><td class="muted">${x.expires_at?timeShort(x.expires_at):"—"}</td><td class="muted">${esc(x.decided_by||"—")}</td><td style="white-space:nowrap">${acts}</td></tr>`;}).join("") || `<tr><td colspan="8" class="empty">${T("empty")}</td></tr>`;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function applyException(){
   try{ await api("/api/exceptions",{method:"POST",body:JSON.stringify({data_level:excLevel.value, hours:Number(excHours.value)||0, reason:excReason.value, scope:excScope.value})});
     setMsg("excMsg", T("saved")); excReason.value=""; excScope.value=""; loadExceptions();
-  }catch(e){ setMsg("excMsg", e.message, false); }
+  }catch(e){ setMsg("excMsg", errText(e), false); }
 }
 async function decideException(id, action){
   try{ const d = await api("/api/exceptions/"+id+"/"+action,{method:"POST",body:"{}"});
     if(action==="approve" && d.grant){ document.getElementById("excGrantBox").style.display="block"; document.getElementById("excGrant").textContent = d.grant; }
     toast(T("saved")); loadExceptions();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- channels ---------- */
@@ -1536,23 +1687,23 @@ async function loadChannels(){
     const sel = document.getElementById("keyCh"), cur = sel.value;
     sel.innerHTML = (d.channels||[]).map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
     if(cur) sel.value = cur;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function addKey(){
   try{ await api("/api/channels/"+keyCh.value+"/keys",{method:"POST",body:JSON.stringify({api_key:keyNew.value})});
     setMsg("keyMsg", T("saved")); keyNew.value=""; loadChannels();
-  }catch(e){ setMsg("keyMsg", e.message, false); }
+  }catch(e){ setMsg("keyMsg", errText(e), false); }
 }
 async function keyToggle(id, idx, disabled){
   try{ await api(`/api/channels/${id}/keys/${idx}/${disabled?"enable":"disable"}`,{method:"POST",body:"{}"});
     toast(T("saved")); loadChannels();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function keyDelete(id, idx){
   if(!(await confirmDelete())) return;
   try{ await api(`/api/channels/${id}/keys/${idx}`,{method:"DELETE"});
     toast(T("saved")); loadChannels();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function addChannel(){
   if(!chName.value.trim() || !chUrl.value.trim()){ setMsg("chMsg", T("chNeedNameUrl"), false); return; }
@@ -1560,7 +1711,7 @@ async function addChannel(){
     let pricing; if(chPricing.value.trim()){ try{ pricing = JSON.parse(chPricing.value); }catch(e){ setMsg("chMsg", T("chBadPricing"), false); return; } }
     await api("/api/channels",{method:"POST",body:JSON.stringify({name:chName.value.trim(),base_url:chUrl.value.trim(),api_key:chKey.value,models,pricing,max_data_level:chLevel.value,trust_type:chTrust.value})});
     setMsg("chMsg", T("saved")); chName.value=""; chUrl.value=""; chKey.value=""; chModels.value=""; chPricing.value=""; loadChannels();
-  }catch(e){ setMsg("chMsg", e.message, false); }
+  }catch(e){ setMsg("chMsg", errText(e), false); }
 }
 
 /* ---------- DLP word lists (F35) ---------- */
@@ -1568,7 +1719,7 @@ async function loadDLPWords(){
   try{ const d = await api("/api/dlp/words");
     renderDLPList("dlpBannedList", d.banned||[], "banned");
     renderDLPList("dlpCustomList", d.custom||[], "custom");
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 function renderDLPList(elId, entries, list){
   document.getElementById(elId).innerHTML = entries.map(e=>
@@ -1581,12 +1732,12 @@ async function addDLPWord(list){
   const word = input.value.trim(); if(!word){ setMsg(list==="banned" ? "dlpBannedMsg" : "dlpCustomMsg", T("needWord"), false); return; }
   try{ await api("/api/dlp/words",{method:"POST",body:JSON.stringify({list, action:"add", word})});
     input.value=""; setMsg(list==="banned" ? "dlpBannedMsg" : "dlpCustomMsg", T("saved")); loadDLPWords();
-  }catch(e){ setMsg(list==="banned" ? "dlpBannedMsg" : "dlpCustomMsg", e.message, false); }
+  }catch(e){ setMsg(list==="banned" ? "dlpBannedMsg" : "dlpCustomMsg", errText(e), false); }
 }
 async function removeDLPWord(list, enc){
   if(!(await confirmDelete())) return;
   try{ await api("/api/dlp/words",{method:"POST",body:JSON.stringify({list, action:"remove", word:decodeURIComponent(enc)})}); toast(T("deleted")); loadDLPWords(); }
-  catch(e){ toast(e.message, false); }
+  catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- semantic review (F28) ---------- */
@@ -1610,7 +1761,7 @@ async function loadSemReview(){
       sel.innerHTML = `<option value="">—</option>` + (ch.channels||[]).map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
       if(cur) sel.value = cur;
     }catch(e){ /* channels list is optional here */ }
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function saveSemReview(){
   try{
@@ -1621,18 +1772,18 @@ async function saveSemReview(){
     if(isNaN(body.timeout_ms)) delete body.timeout_ms;
     await api("/api/semantic-review",{method:"POST",body:JSON.stringify(body)});
     setMsg("srMsg", T("saved")); loadSemReview();
-  }catch(e){ setMsg("srMsg", e.message, false); }
+  }catch(e){ setMsg("srMsg", errText(e), false); }
 }
 async function addSemSample(){
   try{ await api("/api/semantic-review/samples",{method:"POST",body:JSON.stringify({category:srCat.value, text:srText.value, action:srAct.value})});
     setMsg("srSampleMsg", T("saved")); srText.value=""; loadSemReview();
-  }catch(e){ setMsg("srSampleMsg", e.message, false); }
+  }catch(e){ setMsg("srSampleMsg", errText(e), false); }
 }
 async function delSemSample(id){
   if(!(await confirmDelete())) return;
   try{ await api("/api/semantic-review/samples/"+id,{method:"DELETE"});
     toast(T("saved")); loadSemReview();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- smart routing (F30) ---------- */
@@ -1652,7 +1803,7 @@ async function loadAutoRoute(){
     const un = d.unresolved_models || [];
     document.getElementById("arUnresolved").textContent = un.length ?
       (lang==="zh" ? "⚠ 以下模型暂无渠道提供（将回落到另一层）：" : "⚠ Models with no serving channel (the other tier covers for them): ") + un.join(", ") : "";
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function saveAutoRoute(){
   try{
@@ -1662,18 +1813,18 @@ async function saveAutoRoute(){
     if(isNaN(body.threshold)) delete body.threshold;
     await api("/api/auto-route",{method:"POST",body:JSON.stringify(body)});
     setMsg("arMsg", T("saved")); loadAutoRoute();
-  }catch(e){ setMsg("arMsg", e.message, false); }
+  }catch(e){ setMsg("arMsg", errText(e), false); }
 }
 async function addAutoSample(){
   try{ await api("/api/auto-route/samples",{method:"POST",body:JSON.stringify({tier:arTier.value, text:arText.value})});
     setMsg("arSampleMsg", T("saved")); arText.value=""; loadAutoRoute();
-  }catch(e){ setMsg("arSampleMsg", e.message, false); }
+  }catch(e){ setMsg("arSampleMsg", errText(e), false); }
 }
 async function delAutoSample(id){
   if(!(await confirmDelete())) return;
   try{ await api("/api/auto-route/samples/"+id,{method:"DELETE"});
     toast(T("saved")); loadAutoRoute();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- kb folders ---------- */
@@ -1683,7 +1834,7 @@ async function loadFolders(){
       `<tr><td style="font-weight:600;color:var(--ink)">${esc(f.name)}</td><td class="muted">${esc(f.department||"—")}</td><td class="muted">${esc(f.path||"")}</td><td>${pill(f.level)}</td><td>${f.docs||0}</td><td class="muted">${(f.last_scan||"").slice(0,19).replace("T"," ")}${f.last_error?(" · ✗ "+esc(f.last_error)):""}</td>`+
       `<td style="white-space:nowrap"><button class="btn ghost small" onclick="rescanFolder('${f.id}')">${T("rescan")}</button> <button class="btn ghost small" onclick="regenSemantic('${f.id}')">${T("semRegen")}</button> <button class="btn ghost small danger" onclick="deleteFolder('${f.id}')">✕</button></td></tr>`).join("") || `<tr><td colspan="7" class="empty">${T("empty")}</td></tr>`;
     loadSemanticCoverage();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function loadSemanticCoverage(){
   try{ const d = await api("/api/kb/semantic/coverage");
@@ -1695,22 +1846,22 @@ async function loadSemanticCoverage(){
 async function addFolder(){
   try{ const d = await api("/api/kb/folders",{method:"POST",body:JSON.stringify({name:fbName.value.trim(),path:fbPath.value.trim(),level:fbLevel.value,department:fbDept.value.trim()})});
     setMsg("fbMsg", "✓ saved ("+(d.docs||0)+" docs)"); fbName.value=""; fbPath.value=""; fbDept.value=""; loadFolders();
-  }catch(e){ setMsg("fbMsg", e.message, false); }
+  }catch(e){ setMsg("fbMsg", errText(e), false); }
 }
 async function regenSemantic(id){
   try{ const d = await api("/api/kb/folders/"+id+"/semantic",{method:"POST",body:"{}"});
     toast("✓ "+(d.regenerated||0)+" docs indexed"+(d.model_fallback?" (model fallback)":"")); loadFolders();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function rescanFolder(id){
   try{ const d = await api("/api/kb/folders/"+id+"/rescan",{method:"POST",body:"{}"});
     toast("✓ added "+(d.stats.added||0)+" · updated "+(d.stats.updated||0)+" · removed "+(d.stats.removed||0)); loadFolders();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function deleteFolder(id){
   if(!(await confirmDelete())) return;
   try{ await api("/api/kb/folders/"+id,{method:"DELETE"}); toast(T("deleted")); loadFolders();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- skills ---------- */
@@ -1719,24 +1870,24 @@ async function loadSkills(){
     document.querySelector("#skills tbody").innerHTML = (d.skills||[]).map(s=>
       `<tr><td style="font-weight:600;color:var(--ink)">${esc(s.name)}</td><td>${esc(s.version||"")}</td><td><span class="pill ${esc(s.status)}">${esc(s.status)}</span></td><td class="muted">${esc(s.scope||"")}</td><td class="muted">${(s.updated_at||"").slice(0,10)}</td>`+
       `<td style="white-space:nowrap">${s.status==="in_review"?`<button class="btn ghost small" onclick="reviewSkill('${s.id}',true)">${T("approve")}</button> <button class="btn ghost small danger" onclick="reviewSkill('${s.id}',false)">${T("reject")}</button> `:""}${s.status==="published"?`<button class="btn ghost small" onclick="downloadSkill('${s.id}')">${T("download")}</button>`:""}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">${T("empty")}</td></tr>`;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function addSkill(){
   try{ await api("/api/skills",{method:"POST",body:JSON.stringify({name:skName.value.trim(),version:skVersion.value.trim(),scope:skScope.value.trim(),content:skContent.value})});
     setMsg("skMsg", "✓ submitted (in_review)"); skName.value=""; skVersion.value=""; skContent.value=""; loadSkills();
-  }catch(e){ setMsg("skMsg", e.message, false); }
+  }catch(e){ setMsg("skMsg", errText(e), false); }
 }
 async function reviewSkill(id, approveIt){
   try{ await api("/api/skills/"+id+"/review",{method:"POST",body:JSON.stringify({approve:approveIt})});
     toast(T("saved")); loadSkills();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function downloadSkill(id){
   try{ const res = await fetch("/api/skills/"+id+"/download", {headers: session?{Authorization:"Bearer "+session}:{}});
     if(!res.ok) throw new Error(await res.text());
     const blob = await res.blob(); const a = document.createElement("a");
     a.href = URL.createObjectURL(blob); a.download = "SKILL.md"; a.click();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- prompts ---------- */
@@ -1745,25 +1896,25 @@ async function loadPrompts(){
     document.querySelector("#prompts tbody").innerHTML = (d.prompts||[]).map(p=>
       `<tr><td style="font-weight:600;color:var(--ink)">${esc(p.name)}</td><td><span class="pill ${esc(p.status)}">${esc(p.status)}</span></td><td>v${p.current_version} / published v${p.published_version||"—"}</td><td class="muted">${esc(p.scope||"")}</td><td>${pill(p.max_data_level)}</td><td>${pill(p.min_tier)}</td>`+
       `<td style="white-space:nowrap"><button class="btn ghost small" onclick="publishPrompt('${p.id}', ${p.current_version})">${T("publish")}</button> <button class="btn ghost small danger" onclick="deletePrompt('${p.id}')">✕</button></td></tr>`).join("") || `<tr><td colspan="7" class="empty">${T("empty")}</td></tr>`;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function addPrompt(){
   try{ const args = JSON.parse(ptArgs.value||"[]");
     await api("/api/prompts",{method:"POST",body:JSON.stringify({name:ptName.value.trim(),description:ptDesc.value.trim(),scope:ptScope.value.trim(),content:ptContent.value,arguments:args,max_data_level:ptLevel.value,min_tier:ptTier.value})});
     setMsg("ptMsg", "✓ saved (in_review)"); ptName.value=""; ptDesc.value=""; ptScope.value=""; loadPrompts();
-  }catch(e){ setMsg("ptMsg", e.message, false); }
+  }catch(e){ setMsg("ptMsg", errText(e), false); }
 }
 async function publishPrompt(id, currentVer){
-  try{ const raw = prompt("publish version", String(currentVer));
-    if(raw===null) return;
-    const d = await api("/api/prompts/"+id+"/publish",{method:"POST",body:JSON.stringify({version:parseInt(raw,10)})});
+  const raw = await promptInput({title:T("inputVersionTitle"), body:T("inputVersionBody"), value:String(currentVer), validate:(v)=> /^\d+$/.test(v.trim()) && parseInt(v.trim(),10) > 0 ? null : T("errBadVersion")});
+  if(raw===null) return;
+  try{ const d = await api("/api/prompts/"+id+"/publish",{method:"POST",body:JSON.stringify({version:parseInt(raw,10)})});
     toast("✓ published v"+d.published_version); loadPrompts();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function deletePrompt(id){
   if(!(await confirmDelete())) return;
   try{ await api("/api/prompts/"+id,{method:"DELETE"}); toast(T("deleted")); loadPrompts();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- knowledge packages ---------- */
@@ -1781,14 +1932,14 @@ async function loadKnowpacks(){
       return `<tr><td style="font-weight:600;color:var(--ink)">${esc(p.name)}${p.stale?` <span class="pill" title="stale">⚠ ${T("kpStale")}</span>`:""}</td><td><span class="pill ${esc(p.status)}">${esc(p.status)}</span></td><td>${pill(p.level||"—")}</td><td>v${p.current_version} / published v${p.published_version||"—"}</td><td class="muted">${esc(p.scope||"")}</td>`+
       `<td style="white-space:nowrap">${p.status==="in_review"?`<button class="btn ghost small" onclick="reviewKnowpack('${p.id}',true)">${T("approve")}</button> <button class="btn ghost small danger" onclick="reviewKnowpack('${p.id}',false)">${T("reject")}</button> `:""}<button class="btn ghost small" onclick="toggleKnowpackVersion('${p.id}')">${T("kpNewVersion")}</button> <button class="btn ghost small" onclick="publishKnowpack('${p.id}', ${p.current_version})">${T("publish")}</button> <button class="btn ghost small danger" onclick="deleteKnowpack('${p.id}')">✕</button></td></tr>`+verForm;
     }).join("") || `<tr><td colspan="6" class="empty">${T("empty")}</td></tr>`;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function addKnowpack(){
   try{ const sources = JSON.parse(kpSources.value||"[]"); const cites = JSON.parse(kpCites.value||"[]");
     const refs = kpRefs.value.split(",").map(s=>s.trim()).filter(Boolean);
     await api("/api/kb/packages",{method:"POST",body:JSON.stringify({name:kpName.value.trim(),description:kpDesc.value.trim(),scope:kpScope.value.trim(),content:kpContent.value,sources:sources,citations:cites,references:refs,change_note:kpNote.value.trim()})});
     setMsg("kpMsg", "✓ saved (in_review)"); kpName.value=""; kpDesc.value=""; kpScope.value=""; kpRefs.value=""; kpNote.value=""; loadKnowpacks();
-  }catch(e){ setMsg("kpMsg", e.message, false); }
+  }catch(e){ setMsg("kpMsg", errText(e), false); }
 }
 function toggleKnowpackVersion(id){
   const row = document.getElementById("kpv-"+id);
@@ -1800,24 +1951,24 @@ async function submitKnowpackVersion(id){
     const refs = document.getElementById("kpv-refs-"+id).value.split(",").map(s=>s.trim()).filter(Boolean);
     const d = await api("/api/kb/packages/"+id+"/versions",{method:"POST",body:JSON.stringify({content:document.getElementById("kpv-content-"+id).value,sources:sources,citations:cites,references:refs,change_note:document.getElementById("kpv-note-"+id).value.trim()})});
     toast("✓ v"+d.version); loadKnowpacks();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function reviewKnowpack(id, approveIt){
   try{ await api("/api/kb/packages/"+id+"/review",{method:"POST",body:JSON.stringify({approve:approveIt})});
     toast(T("saved")); loadKnowpacks();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function publishKnowpack(id, currentVer){
-  try{ const raw = prompt("publish version", String(currentVer));
-    if(raw===null) return;
-    const d = await api("/api/kb/packages/"+id+"/publish",{method:"POST",body:JSON.stringify({version:parseInt(raw,10)})});
+  const raw = await promptInput({title:T("inputVersionTitle"), body:T("inputVersionBody"), value:String(currentVer), validate:(v)=> /^\d+$/.test(v.trim()) && parseInt(v.trim(),10) > 0 ? null : T("errBadVersion")});
+  if(raw===null) return;
+  try{ const d = await api("/api/kb/packages/"+id+"/publish",{method:"POST",body:JSON.stringify({version:parseInt(raw,10)})});
     toast("✓ published v"+d.published_version); loadKnowpacks();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function deleteKnowpack(id){
   if(!(await confirmDelete())) return;
   try{ await api("/api/kb/packages/"+id,{method:"DELETE"}); toast(T("deleted")); loadKnowpacks();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- mcp upstreams ---------- */
@@ -1826,22 +1977,22 @@ async function loadUpstreams(){
     document.querySelector("#upstreams tbody").innerHTML = (d.upstreams||[]).map(u=>
       `<tr><td style="font-weight:600;color:var(--ink)">${esc(u.name)}</td><td class="muted">${esc(u.url||"")}</td><td>${pill(u.max_data_level)}</td><td>${pill(u.min_tier)}</td><td>${u.has_token?"✓":"—"}</td>`+
       `<td style="white-space:nowrap"><button class="btn ghost small" onclick="testUpstream('${u.id}')">${T("test")}</button> <button class="btn ghost small danger" onclick="deleteUpstream('${u.id}')">✕</button></td></tr>`).join("") || `<tr><td colspan="6" class="empty">${T("empty")}</td></tr>`;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function addUpstream(){
   try{ await api("/api/mcp/upstreams",{method:"POST",body:JSON.stringify({name:upName.value.trim(),url:upUrl.value.trim(),token:upToken.value,max_data_level:upLevel.value,min_tier:upTier.value})});
     setMsg("upMsg", T("saved")); upName.value=""; upUrl.value=""; upToken.value=""; loadUpstreams();
-  }catch(e){ setMsg("upMsg", e.message, false); }
+  }catch(e){ setMsg("upMsg", errText(e), false); }
 }
 async function testUpstream(id){
   try{ const d = await api("/api/mcp/upstreams/"+id+"/test",{method:"POST",body:"{}"});
-    toast(d.ok ? "✓ " + (d.tools||[]).join(", ") : "✗ "+(d.error||"failed"), !!d.ok);
-  }catch(e){ toast(e.message, false); }
+    toast(d.ok ? "✓ " + (d.tools||[]).join(", ") : "✗ "+errText(d.error||"failed"), !!d.ok);
+  }catch(e){ toast(errText(e), false); }
 }
 async function deleteUpstream(id){
   if(!(await confirmDelete())) return;
   try{ await api("/api/mcp/upstreams/"+id,{method:"DELETE"}); toast(T("deleted")); loadUpstreams();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- rest tools ---------- */
@@ -1850,25 +2001,25 @@ async function loadRESTTools(){
     document.querySelector("#resttools tbody").innerHTML = (d.rest_tools||[]).map(t=>
       `<tr><td style="font-weight:600;color:var(--ink)">rest.${esc(t.name)}</td><td>${esc(t.method||"")}</td><td class="muted">${esc(t.path||"")}</td><td>${pill(t.max_data_level)}</td><td>${pill(t.min_tier)}</td><td>${t.has_token?"✓":"—"}</td>`+
       `<td style="white-space:nowrap"><button class="btn ghost small" onclick="testRESTTool('${t.id}')">${T("test")}</button> <button class="btn ghost small danger" onclick="deleteRESTTool('${t.id}')">✕</button></td></tr>`).join("") || `<tr><td colspan="7" class="empty">${T("empty")}</td></tr>`;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function addRESTTool(){
   try{ const schema = JSON.parse(rtSchema.value||"{}");
     await api("/api/mcp/rest-tools",{method:"POST",body:JSON.stringify({name:rtName.value.trim(),base_url:rtBase.value.trim(),method:rtMethod.value,path:rtPath.value.trim(),token:rtToken.value,input_schema:schema,max_data_level:rtLevel.value,min_tier:rtTier.value})});
     setMsg("rtMsg", T("saved")); rtName.value=""; rtBase.value=""; rtPath.value=""; rtToken.value=""; loadRESTTools();
-  }catch(e){ setMsg("rtMsg", e.message, false); }
+  }catch(e){ setMsg("rtMsg", errText(e), false); }
 }
 async function testRESTTool(id){
-  try{ const raw = prompt("arguments JSON", "{}");
-    if(raw===null) return;
-    const d = await api("/api/mcp/rest-tools/"+id+"/test",{method:"POST",body:JSON.stringify({arguments:JSON.parse(raw)})});
-    toast(d.ok ? "✓ " + (d.preview||"") : "✗ " + (d.error||"failed"), !!d.ok);
-  }catch(e){ toast(e.message, false); }
+  const raw = await promptInput({title:T("inputArgsTitle"), body:T("inputArgsBody"), value:"{}", multiline:true, placeholder:"{}", validate:(v)=>{ try{ JSON.parse(v); return null; }catch(_){ return T("errBadJson"); } }});
+  if(raw===null) return;
+  try{ const d = await api("/api/mcp/rest-tools/"+id+"/test",{method:"POST",body:JSON.stringify({arguments:JSON.parse(raw)})});
+    toast(d.ok ? "✓ " + (d.preview||"") : "✗ " + errText(d.error||"failed"), !!d.ok);
+  }catch(e){ toast(errText(e), false); }
 }
 async function deleteRESTTool(id){
   if(!(await confirmDelete())) return;
   try{ await api("/api/mcp/rest-tools/"+id,{method:"DELETE"}); toast(T("deleted")); loadRESTTools();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- alert webhooks ---------- */
@@ -1878,22 +2029,22 @@ async function loadAlerts(){
       `<tr><td style="font-weight:600;color:var(--ink)">${esc(w.name)}</td><td>${esc(w.kind)}</td><td class="muted">${esc(w.url||"")}</td>`+
       `<td>${w.last_attempt_at?((w.last_ok?"✓ ":"✗ ")+esc(w.last_error||"")+" ("+w.attempts+")"):"—"}</td>`+
       `<td style="white-space:nowrap"><button class="btn ghost small" onclick="testWebhook('${w.id}')">${T("test")}</button> <button class="btn ghost small danger" onclick="deleteWebhook('${w.id}')">✕</button></td></tr>`).join("") || `<tr><td colspan="5" class="empty">${T("empty")}</td></tr>`;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function addWebhook(){
   try{ await api("/api/alerts/webhooks",{method:"POST",body:JSON.stringify({name:whName.value.trim(),url:whUrl.value.trim(),kind:whKind.value,secret:whSecret.value})});
     setMsg("whMsg", T("saved")); whName.value=""; whUrl.value=""; whSecret.value=""; loadAlerts();
-  }catch(e){ setMsg("whMsg", e.message, false); }
+  }catch(e){ setMsg("whMsg", errText(e), false); }
 }
 async function testWebhook(id){
   try{ const d = await api("/api/alerts/webhooks/"+id+"/test",{method:"POST",body:"{}"});
-    toast(d.delivered ? "✓ delivered" : "✗ "+(d.error||"failed"), !!d.delivered); loadAlerts();
-  }catch(e){ toast(e.message, false); }
+    toast(d.delivered ? "✓ delivered" : "✗ "+errText(d.error||"failed"), !!d.delivered); loadAlerts();
+  }catch(e){ toast(errText(e), false); }
 }
 async function deleteWebhook(id){
   if(!(await confirmDelete())) return;
   try{ await api("/api/alerts/webhooks/"+id,{method:"DELETE"}); toast(T("deleted")); loadAlerts();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 
 /* ---------- packages (F20) ---------- */
@@ -1910,7 +2061,7 @@ async function loadPackages(){
     const opts = pkgList.map(p=>`<option value="${p.id}">${esc(p.name)} ${esc(p.version)} (${esc(p.kind)})</option>`).join("");
     document.getElementById("ubGuard").innerHTML = opts;
     document.getElementById("ubSetup").innerHTML = opts;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function uploadPackage(){
   const file = document.getElementById("pkFile").files[0];
@@ -1931,29 +2082,29 @@ async function uploadPackage(){
     setMsg("pkMsg", T("saved")+" ("+data.package.status+")");
     pkName.value=""; pkVersion.value=""; pkAgent.value=""; pkSha.value=""; pkExpires.value=""; document.getElementById("pkFile").value="";
     loadPackages();
-  }catch(e){ setMsg("pkMsg", e.message, false); }
+  }catch(e){ setMsg("pkMsg", errText(e), false); }
 }
 async function downloadPackage(id, filename){
   try{ const res = await fetch("/api/packages/"+id+"/download", {headers:{Authorization:"Bearer "+session}});
     if(!res.ok) throw new Error("HTTP "+res.status);
     const blob = await res.blob(); const a = document.createElement("a");
     a.href = URL.createObjectURL(blob); a.download = filename; a.click();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function registerBaseline(id){
   try{ await api("/api/packages/"+id+"/baseline",{method:"POST",body:JSON.stringify({})});
     toast(T("saved")); loadPackages();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function deletePackage(id){
   if(!(await confirmDelete())) return;
   try{ await api("/api/packages/"+id,{method:"DELETE"}); toast(T("deleted")); loadPackages();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function cleanupPackages(){
   try{ const d = await api("/api/packages/cleanup",{method:"POST",body:"{}"});
     setMsg("pkCleanMsg", T("deleted")+": "+d.count); loadPackages();
-  }catch(e){ setMsg("pkCleanMsg", e.message, false); }
+  }catch(e){ setMsg("pkCleanMsg", errText(e), false); }
 }
 async function generateUserBundle(){
   try{
@@ -1966,7 +2117,7 @@ async function generateUserBundle(){
     setMsg("ubMsg", T("saved")+" ("+d.package.sha256.slice(0,12)+"…)");
     ubName.value=""; ubVersion.value=""; ubAgent.value=""; ubGateway.value=""; ubEgress.value="";
     loadPackages();
-  }catch(e){ setMsg("ubMsg", e.message, false); }
+  }catch(e){ setMsg("ubMsg", errText(e), false); }
 }
 
 /* ---------- orgsync ---------- */
@@ -1979,7 +2130,7 @@ async function loadOrgProviders(){
       `<td style="white-space:nowrap"><button class="btn ghost small" onclick="syncOrgProvider('${p.id}')">${T("orgSyncBtn")}</button> `+
       `<button class="btn ghost small" onclick="testOrgProvider('${p.id}')">${T("test")}</button> `+
       `<button class="btn ghost small danger" onclick="deleteOrgProvider('${p.id}')">✕</button></td></tr>`;}).join("") || `<tr><td colspan="7" class="empty">${T("empty")}</td></tr>`;
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
   try{ const d = await api("/api/orgsync/bindings");
     document.getElementById("osMyBindings").innerHTML = (d.bindings||[]).map(b=>`<span class="pill">${esc(b.provider)}:${esc(b.external_id)}</span>`).join(" ") || T("orgNoBindings");
   }catch(e){ document.getElementById("osMyBindings").textContent = "—"; }
@@ -1989,30 +2140,30 @@ async function addOrgProvider(){
     provider:osProvider.value, name:osName.value.trim(), corp_id:osCorp.value.trim(), app_key:osAppKey.value.trim(),
     app_secret:osSecret.value, base_url:osBase.value.trim(), auto_create:osAuto.value==="true", disable_missing:osDisable.value==="true"})});
     setMsg("osMsg", T("saved")); osName.value=""; osCorp.value=""; osAppKey.value=""; osSecret.value=""; osBase.value=""; loadOrgProviders();
-  }catch(e){ setMsg("osMsg", e.message, false); }
+  }catch(e){ setMsg("osMsg", errText(e), false); }
 }
 async function syncOrgProvider(id){
   try{ const d = await api("/api/orgsync/providers/"+id+"/sync",{method:"POST",body:"{}"});
     const r = d.result||{};
-    setMsg("osSyncMsg", r.ok ? `✓ remote ${r.remote} · +${r.created} · ~${r.reconciled} · linked ${r.linked}` : ("✕ "+(r.error||"")), !!r.ok);
+    setMsg("osSyncMsg", r.ok ? `✓ remote ${r.remote} · +${r.created} · ~${r.reconciled} · linked ${r.linked}` : ("✕ "+errText(r.error||"failed")), !!r.ok);
     loadOrgProviders();
-  }catch(e){ setMsg("osSyncMsg", e.message, false); }
+  }catch(e){ setMsg("osSyncMsg", errText(e), false); }
 }
 async function testOrgProvider(id){
   try{ const d = await api("/api/orgsync/providers/"+id+"/test",{method:"POST",body:"{}"});
     setMsg("osSyncMsg", `✓ ${d.departments} departments · ${d.users} users`); loadOrgProviders();
-  }catch(e){ setMsg("osSyncMsg", e.message, false); }
+  }catch(e){ setMsg("osSyncMsg", errText(e), false); }
 }
 async function deleteOrgProvider(id){
   if(!(await confirmDelete())) return;
   try{ await api("/api/orgsync/providers/"+id,{method:"DELETE"}); toast(T("deleted")); loadOrgProviders();
-  }catch(e){ toast(e.message, false); }
+  }catch(e){ toast(errText(e), false); }
 }
 async function bindOrgIdentity(){
   try{ const d = await api("/api/orgsync/bindings",{method:"POST",body:JSON.stringify({
     user_id:osBindUser.value.trim(), provider:osBindProvider.value, external_id:osBindExt.value.trim()})});
     setMsg("osBindMsg", T("saved")+": "+d.subject); osBindUser.value=""; osBindExt.value=""; loadOrgProviders();
-  }catch(e){ setMsg("osBindMsg", e.message, false); }
+  }catch(e){ setMsg("osBindMsg", errText(e), false); }
 }
 
 /* ---------- boot ---------- */
