@@ -151,6 +151,11 @@ func (s *Service) RunOnce(ctx context.Context) (Report, error) {
 		return fail(err)
 	}
 	client := NewClient(cfg)
+	if created, err := client.EnsureBucket(ctx); err != nil {
+		return fail(err)
+	} else if created {
+		s.log("backup: created object storage bucket (first upload)")
+	}
 	if err := s.uploadState(ctx, client, &rep); err != nil {
 		return fail(err)
 	}

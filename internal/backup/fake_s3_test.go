@@ -23,10 +23,21 @@ import (
 // SigV4 Authorization header and a payload hash matching the body.
 // It does not re-derive the signature (the AWS vector test pins the
 // signing math, and the drill checks against a real server).
+// Buckets are modelled like a real server: a bucket must exist
+// before any object operation in it succeeds (otherwise
+// NoSuchBucket), and creating one is a PUT on the bucket itself.
+// This strictness is deliberate — the pre-EnsureBucket fake
+// accepted objects in any bucket, which is why the tests passed
+// while the 2026-11-24 drill failed on a fresh endpoint.
 type fakeS3 struct {
 	mu      sync.Mutex
 	objects map[string]fakeObject
-	authOK  int
+	buckets map[string]bool
+	// createConflict makes the next bucket creation answer 409
+	// (another process created it first) while still recording
+	// the bucket as existing.
+	createConflict bool
+	authOK         int
 }
 
 type fakeObject struct {
@@ -34,7 +45,9 @@ type fakeObject struct {
 	modified time.Time
 }
 
-func newFakeS3() *fakeS3 { return &fakeS3{objects: map[string]fakeObject{}} }
+func newFakeS3() *fakeS3 {
+	return &fakeS3{objects: map[string]fakeObject{}, buckets: map[string]bool{}}
+}
 
 func (f *fakeS3) setOld(key string, t time.Time) {
 	f.mu.Lock()
@@ -77,8 +90,51 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing bucket", http.StatusBadRequest)
 		return
 	}
+	bucket := parts[0]
 	key := strings.Join(parts[1:], "/")
 	q := r.URL.Query()
+	// Bucket-level operations (empty key): HEAD checks existence,
+	// PUT creates, GET with list-type=2 lists.
+	if key == "" {
+		switch r.Method {
+		case http.MethodHead:
+			if f.buckets[bucket] {
+				w.WriteHeader(http.StatusOK)
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+			}
+			return
+		case http.MethodPut:
+			if f.createConflict {
+				f.buckets[bucket] = true
+				http.Error(w, "<Error><Code>BucketAlreadyExists</Code></Error>", http.StatusConflict)
+				return
+			}
+			f.buckets[bucket] = true
+			w.WriteHeader(http.StatusOK)
+			return
+		case http.MethodGet:
+			if q.Get("list-type") == "2" {
+				if !f.buckets[bucket] {
+					http.Error(w, "<Error><Code>NoSuchBucket</Code></Error>", http.StatusNotFound)
+					return
+				}
+				f.list(w, r, q.Get("prefix"), q.Get("continuation-token"))
+				return
+			}
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+	}
+	// Object operations in a missing bucket fail like a real
+	// server: NoSuchBucket, not NoSuchKey.
+	if !f.buckets[bucket] {
+		http.Error(w, "<Error><Code>NoSuchBucket</Code></Error>", http.StatusNotFound)
+		return
+	}
 	if r.Method == http.MethodGet && q.Get("list-type") == "2" {
 		f.list(w, r, q.Get("prefix"), q.Get("continuation-token"))
 		return
@@ -163,6 +219,12 @@ func TestClientAgainstFakeS3(t *testing.T) {
 		AccessKey: "ak", SecretKey: "sk"}.WithDefaults()
 	c := NewClient(cfg)
 	ctx := t.Context()
+	// The bucket starts missing on a fresh fake: EnsureBucket must
+	// create it before any object operation succeeds.
+	created, err := c.EnsureBucket(ctx)
+	if err != nil || !created {
+		t.Fatalf("EnsureBucket = %v %v, want created=true", created, err)
+	}
 	if err := c.PutObject(ctx, "state/state-2026-11-24T00-00-00Z.json", []byte(`{"users":{}}`), "application/json"); err != nil {
 		t.Fatal(err)
 	}
@@ -223,5 +285,73 @@ func TestClientAuthFailure(t *testing.T) {
 	}
 	if ErrorClass(err) != "s3_auth" {
 		t.Fatalf("error class = %q, want s3_auth (err %v)", ErrorClass(err), err)
+	}
+}
+
+func TestEnsureBucketCreatesMissingBucket(t *testing.T) {
+	srv := newFakeS3()
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	cfg := Config{Endpoint: ts.URL, Bucket: "bkt", Region: "us-east-1",
+		AccessKey: "ak", SecretKey: "sk"}.WithDefaults()
+	c := NewClient(cfg)
+	ctx := t.Context()
+
+	// Missing bucket: first ensure creates it.
+	created, err := c.EnsureBucket(ctx)
+	if err != nil || !created {
+		t.Fatalf("EnsureBucket = %v %v, want created=true", created, err)
+	}
+	// Objects now work, and a second ensure is a no-op.
+	if err := c.PutObject(ctx, "state/x.json", []byte("{}"), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	created, err = c.EnsureBucket(ctx)
+	if err != nil || created {
+		t.Fatalf("second EnsureBucket = %v %v, want created=false", created, err)
+	}
+	if exists, err := c.HeadBucket(ctx); err != nil || !exists {
+		t.Fatalf("HeadBucket = %v %v, want true", exists, err)
+	}
+}
+
+func TestEnsureBucketRaceConflict(t *testing.T) {
+	// Another process creates the bucket between our HEAD and PUT:
+	// the server answers 409, which EnsureBucket treats as success.
+	srv := newFakeS3()
+	srv.createConflict = true
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	cfg := Config{Endpoint: ts.URL, Bucket: "bkt", Region: "us-east-1",
+		AccessKey: "ak", SecretKey: "sk"}.WithDefaults()
+	c := NewClient(cfg)
+	created, err := c.EnsureBucket(t.Context())
+	if err != nil || created {
+		t.Fatalf("EnsureBucket on 409 = %v %v, want created=false, nil", created, err)
+	}
+	if exists, err := c.HeadBucket(t.Context()); err != nil || !exists {
+		t.Fatalf("HeadBucket after 409 = %v %v, want true", exists, err)
+	}
+}
+
+func TestPutObjectMissingBucketFails(t *testing.T) {
+	// The 2026-11-24 drill failure, pinned: without EnsureBucket,
+	// an upload to a fresh endpoint fails with NoSuchBucket (404),
+	// classed s3_not_found — never a silent success.
+	srv := newFakeS3()
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	cfg := Config{Endpoint: ts.URL, Bucket: "bkt", Region: "us-east-1",
+		AccessKey: "ak", SecretKey: "sk"}.WithDefaults()
+	c := NewClient(cfg)
+	err := c.PutObject(t.Context(), "state/x.json", []byte("{}"), "application/json")
+	if err == nil {
+		t.Fatal("PutObject into a missing bucket must fail")
+	}
+	if ErrorClass(err) != "s3_not_found" {
+		t.Fatalf("error class = %q, want s3_not_found (err %v)", ErrorClass(err), err)
+	}
+	if exists, err := c.HeadBucket(t.Context()); err != nil || exists {
+		t.Fatalf("HeadBucket = %v %v, want false", exists, err)
 	}
 }
