@@ -28,6 +28,7 @@
   #shell{display:none}
   aside{position:fixed;top:0;left:0;bottom:0;width:232px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;z-index:20}
   .sideBrand{padding:18px 18px 12px;display:flex;align-items:center;gap:10px}
+  #navToggle{display:none}
   nav{flex:1;overflow-y:auto;padding:4px 12px 12px}
   .navGroup{margin-top:16px}
   .navGroupTitle{font-size:11px;letter-spacing:.08em;color:var(--faint);padding:0 10px;margin-bottom:5px;font-weight:600}
@@ -82,6 +83,10 @@
   label.f{display:block;font-size:12.5px;color:var(--muted);margin-bottom:4px;font-weight:550}
   .formGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 14px;margin-bottom:12px}
   .formGrid .wide{grid-column:span 2}
+  /* UX-004: rows with an action button keep their desktop column
+     counts here (not inline) so the narrow media query can stack them. */
+  .formGrid.cols2a{grid-template-columns:1fr 1fr auto;align-items:end}
+  .formGrid.cols3a{grid-template-columns:1fr 1fr 1fr auto;align-items:end}
   .formGrid input,.formGrid select{width:100%}
   .btn{background:var(--accent);border:1px solid var(--accent);color:#fff;padding:8px 15px;border-radius:8px;font-size:13.5px;cursor:pointer;font-weight:550}
   .btn:hover{background:var(--accent-hover)}
@@ -110,10 +115,18 @@
   .chainOk{color:var(--ok);font-weight:600}.chainBad{color:var(--bad);font-weight:600}
   @media (max-width:960px){
     aside{position:static;width:auto;border-right:none;border-bottom:1px solid var(--border)}
-    nav{display:flex;flex-wrap:wrap;gap:2px} .navGroup{margin-top:6px;display:flex;align-items:center;gap:2px;flex-wrap:wrap}
-    .navGroupTitle{width:100%} .sideFoot{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+    /* UX-003: narrow screens show only the brand bar + menu button;
+       the nav and footer stay hidden until the button opens them,
+       so the page content is visible without scrolling past 24 items. */
+    .sideBrand{justify-content:space-between}
+    #navToggle{display:inline-flex}
+    nav{display:none}
+    aside.navOpen nav{display:flex;flex-wrap:wrap;gap:2px} .navGroup{margin-top:6px;display:flex;align-items:center;gap:2px;flex-wrap:wrap}
+    .navGroupTitle{width:100%} .sideFoot{display:none}
+    aside.navOpen .sideFoot{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
     main{margin-left:0;padding:20px 16px 40px}
     .grid.kpis{grid-template-columns:repeat(2,1fr)} .grid.two,.quick{grid-template-columns:1fr} .formGrid{grid-template-columns:1fr} .formGrid .wide{grid-column:auto}
+    .formGrid.cols2a,.formGrid.cols3a{grid-template-columns:1fr}
   }
 </style>
 </head>
@@ -153,7 +166,7 @@
 <!-- ================= shell ================= -->
 <div id="shell">
   <aside>
-    <div class="sideBrand"><div class="brandMark">A</div><div class="brandName">Agent<span>Gate</span></div></div>
+    <div class="sideBrand"><div class="brandMark">A</div><div class="brandName">Agent<span>Gate</span></div><button class="btn ghost small" id="navToggle" data-i18n="navMenu" aria-controls="sideNav" aria-expanded="false" onclick="toggleNav()">☰ 菜单</button></div>
     <nav id="sideNav"></nav>
     <div class="sideFoot">
       <div class="who" id="whoName">—</div>
@@ -335,7 +348,7 @@
     <section class="page" id="page-device">
       <div class="pageHead"><div><h1 data-i18n="deviceTitle">设备接入</h1><p class="desc" data-i18n="deviceDesc">员工在终端运行 ag-setup 获得设备码，管理员在此批准后，该设备上的 Agent 即接入企业网关。</p></div></div>
       <div class="card"><h3 data-i18n="deviceApprove">批准设备码</h3>
-        <div class="formGrid" style="grid-template-columns:1fr 1fr auto;align-items:end">
+        <div class="formGrid cols2a">
           <div><label class="f" data-i18n="deviceCode">设备码</label><input id="dcode" placeholder="AG-XXXXXX"></div>
           <div><label class="f" data-i18n="deviceName">设备名称</label><input id="dname" placeholder="device name"></div>
           <button class="btn" onclick="approve()" data-i18n="approveBtn">批准</button>
@@ -453,7 +466,7 @@
         <span id="osSyncMsg" class="msg"></span>
       </div>
       <div class="card"><h3 data-i18n="orgBindTitle">绑定第三方身份</h3>
-        <div class="formGrid" style="grid-template-columns:1fr 1fr 1fr auto;align-items:end">
+        <div class="formGrid cols3a">
           <div><label class="f" data-i18n="user">用户（用户名或 ID）</label><input id="osBindUser" placeholder="lixiaofeng"></div>
           <div><label class="f" data-i18n="orgProvider">平台</label><select id="osBindProvider"><option value="dingtalk">dingtalk</option><option value="feishu">feishu</option><option value="wecom">wecom</option></select></div>
           <div><label class="f" data-i18n="orgExternalId">第三方用户 ID</label><input id="osBindExt" placeholder="userid / open_id"></div>
@@ -775,7 +788,7 @@
 const I18N = {
   zh: {loginTitle:"登录",loginSub:"企业 Agent 治理网关 · 管理控制台",loginBtn:"登录",logout:"退出",ssoBtn:"使用企业 SSO 登录",username:"用户名",password:"密码",
     loginHint:"演示账号：admin / agentgate-admin，审计员：auditor / demo12345，运维员：ops / demo12345，员工：lixiaofeng / demo12345",
-    navOps:"运营",navAccess:"接入与身份",navModel:"模型网关",navCap:"能力中心",navSys:"系统",navAdvanced:"高级设置",
+    navMenu:"☰ 菜单",navOps:"运营",navAccess:"接入与身份",navModel:"模型网关",navCap:"能力中心",navSys:"系统",navAdvanced:"高级设置",
     dashTitle:"总览",dashDesc:"网关运行与治理态势：调用、拦截、渠道健康与审计完整性。",refresh:"刷新",
     kpiCalls:"模型调用（累计）",kpiTokens:"Token 消耗（累计）",kpiBlocked:"已拦截",kpiBlockedSub:"敏感词命中 / 密级越权 / 无合规通道",kpiChain:"审计哈希链",
     byDept:"按部门调用",byDecision:"处置分布",recentAudit:"最近审计事件",
@@ -829,7 +842,7 @@ const I18N = {
     saved:"✓ 已保存",deleted:"✓ 已删除",empty:"暂无数据",chainValid:"哈希链完整",chainInvalid:"哈希链校验失败",approve:"通过",reject:"驳回",download:"下载",publish:"发布/回滚",test:"测试",rescan:"重扫",save:"保存",wizardTitle:"开通向导",wizDesc:"五步完成首次开通：建管理员 → 选行业模板 → 接模型渠道 → 选上线阶段 → 自检完成。默认保守、默认观察模式，第一天先跑起来、再慢慢收紧。",wizStep1:"创建管理员",wizStep2:"选择行业模板",wizStep3:"接入模型渠道",wizStep4:"选择上线阶段",wizStep5:"自检与完成",wizNext:"下一步",wizBack:"上一步",wizSkip:"稍后添加",wizAdminDone:"首个管理员已创建",wizAdminHint:"首个管理员已由设置码创建。如需新增管理员，请在「用户与角色」页添加。",wizTemplateHint:"模板是一整套互相咬合的预置：预置词表、渠道信任与分级策略、上线阶段与报表节奏。应用后可在各功能页继续微调。",wizApplyTemplate:"应用此模板",wizTemplateApplied:"已应用",wizVendor:"模型厂商",wizApiKey:"API Key",wizAdvanced:"高级（已按厂商预填，可改）",wizAddChannel:"添加渠道",wizPhaseHint:"观察：只审计、不拦截；提醒：自带级发机密数据时仅提醒、不拦截（违禁词与语义复核仍拦截）；拦截：全部规则按配置拦截。随时可在仪表盘切换。",wizPhaseObserve:"观察",wizPhaseWarn:"提醒",wizPhaseBlock:"拦截",wizPhaseObserveD:"只审计、不拦截——配错了也没有代价",wizPhaseWarnD:"自带级机密调用仅提醒、不拦截；违禁词仍拦截",wizPhaseBlockD:"全部规则按配置拦截",wizSavePhase:"保存上线阶段",wizChecklist:"开通自检",wizComplete:"完成开通",wizDone:"开通完成",wizMasterKey:"我已备份主密钥（丢失将导致全部加密密钥无法恢复）",wizEmployeeHint:"员工接入：员工在终端运行 ag-setup 获得设备码，管理员在「设备接入」页批准即可。",setupTitle:"首次设置",setupSub:"创建第一个管理员",setupCode:"设置码",setupCodeHint:"服务器首次启动时打印在日志里的 12 位设置码（XXXX-XXXX-XXXX）。",setupBtn:"创建管理员并继续",setupUser:"管理员用户名",setupPass:"密码（至少 8 位）",setupPass2:"确认密码",obTitle:"开通进度",obPhase:"上线阶段",obWouldBlock:"观察模式下本应拦截",obWarned:"提醒模式下已提醒",obGoWizard:"进入开通向导",obAdvance:"进阶到拦截",obAllGreen:"全部通过，可以进阶",obComplete:"开通已完成"},
   en: {loginTitle:"Sign in",loginSub:"Enterprise agent governance gateway · Admin console",loginBtn:"Sign in",logout:"Sign out",ssoBtn:"Sign in with enterprise SSO",username:"Username",password:"Password",
     loginHint:"Demo: admin / agentgate-admin, auditor: auditor / demo12345, operator: ops / demo12345, employee: lixiaofeng / demo12345",
-    navOps:"Operations",navAccess:"Access & identity",navModel:"Model gateway",navCap:"Capabilities",navSys:"System",navAdvanced:"Advanced",
+    navMenu:"☰ Menu",navOps:"Operations",navAccess:"Access & identity",navModel:"Model gateway",navCap:"Capabilities",navSys:"System",navAdvanced:"Advanced",
     dashTitle:"Overview",dashDesc:"Gateway operations and governance posture: calls, blocks, channel health and audit integrity.",refresh:"Refresh",
     kpiCalls:"Model calls (total)",kpiTokens:"Tokens used (total)",kpiBlocked:"Blocked",kpiBlockedSub:"Banned words / level violations / no compliant channel",kpiChain:"Audit hash chain",
     byDept:"Calls by department",byDecision:"Decision mix",recentAudit:"Recent audit events",
@@ -947,9 +960,15 @@ function buildNav(){
   document.getElementById("sideNav").innerHTML = html;
 }
 function toggleNavAdv(){ navAdvOpen = !navAdvOpen; localStorage.setItem("ag_nav_adv", navAdvOpen ? "1" : "0"); buildNav(); }
+/* UX-003: narrow-screen nav toggle. The button only exists in the
+   ≤960px layout (CSS hides it on desktop); the nav starts collapsed
+   so the content is visible at once, and closes again after the
+   user picks a page — the entrance stays one tap away, never hidden. */
+function toggleNav(){ const a=document.querySelector("aside"); const open=a.classList.toggle("navOpen"); document.getElementById("navToggle").setAttribute("aria-expanded", open?"true":"false"); }
+function closeNavNarrow(){ if(window.matchMedia("(max-width:960px)").matches){ const a=document.querySelector("aside"); if(a.classList.contains("navOpen")){ a.classList.remove("navOpen"); document.getElementById("navToggle").setAttribute("aria-expanded","false"); } } }
 function go(id){
   if(!DEFAULT_PAGES.includes(id) && !navAdvOpen){ navAdvOpen = true; localStorage.setItem("ag_nav_adv", "1"); buildNav(); }
-  current = id; showPage(id);
+  current = id; showPage(id); closeNavNarrow();
 }
 function showPage(id){
   document.querySelectorAll(".page").forEach(p=>p.classList.toggle("active", p.id==="page-"+id));
