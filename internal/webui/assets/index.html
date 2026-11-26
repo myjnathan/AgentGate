@@ -12,10 +12,36 @@
     --ok:#15803d; --ok-bg:#e8f7ee; --warn:#b45309; --warn-bg:#fdf3e0;
     --bad:#b91c1c; --bad-bg:#fdecec; --info:#1d4ed8; --info-bg:#e8effd;
     --radius:10px; --shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.04);
+    /* F37 slice 2: every previously hard-coded light colour is a variable
+       so the dark theme below can re-skin the whole console. */
+    --hover:#f4f7fb; --row-hover:#f8fafd; --thead-bg:#f8fafc; --row-border:#eef2f7;
+    --track:#edf1f7; --pill-neutral-bg:#eef1f6; --pill-neutral-ink:#475569;
+    --input-bg:#fff; --focus-ring:#c7d2fe; --active-border:#dfe6ff;
+    --btn-bg:#4f46e5; --btn-bg-hover:#4338ca;
+    --toast-bg:#0f172a; --toast-ink:#fff; --toast-bad-bg:#991b1b; --toast-bad-ink:#fff;
+    --shadow-lg:0 12px 32px rgba(16,24,40,.3);
+    --login-grad-a:#eef2ff; --login-grad-b:#f6f9fc; --login-grad-c:#eef7f1;
     /* F37 motion language: durations + easings, reused site-wide.
        Only transform/opacity animate; colour transitions are paint-only. */
     --motion-fast:120ms; --motion-base:180ms; --motion-slow:280ms;
     --motion-ease-out:cubic-bezier(.2,0,0,1); --motion-ease-standard:cubic-bezier(.4,0,.2,1);
+  }
+  /* F37 slice 2: dark theme. Same variables, slate palette — the whole
+     console (login + shell) re-skins; motion tokens are untouched. */
+  html[data-theme="dark"]{
+    --bg:#0b1120; --surface:#131c2e; --border:#22304a; --border-strong:#3b4a63;
+    --ink:#f1f5f9; --body:#cbd5e1; --muted:#94a3b8; --faint:#64748b;
+    --accent:#818cf8; --accent-hover:#a5b4fc; --accent-soft:#1e2a45;
+    --ok:#4ade80; --ok-bg:#122b1d; --warn:#fbbf24; --warn-bg:#2c2210;
+    --bad:#f87171; --bad-bg:#2e1616; --info:#60a5fa; --info-bg:#14253d;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 1px 3px rgba(0,0,0,.35);
+    --hover:#1a2438; --row-hover:#182234; --thead-bg:#0f172a; --row-border:#1f2c44;
+    --track:#1f2c44; --pill-neutral-bg:#1e293b; --pill-neutral-ink:#cbd5e1;
+    --input-bg:#0f172a; --focus-ring:#6366f1; --active-border:#3730a3;
+    --btn-bg:#4f46e5; --btn-bg-hover:#5f5ae8;
+    --toast-bg:#e2e8f0; --toast-ink:#0f172a; --toast-bad-bg:#991b1b; --toast-bad-ink:#fff;
+    --shadow-lg:0 12px 32px rgba(0,0,0,.55);
+    --login-grad-a:#1a2140; --login-grad-b:#0b1120; --login-grad-c:#0e1f1a;
   }
   @keyframes fadeSlideIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
   @media (prefers-reduced-motion:reduce){ *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;transition-delay:0s!important;scroll-behavior:auto!important} }
@@ -23,10 +49,10 @@
   body{font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;margin:0;background:var(--bg);color:var(--body);font-size:14px;line-height:1.55}
   a{color:var(--accent);text-decoration:none}
   /* ---------- login ---------- */
-  #loginWrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(160deg,#eef2ff 0%,#f6f9fc 55%,#eef7f1 100%);padding:24px}
+  #loginWrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(160deg,var(--login-grad-a) 0%,var(--login-grad-b) 55%,var(--login-grad-c) 100%);padding:24px}
   .loginCard{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 8px 30px rgba(16,24,40,.08);padding:34px 34px 26px;width:380px;max-width:94vw;animation:fadeSlideIn var(--motion-slow) var(--motion-ease-out)}
   .brand{display:flex;align-items:center;gap:10px}
-  .brandMark{width:34px;height:34px;border-radius:9px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:17px}
+  .brandMark{width:34px;height:34px;border-radius:9px;background:var(--btn-bg);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:17px}
   .brandName{font-size:19px;font-weight:700;color:var(--ink)} .brandName span{color:var(--accent)}
   .loginCard h2{font-size:20px;color:var(--ink);margin:20px 0 4px}
   .loginCard .sub{color:var(--muted);font-size:13px;margin:0 0 18px}
@@ -39,8 +65,8 @@
   .navGroup{margin-top:16px}
   .navGroupTitle{font-size:11px;letter-spacing:.08em;color:var(--faint);padding:0 10px;margin-bottom:5px;font-weight:600}
   .navItem{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:8px;color:var(--body);cursor:pointer;font-size:13.5px;margin-bottom:2px;border:1px solid transparent;transition:background-color var(--motion-fast) var(--motion-ease-standard),color var(--motion-fast) var(--motion-ease-standard)}
-  .navItem:hover{background:#f4f7fb}
-  .navItem.active{background:var(--accent-soft);color:var(--accent);font-weight:600;border-color:#dfe6ff}
+  .navItem:hover{background:var(--hover)}
+  .navItem.active{background:var(--accent-soft);color:var(--accent);font-weight:600;border-color:var(--active-border)}
   .navItem .ico{width:17px;text-align:center;flex:none}
   .sideFoot{border-top:1px solid var(--border);padding:12px 16px;font-size:13px}
   .sideFoot .who{color:var(--ink);font-weight:600}
@@ -67,15 +93,15 @@
   .kpi .sub{color:var(--muted);font-size:12.5px;margin-top:4px}
   table{width:100%;border-collapse:collapse;font-size:13.5px}
   .tableWrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
-  thead th{background:#f8fafc;color:var(--muted);font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;font-weight:600;text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
-  tbody td{padding:9px 10px;border-bottom:1px solid #eef2f7;vertical-align:middle;color:var(--body)}
-  tbody tr:hover{background:#f8fafd}
+  thead th{background:var(--thead-bg);color:var(--muted);font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;font-weight:600;text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+  tbody td{padding:9px 10px;border-bottom:1px solid var(--row-border);vertical-align:middle;color:var(--body)}
+  tbody tr:hover{background:var(--row-hover)}
   tbody tr:last-child td{border-bottom:none}
   td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
-  .pill{display:inline-block;padding:1.5px 8px;border-radius:999px;font-size:12px;font-weight:550;background:#eef1f6;color:#475569;white-space:nowrap}
-  .pill.public{background:#eef1f6;color:#475569}.pill.internal{background:var(--info-bg);color:var(--info)}
+  .pill{display:inline-block;padding:1.5px 8px;border-radius:999px;font-size:12px;font-weight:550;background:var(--pill-neutral-bg);color:var(--pill-neutral-ink);white-space:nowrap}
+  .pill.public{background:var(--pill-neutral-bg);color:var(--pill-neutral-ink)}.pill.internal{background:var(--info-bg);color:var(--info)}
   .pill.confidential{background:var(--warn-bg);color:var(--warn)}.pill.secret{background:var(--bad-bg);color:var(--bad)}
-  .pill.managed{background:var(--accent-soft);color:var(--accent)}.pill.byoa{background:#eef1f6;color:#475569}
+  .pill.managed{background:var(--accent-soft);color:var(--accent)}.pill.byoa{background:var(--pill-neutral-bg);color:var(--pill-neutral-ink)}
   .pill.ok,.pill.published,.pill.healthy{background:var(--ok-bg);color:var(--ok)}
   .pill.warn,.pill.in_review,.pill.cooling{background:var(--warn-bg);color:var(--warn)}
   .pill.bad,.pill.rejected,.pill.down{background:var(--bad-bg);color:var(--bad)}
@@ -85,8 +111,8 @@
   .pill.local_model{background:var(--ok-bg);color:var(--ok)}
   .decision-allow{color:var(--ok);font-weight:600}.decision-block{color:var(--bad);font-weight:600}
   .decision-redact{color:var(--warn);font-weight:600}.decision-reroute{color:var(--info);font-weight:600}
-  input,select,textarea{font-size:13.5px;padding:8px 10px;border-radius:8px;border:1px solid var(--border-strong);background:#fff;color:var(--ink);font-family:inherit}
-  input:focus,select:focus,textarea:focus{outline:2px solid #c7d2fe;outline-offset:0;border-color:var(--accent)}
+  input,select,textarea{font-size:13.5px;padding:8px 10px;border-radius:8px;border:1px solid var(--border-strong);background:var(--input-bg);color:var(--ink);font-family:inherit}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--focus-ring);outline-offset:0;border-color:var(--accent)}
   textarea{width:100%;min-height:74px;resize:vertical}
   label.f{display:block;font-size:12.5px;color:var(--muted);margin-bottom:4px;font-weight:550}
   .formGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 14px;margin-bottom:12px}
@@ -96,10 +122,10 @@
   .formGrid.cols2a{grid-template-columns:1fr 1fr auto;align-items:end}
   .formGrid.cols3a{grid-template-columns:1fr 1fr 1fr auto;align-items:end}
   .formGrid input,.formGrid select{width:100%}
-  .btn{background:var(--accent);border:1px solid var(--accent);color:#fff;padding:8px 15px;border-radius:8px;font-size:13.5px;cursor:pointer;font-weight:550;transition:background-color var(--motion-fast) var(--motion-ease-standard),border-color var(--motion-fast) var(--motion-ease-standard),color var(--motion-fast) var(--motion-ease-standard),transform var(--motion-fast) var(--motion-ease-standard)}
-  .btn:hover{background:var(--accent-hover)}
+  .btn{background:var(--btn-bg);border:1px solid var(--btn-bg);color:#fff;padding:8px 15px;border-radius:8px;font-size:13.5px;cursor:pointer;font-weight:550;transition:background-color var(--motion-fast) var(--motion-ease-standard),border-color var(--motion-fast) var(--motion-ease-standard),color var(--motion-fast) var(--motion-ease-standard),transform var(--motion-fast) var(--motion-ease-standard)}
+  .btn:hover{background:var(--btn-bg-hover)}
   .btn:active{transform:scale(.97)}
-  .btn.ghost{background:#fff;border-color:var(--border-strong);color:var(--body)}
+  .btn.ghost{background:var(--input-bg);border-color:var(--border-strong);color:var(--body)}
   .btn.ghost:hover{border-color:var(--accent);color:var(--accent)}
   .btn.small{padding:4px 10px;font-size:12.5px}
   .btn.danger:hover{border-color:var(--bad);color:var(--bad)}
@@ -110,7 +136,7 @@
   .bars{display:flex;flex-direction:column;gap:9px;margin-top:6px}
   .barRow{display:grid;grid-template-columns:110px 1fr 74px;gap:10px;align-items:center;font-size:13px}
   .barRow .k{color:var(--body);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .barTrack{height:9px;background:#edf1f7;border-radius:99px;overflow:hidden}
+  .barTrack{height:9px;background:var(--track);border-radius:99px;overflow:hidden}
   .barFill{height:100%;background:var(--accent);border-radius:99px;min-width:2px}
   .barFill.blocked{background:#e05252}.barFill.tokens{background:#38b2ac}
   .barFill.ok{background:#34a853}.barFill.redact{background:#e8a33d}
@@ -123,12 +149,12 @@
   /* F37 M-001: toast fades/slides via opacity+transform (class-based so the
      transition can run and be interrupted); visibility hides it from
      keyboard/AT once faded out. */
-  #toast{position:fixed;right:22px;bottom:22px;background:var(--ink);color:#fff;padding:10px 16px;border-radius:9px;font-size:13.5px;box-shadow:0 8px 24px rgba(16,24,40,.25);z-index:50;max-width:min(480px,90vw);cursor:pointer;visibility:hidden;opacity:0;transform:translateY(8px);pointer-events:none;transition:opacity var(--motion-base) var(--motion-ease-out),transform var(--motion-base) var(--motion-ease-out),visibility 0s linear var(--motion-base)}
+  #toast{position:fixed;right:22px;bottom:22px;background:var(--toast-bg);color:var(--toast-ink);padding:10px 16px;border-radius:9px;font-size:13.5px;box-shadow:0 8px 24px rgba(16,24,40,.25);z-index:50;max-width:min(480px,90vw);cursor:pointer;visibility:hidden;opacity:0;transform:translateY(8px);pointer-events:none;transition:opacity var(--motion-base) var(--motion-ease-out),transform var(--motion-base) var(--motion-ease-out),visibility 0s linear var(--motion-base)}
   #toast.show{visibility:visible;opacity:1;transform:translateY(0);pointer-events:auto;transition:opacity var(--motion-base) var(--motion-ease-out),transform var(--motion-base) var(--motion-ease-out),visibility 0s}
   /* F37 M-002: overlays fade; the card rises slightly into place. */
   #confirmOverlay,#inputOverlay{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:60;display:flex;align-items:center;justify-content:center;visibility:hidden;opacity:0;transition:opacity var(--motion-base) var(--motion-ease-out),visibility 0s linear var(--motion-base)}
   #confirmOverlay.open,#inputOverlay.open{visibility:visible;opacity:1;transition:opacity var(--motion-base) var(--motion-ease-out),visibility 0s}
-  #confirmCard,#inputCard{background:#fff;border-radius:12px;padding:20px;max-width:min(420px,90vw);box-shadow:0 12px 32px rgba(16,24,40,.3);transform:translateY(8px) scale(.98);transition:transform var(--motion-base) var(--motion-ease-out)}
+  #confirmCard,#inputCard{background:var(--surface);border-radius:12px;padding:20px;max-width:min(420px,90vw);box-shadow:var(--shadow-lg);transform:translateY(8px) scale(.98);transition:transform var(--motion-base) var(--motion-ease-out)}
   #confirmOverlay.open #confirmCard,#inputOverlay.open #inputCard{transform:translateY(0) scale(1)}
   .chainOk{color:var(--ok);font-weight:600}.chainBad{color:var(--bad);font-weight:600}
   @media (max-width:960px){
@@ -147,13 +173,18 @@
     .formGrid.cols2a,.formGrid.cols3a{grid-template-columns:1fr}
   }
 </style>
+<script>
+/* F37 slice 2: apply the theme before first paint — a stored choice wins,
+   otherwise follow the OS preference (the main script keeps it live). */
+(function(){try{var t=localStorage.getItem("ag_theme");if(t!=="dark"&&t!=="light"){t=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}document.documentElement.setAttribute("data-theme",t);}catch(e){}})();
+</script>
 </head>
 <body>
 
 <!-- ================= login ================= -->
 <div id="loginWrap">
   <div class="loginCard">
-    <div class="brand"><div class="brandMark">A</div><div class="brandName">Agent<span>Gate</span></div></div>
+    <div class="brand"><div class="brandMark">A</div><div class="brandName">Agent<span>Gate</span></div><span style="flex:1"></span><button class="btn ghost small" id="themeBtnLogin" data-i18n="themeToDark" onclick="toggleTheme()">深色模式</button></div>
     <h2 data-i18n="loginTitle" id="loginH">登录</h2>
     <p class="sub" data-i18n="loginSub" id="loginSub">企业 Agent 治理网关 · 管理控制台</p>
     <div id="loginForm" style="display:flex;flex-direction:column;gap:10px">
@@ -190,6 +221,7 @@
       <div class="who" id="whoName">—</div>
       <div class="meta" id="whoMeta"></div>
       <div class="row">
+        <button class="btn ghost small" id="themeBtn" data-i18n="themeToDark" onclick="toggleTheme()">深色模式</button>
         <button class="btn ghost small" id="langBtn" onclick="toggleLang()">EN</button>
         <button class="btn ghost small" onclick="logout()" data-i18n="logout">退出</button>
       </div>
@@ -806,7 +838,7 @@
 
 <script>
 const I18N = {
-  zh: {loginTitle:"登录",loginSub:"企业 Agent 治理网关 · 管理控制台",loginBtn:"登录",logout:"退出",ssoBtn:"使用企业 SSO 登录",username:"用户名",password:"密码",
+  zh: {loginTitle:"登录",loginSub:"企业 Agent 治理网关 · 管理控制台",loginBtn:"登录",logout:"退出",themeToDark:"深色模式",themeToLight:"浅色模式",ssoBtn:"使用企业 SSO 登录",username:"用户名",password:"密码",
     loginHint:"演示账号：admin / agentgate-admin，审计员：auditor / demo12345，运维员：ops / demo12345，员工：lixiaofeng / demo12345",
     navMenu:"☰ 菜单",navOps:"运营",navAccess:"接入与身份",navModel:"模型网关",navCap:"能力中心",navSys:"系统",navAdvanced:"高级设置",
     dashTitle:"总览",dashDesc:"网关运行与治理态势：调用、拦截、渠道健康与审计完整性。",refresh:"刷新",
@@ -860,7 +892,7 @@ const I18N = {
     orgsyncTitle:"组织同步",orgsyncDesc:"从钉钉 / 飞书 / 企业微信同步部门与员工目录，登录时把第三方身份绑定到平台账号；同步只建 / 更新账号与部门映射，不授予受管级权限。",addOrgProvider:"添加同步来源",orgProviderList:"同步来源",orgProvider:"平台",orgCorpId:"企业 CorpId",orgAppKey:"AppKey",orgAppSecret:"应用密钥",orgBaseUrl:"API 地址",orgAutoCreate:"自动建号",orgDisableMissing:"离职禁用",orgEnabled:"启用",orgSecretMasked:"密钥（已打码）",orgLastSync:"最近同步",orgSyncBtn:"同步",orgBindTitle:"绑定第三方身份",orgBindBtn:"绑定",orgBindHint:"只能绑定已同步到的目录成员（同步快照里没有的 ID 会被拒绝）；同一身份不能绑到两个账号；解绑只解除关联、不删账号。",orgMyBindings:"我的第三方身份",orgNoBindings:"暂无绑定的第三方身份",orgExternalId:"第三方用户 ID",orgsyncHint:"同步只建 / 更新账号与部门映射，不自动授予受管级权限（权限仍走平台策略）；本地已禁用的账号同步不会自动恢复；目录里没看到的人不等于离职——只有平台明确说找不到时，开启「离职禁用」才会禁用账号。应用密钥只加密存储、不回显；同步与绑定全程审计。",
     usersTitle:"用户与角色",usersDesc:"分级管理员与职责分离：平台管理员、安全管理员、审计员、运维员各管一段，互相制约；角色分配本身只由平台管理员操作，全程审计。",roleMatrix:"角色分工",usersList:"用户列表",roleCol:"角色",roleSource:"角色来源",authSource:"账号来源",userDisabled:"已禁用",userEnabled:"启用中",userDisable:"禁用",userEnable:"启用",userOp:"操作",usersHintCol:"权限",usersHint:"只有平台管理员可以改角色（安全管理员也不行，避免自我提权）；不能改自己的角色、不能禁用自己、不能动最后一位启用的平台管理员。禁用账号会立即吊销其全部会话。角色来源为 oidc 的账号由 IdP 组映射管理，管理员在控制台改过角色后即转为本地管理、IdP 不再覆盖。",
     saved:"✓ 已保存",deleted:"✓ 已删除",empty:"暂无数据",chainValid:"哈希链完整",chainInvalid:"哈希链校验失败",approve:"通过",reject:"驳回",download:"下载",publish:"发布/回滚",test:"测试",rescan:"重扫",save:"保存",wizardTitle:"开通向导",wizDesc:"五步完成首次开通：建管理员 → 选行业模板 → 接模型渠道 → 选上线阶段 → 自检完成。默认保守、默认观察模式，第一天先跑起来、再慢慢收紧。",wizStep1:"创建管理员",wizStep2:"选择行业模板",wizStep3:"接入模型渠道",wizStep4:"选择上线阶段",wizStep5:"自检与完成",wizNext:"下一步",wizBack:"上一步",wizSkip:"稍后添加",wizAdminDone:"首个管理员已创建",wizAdminHint:"首个管理员已由设置码创建。如需新增管理员，请在「用户与角色」页添加。",wizTemplateHint:"模板是一整套互相咬合的预置：预置词表、渠道信任与分级策略、上线阶段与报表节奏。应用后可在各功能页继续微调。",wizApplyTemplate:"应用此模板",wizTemplateApplied:"已应用",wizVendor:"模型厂商",wizApiKey:"API Key",wizAdvanced:"高级（已按厂商预填，可改）",wizAddChannel:"添加渠道",wizPhaseHint:"观察：只审计、不拦截；提醒：自带级发机密数据时仅提醒、不拦截（违禁词与语义复核仍拦截）；拦截：全部规则按配置拦截。随时可在仪表盘切换。",wizPhaseObserve:"观察",wizPhaseWarn:"提醒",wizPhaseBlock:"拦截",wizPhaseObserveD:"只审计、不拦截——配错了也没有代价",wizPhaseWarnD:"自带级机密调用仅提醒、不拦截；违禁词仍拦截",wizPhaseBlockD:"全部规则按配置拦截",wizSavePhase:"保存上线阶段",wizComplete:"完成开通",wizDone:"开通完成",wizMasterKey:"我已备份主密钥（丢失将导致全部加密密钥无法恢复）",wizEmployeeHint:"员工接入：员工在终端运行 ag-setup 获得设备码，管理员在「设备接入」页批准即可。",setupTitle:"首次设置",setupSub:"创建第一个管理员",setupCode:"设置码",setupCodeHint:"服务器首次启动时打印在日志里的 12 位设置码（XXXX-XXXX-XXXX）。",setupBtn:"创建管理员并继续",setupUser:"管理员用户名",setupPass:"密码（至少 8 位）",setupPass2:"确认密码",obTitle:"开通进度",obPhase:"上线阶段",obWouldBlock:"观察模式下本应拦截",obWarned:"提醒模式下已提醒",obGoWizard:"进入开通向导",trustSigned:"signed_cloud（签约云）",trustDedicated:"dedicated_cloud（专有云 / VPC）",trustLocal:"local_model（本地小模型）",filterAll:"全部",filterDriftOnly:"仅漂移",filterNormalOnly:"仅正常",excConf:"confidential（机密）",excSecret:"secret（绝密，需另行开启）",orgDingtalk:"dingtalk（钉钉）",orgFeishu:"feishu（飞书）",orgWecom:"wecom（企业微信）",optDisable:"停用",semAlert:"告警放行",semBlock:"拦截",semCatJailbreak:"jailbreak 越狱",semCatInducement:"inducement 诱导",semCatDisguise:"disguise 伪装",semCatSplit:"split_exfil 拆分外发",arSimple:"simple 简单",arComplex:"complex 复杂",optToken:"Token（可选）",optCredential:"Credential（可选）",optSigningSecret:"Signing secret（可选）",optSha:"SHA-256（期望校验和，可空）",pkgGuardBundle:"ag-guard 组件包",pkgSetupBundle:"ag-setup 组件包",phDept:"研发部",phExcReason:"为什么这次调用需要放行",phExcScope:"模型 / 任务，如 mock-pro 汇总 XH-200 进度",phOrgName:"e.g. 星河钉钉",phSemSample:"越狱 / 诱导 / 伪装 / 拆分外发的典型表述",phArSample:"简单问答或复杂任务的典型表述",phFolderName:"e.g. 公司制度",phFolderDept:"e.g. 人力部",phScopeDepts:"* or 研发部,注册部",phChangeNote:"初版",phDeviceName:"设备名称，如 MacBook-lixiaofeng",phDesc:"描述…",roleAdmin:"平台管理员",roleSecurity:"安全管理员",roleAuditor:"审计员",roleOperator:"运维员",roleEmployee:"员工",confirmDeleteTitle:"确认删除",confirmDeleteBody:"删除后无法恢复，确定继续吗？",confirmDeleteOk:"确认删除",cancel:"取消",toastDismiss:"点击关闭",chNeedNameUrl:"请填写渠道名称与地址",chBadPricing:"pricing JSON 格式不正确",needWord:"请填写敏感词",errBadLogin:"用户名或密码不正确",errUnauthorized:"登录已过期，请重新登录",errAdminOnly:"需要平台管理员权限",errBadSetupCode:"设置码不正确",errNoSetupCode:"未签发设置码，请重启服务器",errSetupExhausted:"设置码已因多次失败而失效，请重启服务器签发新的设置码",errSetupDone:"首次设置已完成",errCantDisableSelf:"不能停用自己的账号",errCantRemoveLastAdmin:"不能移除最后一个在用的管理员",errCantChangeOwnRole:"不能修改自己的角色",errUserExists:"用户名已存在",errBadUsername:"用户名须为 3–32 位字母、数字、点、下划线或连字符",errShortPassword:"密码至少 8 位",errBadDeviceCode:"设备码无效或已过期",errBadRequest:"请求不正确，请检查输入后重试",errBadJson:"输入的 JSON 格式不正确",errNeedNameUrl:"请填写名称与地址",errNeedNameContent:"请填写名称与内容",errNeedName:"请填写名称",errNeedContent:"请填写内容",errDupApiKey:"该 API Key 已存在",errEmptyApiKey:"API Key 不能为空",errTooManyKeys:"每个渠道最多 10 把密钥",errHttpsOnly:"地址须为 https（本地测试可用 http）",errNeedVersion:"请填写版本号",errVersionMissing:"该版本不存在",errBadVersion:"版本号须为正整数",errExpireFuture:"过期时间须在未来",errExpireFormat:"过期时间格式须为 RFC3339",errUntilAfterSince:"结束时间须晚于开始时间",errBadTier:"层级须为 byoa 或 managed",errBadDataLevel:"数据等级须为 public、internal、confidential 或 secret",errBadTrustType:"信任类型须为 signed_cloud、dedicated_cloud 或 local_model",errBadPhase:"上线阶段须为 observe、warn 或 block",errBadWord:"敏感词须为 1–128 字符，不能含控制字符",errWordNotInList:"该词不在词表中",errBadBudget:"预算不正确",errBadCap:"月度上限须大于 0",errBadRate:"限流值不能小于 0",errTooManyPricing:"定价条目最多 32 条",errBadPricingEntry:"定价条目须有模型名且价格不能为负",errDeptBudget:"该部门已有预算，请改用修改",errFolderRegistered:"该文件夹已登记",errExcNotPending:"例外申请不存在或已处理",errNotYourExc:"这不是你发起的例外申请",errOnlyAuthorAdmin:"只有作者或管理员可以添加版本",errSaveFailed:"保存失败，请重试",errEncryptFailed:"加密失败，请重试",errExportFailed:"导出失败，请重试",errSyncFailed:"同步失败，请重试",errArchiveFailed:"归档失败，请重试",errHashFailed:"哈希计算失败，请重试",errStoreSecret:"保存密钥失败，请重试",errDecryptSecret:"解密服务商密钥失败",errPersistConfig:"保存配置失败，请重试",errOidcStart:"启动 OIDC 登录失败",errOtelExport:"遥测导出失败",errNotAvailable:"该功能未配置或不可用",errNoSemEntries:"该文档暂无语义条目",errNoPolicy:"该 Agent 类型未配置策略",errExternalIdentity:"外部身份不在任何已同步目录中，请先同步该来源",errSemModel:"语义模型未配置",errNotFound:"未找到该记录，请刷新后重试",errAlreadyExists:"同名记录已存在",errFailed:"操作失败，请重试",errCheckInput:"请检查输入后重试",errGeneric:"操作失败，请稍后重试",errNetwork:"无法连接服务器，请检查网络后重试",errDuplicate:"存在重复项，请检查后重试",errNeedSource:"知识包至少需要一个来源文件",errNeedCitation:"综合稿每条结论都须带原文回指",errBadArgs:"参数不正确，请检查输入后重试",errSnakeCase:"名称须为小写下划线格式",errBadTrust:"信任类型不正确",errBadLevel:"数据等级不正确",inputConfirm:"确定",inputVersionTitle:"发布版本",inputVersionBody:"请输入要发布的版本号（正整数）。",inputArgsTitle:"测试参数",inputArgsBody:"请输入调用参数（JSON 格式）。"},
-  en: {loginTitle:"Sign in",loginSub:"Enterprise agent governance gateway · Admin console",loginBtn:"Sign in",logout:"Sign out",ssoBtn:"Sign in with enterprise SSO",username:"Username",password:"Password",
+  en: {loginTitle:"Sign in",loginSub:"Enterprise agent governance gateway · Admin console",loginBtn:"Sign in",logout:"Sign out",themeToDark:"Dark mode",themeToLight:"Light mode",ssoBtn:"Sign in with enterprise SSO",username:"Username",password:"Password",
     loginHint:"Demo: admin / agentgate-admin, auditor: auditor / demo12345, operator: ops / demo12345, employee: lixiaofeng / demo12345",
     navMenu:"☰ Menu",navOps:"Operations",navAccess:"Access & identity",navModel:"Model gateway",navCap:"Capabilities",navSys:"System",navAdvanced:"Advanced",
     dashTitle:"Overview",dashDesc:"Gateway operations and governance posture: calls, blocks, channel health and audit integrity.",refresh:"Refresh",
@@ -923,9 +955,22 @@ function applyLang(){
   document.querySelectorAll("[data-i18n]").forEach(el=>{ const v=T(el.getAttribute("data-i18n")); if(v) el.textContent=v; });
   document.querySelectorAll("[data-i18n-ph]").forEach(el=>{ const v=T(el.getAttribute("data-i18n-ph")); if(v) el.placeholder=v; });
   document.getElementById("langBtn").textContent = lang==="zh" ? "EN" : "中文";
+  renderThemeBtns();
   buildNav();
 }
 function toggleLang(){ lang = lang==="zh" ? "en" : "zh"; localStorage.setItem("ag_lang", lang); applyLang(); if(me) showPage(current); }
+/* F37 slice 2: dark theme. A stored choice wins; with none, the page
+   follows prefers-color-scheme and tracks OS changes live. The head
+   script already applied the effective theme before first paint. */
+function currentTheme(){ return document.documentElement.getAttribute("data-theme") || "light"; }
+function renderThemeBtns(){ const label = currentTheme()==="dark" ? T("themeToLight") : T("themeToDark");
+  ["themeBtn","themeBtnLogin"].forEach(id=>{ const b=document.getElementById(id); if(b) b.textContent=label; }); }
+function applyTheme(t){ document.documentElement.setAttribute("data-theme", t); renderThemeBtns(); }
+function toggleTheme(){ const t = currentTheme()==="dark" ? "light" : "dark";
+  try{ localStorage.setItem("ag_theme", t); }catch(e){} applyTheme(t); }
+if(window.matchMedia){ const mqDark = window.matchMedia("(prefers-color-scheme: dark)");
+  const onSysTheme = e => { try{ if(!localStorage.getItem("ag_theme")) applyTheme(e.matches ? "dark" : "light"); }catch(err){} };
+  if(mqDark.addEventListener) mqDark.addEventListener("change", onSysTheme); }
 async function api(path, opts={}){
   const res = await fetch(path, {...opts, headers:{"Content-Type":"application/json", ...(session?{Authorization:"Bearer "+session}:{})}});
   const data = await res.json().catch(()=>({}));
@@ -1046,7 +1091,11 @@ function errText(e){
 }
 function toast(msg, ok=true){
   const t = document.getElementById("toast");
-  t.textContent = msg; t.title = T("toastDismiss"); t.style.background = ok ? "#0f172a" : "#991b1b";
+  t.textContent = msg; t.title = T("toastDismiss");
+  /* F37 slice 2: toast colours come from the theme variables so the toast
+     stays readable in dark mode (light toast, dark text). */
+  t.style.background = ok ? "var(--toast-bg)" : "var(--toast-bad-bg)";
+  t.style.color = ok ? "var(--toast-ink)" : "var(--toast-bad-ink)";
   /* F37 M-001: .show drives the fade/slide transition; re-adding the class
      restarts it, so a toast fired while one is fading out replaces it. */
   t.classList.add("show");
