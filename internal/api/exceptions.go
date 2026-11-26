@@ -37,28 +37,44 @@ func (a *API) SetAllowTopSecretExceptions(allow bool) {
 // exceptionView is the wire shape of an exception request. The grant
 // hash is deliberately absent: even the hash is useless to a reader
 // (it cannot be turned back into a token), and the plaintext token
-// is returned only once, inside the approve response.
+// is returned only once, inside the approve response. Plugin
+// exceptions (kind "plugin", F38 slice 3) carry no grant at all —
+// approval creates a time-limited waiver, not a one-time token —
+// and their plugin triple rides in the plugin_* fields; data_level
+// is "public" for them (not applicable) and must not be read as a
+// classification decision.
 type exceptionView struct {
-	ID           string     `json:"id"`
-	ApplicantID  string     `json:"applicant_id"`
-	Applicant    string     `json:"applicant"`
-	Department   string     `json:"department,omitempty"`
-	DataLevel    string     `json:"data_level"`
-	Reason       string     `json:"reason"`
-	Scope        string     `json:"scope"`
-	Hours        int        `json:"hours"`
-	Status       string     `json:"status"`
-	DecidedBy    string     `json:"decided_by,omitempty"`
-	DecisionNote string     `json:"decision_note,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	DecidedAt    *time.Time `json:"decided_at,omitempty"`
-	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
-	UsedAt       *time.Time `json:"used_at,omitempty"`
+	ID            string     `json:"id"`
+	ApplicantID   string     `json:"applicant_id"`
+	Applicant     string     `json:"applicant"`
+	Department    string     `json:"department,omitempty"`
+	Kind          string     `json:"kind"`
+	DataLevel     string     `json:"data_level"`
+	PluginID      string     `json:"plugin_id,omitempty"`
+	PluginVersion string     `json:"plugin_version,omitempty"`
+	PluginHash    string     `json:"plugin_hash,omitempty"`
+	PluginSource  string     `json:"plugin_source,omitempty"`
+	Reason        string     `json:"reason"`
+	Scope         string     `json:"scope"`
+	Hours         int        `json:"hours"`
+	Status        string     `json:"status"`
+	DecidedBy     string     `json:"decided_by,omitempty"`
+	DecisionNote  string     `json:"decision_note,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	DecidedAt     *time.Time `json:"decided_at,omitempty"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	UsedAt        *time.Time `json:"used_at,omitempty"`
 }
 
 func viewException(e *store.Exception) exceptionView {
+	kind := e.Kind
+	if kind == "" {
+		kind = exception.KindCall
+	}
 	return exceptionView{ID: e.ID, ApplicantID: e.ApplicantID, Applicant: e.Applicant,
-		Department: e.Department, DataLevel: e.DataLevel.String(), Reason: e.Reason,
+		Department: e.Department, Kind: kind, DataLevel: e.DataLevel.String(),
+		PluginID: e.PluginID, PluginVersion: e.PluginVersion, PluginHash: e.PluginHash,
+		PluginSource: e.PluginSource, Reason: e.Reason,
 		Scope: e.Scope, Hours: e.Hours, Status: e.Status, DecidedBy: e.DecidedBy,
 		DecisionNote: e.DecisionNote, CreatedAt: e.CreatedAt, DecidedAt: e.DecidedAt,
 		ExpiresAt: e.ExpiresAt, UsedAt: e.UsedAt}
@@ -78,37 +94,72 @@ func refreshExceptionStatuses(st *store.State, now time.Time) bool {
 }
 
 // POST /api/exceptions — any logged-in user applies for an exception.
+// kind "call" (the default) is the F24 one-time grant for a blocked
+// high-data-level call; kind "plugin" (F38 slice 3) is a time-limited
+// waiver for one plugin triple, judged on the same form.
 func (a *API) createException(w http.ResponseWriter, r *http.Request, u *store.User) {
 	var body struct {
-		DataLevel string `json:"data_level"`
-		Reason    string `json:"reason"`
-		Scope     string `json:"scope"`
-		Hours     int    `json:"hours"`
+		Kind          string `json:"kind"`
+		DataLevel     string `json:"data_level"`
+		PluginID      string `json:"plugin_id"`
+		PluginVersion string `json:"plugin_version"`
+		PluginHash    string `json:"plugin_hash"`
+		PluginSource  string `json:"plugin_source"`
+		Reason        string `json:"reason"`
+		Scope         string `json:"scope"`
+		Hours         int    `json:"hours"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	level, ok := store.ParseDataLevel(body.DataLevel)
-	if !ok {
-		writeErr(w, http.StatusBadRequest, "unknown data_level (public|internal|confidential|secret)")
-		return
-	}
-	if err := exception.ValidateRequest(level, body.Reason, body.Scope, body.Hours, a.allowTopSecretExceptions); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
+	kind := body.Kind
+	if kind == "" {
+		kind = exception.KindCall
 	}
 	now := time.Now()
 	rec := &store.Exception{ID: store.NewID("exc"), ApplicantID: u.ID, Applicant: u.Username,
-		Department: u.Department, DataLevel: level, Reason: body.Reason, Scope: body.Scope,
+		Department: u.Department, Kind: kind, Reason: body.Reason, Scope: body.Scope,
 		Hours: body.Hours, Status: exception.StatusPending, CreatedAt: now}
+	switch kind {
+	case exception.KindCall:
+		level, ok := store.ParseDataLevel(body.DataLevel)
+		if !ok {
+			writeErr(w, http.StatusBadRequest, "unknown data_level (public|internal|confidential|secret)")
+			return
+		}
+		if err := exception.ValidateRequest(level, body.Reason, body.Scope, body.Hours, a.allowTopSecretExceptions); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		rec.DataLevel = level
+	case exception.KindPlugin:
+		if err := exception.ValidatePluginRequest(body.PluginID, body.PluginVersion, body.PluginHash, body.PluginSource, body.Reason, body.Scope, body.Hours); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		rec.PluginID = body.PluginID
+		rec.PluginVersion = body.PluginVersion
+		rec.PluginHash = body.PluginHash
+		rec.PluginSource = body.PluginSource
+		// DataLevel stays public (zero): not applicable to a plugin
+		// waiver, and no F24 grant logic may ever match it — a
+		// plugin exception has no grant hash.
+	default:
+		writeErr(w, http.StatusBadRequest, "unknown kind (call|plugin)")
+		return
+	}
 	a.st.WithLock(func(st *store.State) {
 		st.Exceptions[rec.ID] = rec
 	})
 	_ = a.st.Save()
+	detail := map[string]string{"exception_id": rec.ID, "kind": kind, "hours": strconv.Itoa(body.Hours)}
+	if kind == exception.KindPlugin {
+		detail["plugin_id"] = rec.PluginID
+	}
 	a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, Kind: "exception",
-		Action: "exception_requested", DataLevel: level.String(), Decision: "allow",
-		Detail: map[string]string{"exception_id": rec.ID, "hours": strconv.Itoa(body.Hours)}})
+		Action: "exception_requested", DataLevel: rec.DataLevel.String(), Decision: "allow",
+		Detail: detail})
 	writeJSON(w, http.StatusCreated, viewException(rec))
 }
 
@@ -162,10 +213,14 @@ func (a *API) getException(w http.ResponseWriter, r *http.Request, u *store.User
 }
 
 // POST /api/exceptions/{id}/approve — admin only, pending only.
-// Mints the one-time grant; the plaintext token is returned exactly
-// once, in this response. The approver hands it to the applicant
-// (out of band); the gateway accepts it as the
+// A call exception mints the one-time grant; the plaintext token is
+// returned exactly once, in this response. The approver hands it to
+// the applicant (out of band); the gateway accepts it as the
 // X-AgentGate-Exception-Grant header on the next blocked call.
+// A plugin exception mints no grant: approval creates a
+// time-limited waiver (applicant + plugin triple + expiry) that the
+// plugin evaluation honours until ExpiresAt, so the response
+// carries no "grant" key at all.
 func (a *API) approveException(w http.ResponseWriter, r *http.Request, u *store.User) {
 	id := r.PathValue("id")
 	var body struct {
@@ -173,13 +228,19 @@ func (a *API) approveException(w http.ResponseWriter, r *http.Request, u *store.
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	now := time.Now()
-	token, hash := exception.NewGrant()
 	var rec *store.Exception
+	var token, hash string
 	a.st.WithLock(func(st *store.State) {
 		if e, ok := st.Exceptions[id]; ok && e.Status == exception.StatusPending {
 			expires := now.Add(time.Duration(e.Hours) * time.Hour)
 			e.Status = exception.StatusApproved
-			e.GrantHash = hash
+			if e.Kind == exception.KindPlugin {
+				// No grant: the waiver is the approval itself.
+				e.GrantHash = ""
+			} else {
+				token, hash = exception.NewGrant()
+				e.GrantHash = hash
+			}
 			e.DecidedBy = u.Username
 			e.DecisionNote = body.Note
 			e.DecidedAt = &now
@@ -193,14 +254,23 @@ func (a *API) approveException(w http.ResponseWriter, r *http.Request, u *store.
 		return
 	}
 	_ = a.st.Save()
+	detail := map[string]string{"exception_id": rec.ID, "kind": rec.Kind, "applicant": rec.Applicant,
+		"hours": strconv.Itoa(rec.Hours)}
+	if rec.Kind == exception.KindPlugin {
+		detail["plugin_id"] = rec.PluginID
+	}
 	a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, Kind: "exception",
 		Action: "exception_approved", DataLevel: rec.DataLevel.String(), Decision: "allow",
-		Detail: map[string]string{"exception_id": rec.ID, "applicant": rec.Applicant,
-			"hours": strconv.Itoa(rec.Hours)}})
+		Detail: detail})
 	// The grant rides alongside the view, once: no later read
-	// returns it, and the store only holds its hash.
+	// returns it, and the store only holds its hash. A plugin
+	// approval has no grant to ride.
 	out := viewException(rec)
-	writeJSON(w, http.StatusOK, map[string]any{"exception": out, "grant": token})
+	resp := map[string]any{"exception": out}
+	if token != "" {
+		resp["grant"] = token
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // POST /api/exceptions/{id}/reject — admin only, pending only.
@@ -244,8 +314,12 @@ func (a *API) decideException(w http.ResponseWriter, r *http.Request, u *store.U
 		return
 	}
 	_ = a.st.Save()
+	detail := map[string]string{"exception_id": rec.ID, "kind": rec.Kind, "applicant": rec.Applicant}
+	if rec.Kind == exception.KindPlugin {
+		detail["plugin_id"] = rec.PluginID
+	}
 	a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, Kind: "exception",
 		Action: action, DataLevel: rec.DataLevel.String(), Decision: "allow",
-		Detail: map[string]string{"exception_id": rec.ID, "applicant": rec.Applicant}})
+		Detail: detail})
 	writeJSON(w, http.StatusOK, viewException(rec))
 }

@@ -17,7 +17,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/myjnathan/agentgate/internal/attest"
 	"github.com/myjnathan/agentgate/internal/audit"
+	"github.com/myjnathan/agentgate/internal/exception"
 	"github.com/myjnathan/agentgate/internal/pluginpol"
 	"github.com/myjnathan/agentgate/internal/store"
 )
@@ -145,9 +147,9 @@ func (a *API) listPluginAssets(w http.ResponseWriter, r *http.Request, u *store.
 	status := q.Get("status")
 	switch status {
 	case "", pluginpol.StatusViolating, pluginpol.StatusUnknown,
-		pluginpol.StatusUnverified, pluginpol.StatusCompliant:
+		pluginpol.StatusUnverified, pluginpol.StatusExcepted, pluginpol.StatusCompliant:
 	default:
-		writeErr(w, http.StatusBadRequest, "invalid status (violating|unknown|unverified|compliant)")
+		writeErr(w, http.StatusBadRequest, "invalid status (violating|unknown|unverified|excepted|compliant)")
 		return
 	}
 	dept := q.Get("department")
@@ -161,11 +163,17 @@ func (a *API) listPluginAssets(w http.ResponseWriter, r *http.Request, u *store.
 				continue
 			}
 			terms = append(terms, pluginpol.AssetTerminal{
-				ID: t.ID, Username: t.Username, Department: t.Department,
+				ID: t.ID, UserID: t.UserID, Username: t.Username, Department: t.Department,
 				AgentType: t.AgentType, Details: t.PluginDetails, Names: t.Plugins,
 			})
 		}
-		rows = pluginpol.Aggregate(terms, st.PluginPolicies, now)
+		// Each terminal owner's approved plugin exceptions are
+		// honoured per install, so a waived install reads
+		// "excepted" instead of "violating" — and flips back the
+		// moment the exception expires (ExceptedPluginsByUser
+		// drops expired approvals before they are even listed).
+		exceptedByUser := exception.ExceptedPluginsByUser(st.Exceptions, now)
+		rows = pluginpol.AggregateWithExceptions(terms, st.PluginPolicies, exceptedByUser, now)
 	})
 	if rows == nil {
 		rows = []pluginpol.AssetRow{}
@@ -184,6 +192,89 @@ func (a *API) listPluginAssets(w http.ResponseWriter, r *http.Request, u *store.
 		rows = filtered
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"plugins": rows, "total": len(rows)})
+}
+
+// checkPlugin handles POST /api/plugin/check (F38, slice 3): the
+// pre-install gate an Agent calls before installing a plugin —
+// deny means "do not install". Any logged-in user or API token may
+// call it (the sidecar calls with the terminal's token, same as the
+// heartbeat); the verdict is the same evaluation login and
+// heartbeat use, for this caller's department, with their approved
+// plugin exceptions honoured.
+//
+// The verdict is always HTTP 200 with a decision field: a deny is
+// a policy answer, not a transport failure, so the Agent can read
+// it without treating it as an error. Denials and unknown-plugin
+// warnings are audited (kind "plugin", action "plugin_check");
+// plain allows are not — installs are rare, but a client could
+// script the check in a loop and drown the log, and the install
+// itself surfaces on the next heartbeat either way. An excepted
+// plugin allows, and the response carries the waiver's expiry so
+// the Agent can tell the user the install is time-limited.
+func (a *API) checkPlugin(w http.ResponseWriter, r *http.Request, u *store.User) {
+	var body struct {
+		PluginID      string `json:"plugin_id"`
+		PluginVersion string `json:"plugin_version"`
+		PluginHash    string `json:"plugin_hash"`
+		PluginSource  string `json:"plugin_source"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad request")
+		return
+	}
+	if err := exception.ValidatePluginTriple(body.PluginID, body.PluginVersion, body.PluginHash, body.PluginSource); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ev := attest.PluginEvidence{ID: body.PluginID, Version: body.PluginVersion,
+		Hash: body.PluginHash, Source: body.PluginSource}
+	now := time.Now()
+	var eff *pluginpol.Effective
+	var excepted []pluginpol.ExceptedPlugin
+	a.st.Read(func(st *store.State) {
+		eff = pluginpol.Resolve(st.PluginPolicies, u.Department, nil, now)
+		excepted = exception.ExceptedPlugins(st.Exceptions, u.ID, now)
+	})
+	resp := map[string]any{"decision": "allow"}
+	if eff != nil {
+		var waiver *pluginpol.ExceptedPlugin
+		for i := range excepted {
+			if excepted[i].Covers(ev) {
+				waiver = &excepted[i]
+				break
+			}
+		}
+		if waiver != nil {
+			resp["excepted"] = true
+			if !waiver.ExpiresAt.IsZero() {
+				resp["expires_at"] = waiver.ExpiresAt
+			}
+		} else {
+			reasons, unknown := pluginpol.EvaluateWithExceptions([]attest.PluginEvidence{ev}, eff, excepted)
+			if len(reasons) > 0 {
+				resp["decision"] = "deny"
+				resp["reason"] = reasons[0]
+			} else if len(unknown) > 0 {
+				resp["warning"] = "unknown"
+			}
+		}
+	}
+	if resp["decision"] == "deny" || resp["warning"] == "unknown" {
+		detail := map[string]string{"plugin_id": body.PluginID}
+		if reason, ok := resp["reason"].(string); ok && reason != "" {
+			detail["reason"] = reason
+		}
+		if resp["warning"] == "unknown" {
+			detail["warning"] = "unknown"
+		}
+		decision := "deny"
+		if resp["decision"] == "allow" {
+			decision = "allow"
+		}
+		a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, Kind: "plugin",
+			Action: "plugin_check", Decision: decision, Detail: detail})
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // deletePluginPolicy handles DELETE /api/plugin/policies/{id}.

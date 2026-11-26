@@ -75,8 +75,11 @@ Nathan 2026-11-26 指示立项：限制员工桌面 Agent（以 DSH 为首）可
    `plugin_hash_mismatch`、`plugin_unknown_source`（新增）。登录证明与
    持续心跳共用同一评估函数，判定口径处处一致。
 3. **安装前校验（装之前拦住）**：平台提供
-   `POST /api/plugin/check`（入参：Agent 身份 + 插件三元组 + 来源；
-   出参：allow/deny + 理由）。Agent 安装插件前调用，deny 则不装。
+   `POST /api/plugin/check`（已落地，切片 3；入参：插件三元组 +
+   来源，出参：`decision` allow/deny + 理由码；黑名单未知插件
+   allow + `warning: unknown`；被豁免的插件 allow +
+   `excepted: true` 与豁免到期时间；deny 与未知告警进审计，
+   普通 allow 不记）。Agent 安装插件前调用，deny 则不装。
    **此层依赖 Agent 侧接入**：DSH 接了才是装前阻断；不接则只有
    第 1、2 层（装后发现 + 降级），见 §7 边界。
 
@@ -85,7 +88,12 @@ Nathan 2026-11-26 指示立项：限制员工桌面 Agent（以 DSH 为首）可
 员工确需名单外插件时，走已有例外审批流（`internal/exception`）：
 申请（插件三元组 + 理由）→ 管理员批准 → 生成带期限的例外规则，
 到期自动失效，全程进哈希链审计。没有例外通道，白名单会被业务
-逼着开大洞，最终失效。
+逼着开大洞，最终失效。已落地（切片 3）：插件例外复用 F24 的
+`/api/exceptions` 申请/批准/驳回/撤销全套流程，批准不发一次性
+凭证——批准本身即豁免规则（1–72 小时）；豁免在登录批准、心跳
+漂移、安装前校验、资产视图四处同一口径生效，资产视图以
+`excepted` 状态标出被豁免的装机；钉选了版本/哈希/来源而上报无
+该项证据时不豁免（fail-closed）；豁免只对申请人本人有效。
 
 ## 7. 边界与弱点（明说）
 
@@ -125,6 +133,23 @@ Nathan 2026-11-26 指示立项：限制员工桌面 Agent（以 DSH 为首）可
   网关机密级拦截与 MCP 知识切断；见 §4 执行语义）。验证中抓到
   并修掉一个真 bug：版本约束 `==x.y.z` 因前缀表顺序被误判非法。
 - 切片 3：例外审批打通（插件类型）+ 安装前校验接口
-  `POST /api/plugin/check`。
+  `POST /api/plugin/check`。**已完成（2026-11-26）**：插件例外复用
+  F24 例外审批流（`store.Exception` 增加 `kind: plugin` + 插件
+  三元组字段；申请走同一 `/api/exceptions`，审批走同一批准/驳回/
+  撤销；批准不发一次性凭证——批准本身即生成带期限的豁免规则，
+  1–72 小时，到期自动失效）。豁免在登录批准、心跳漂移、安装前
+  校验、资产视图四处同一口径生效：`exception.ExceptedPlugins`
+  收集申请人已批准未过期的豁免，`pluginpol.EvaluateReportWithExceptions`
+  / `AggregateWithExceptions` 跳过被豁免的装机；资产视图新增状态
+  `excepted`（既非违规也非合规，到期自动翻回违规/未知）。
+  校验接口 `POST /api/plugin/check`（会话或终端令牌均可调）：
+  返回 200 + `decision`（allow/deny）+ `reason` + `warning`（黑名单
+  未知插件）+ `excepted`/`expires_at`；deny 与未知告警进审计，
+  普通 allow 不记（防刷日志，装机本身下次心跳即现形）。管理台：
+  例外页增加类型切换（调用/插件）与三元组表单，资产页违规行增
+  「申请例外」按钮（预填 ID/版本直达例外页）。三元组豁免是
+  fail-closed 的：版本/哈希/来源钉选了而上报无该项证据时，不豁免。
+  例外是申请人粒度的——别人的豁免不豁免你的装机；处置仍是终端
+  属性，不被 F24 单次放行凭证影响（切片 2 已定）。
 
 每片亲手跑一遍验证再合并；验收以 `docs/feature-backlog.md` F38 条目为准。

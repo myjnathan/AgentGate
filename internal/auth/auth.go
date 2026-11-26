@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/myjnathan/agentgate/internal/attest"
+	"github.com/myjnathan/agentgate/internal/exception"
 	"github.com/myjnathan/agentgate/internal/pluginpol"
 	"github.com/myjnathan/agentgate/internal/roles"
 	"github.com/myjnathan/agentgate/internal/store"
@@ -404,8 +405,11 @@ func (s *Service) ApproveDeviceCode(code string, user *store.User, deviceName st
 		// for now. observe/warn record the reasons without
 		// changing the verdict; downgrade/block_sensitive
 		// downgrade (block_sensitive's extra cut of confidential
-		// channels lands in slice 2).
-		if reasons, _, action := pluginpol.EvaluateReport(dc.Attestation, st.PluginPolicies, user.Department, nil, time.Now()); len(reasons) > 0 {
+		// channels lands in slice 2). Slice 3: the approving
+		// user's approved plugin exceptions are honoured, so a
+		// waived plugin does not downgrade this login.
+		excepted := exception.ExceptedPlugins(st.Exceptions, user.ID, time.Now())
+		if reasons, _, action := pluginpol.EvaluateReportWithExceptions(dc.Attestation, st.PluginPolicies, excepted, user.Department, nil, time.Now()); len(reasons) > 0 {
 			for _, r := range reasons {
 				if !containsReason(verdict.Reasons, r) {
 					verdict.Reasons = append(verdict.Reasons, r)

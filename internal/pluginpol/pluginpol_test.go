@@ -527,3 +527,142 @@ func hasReason(reasons []string, want string) bool {
 	}
 	return false
 }
+
+func TestExceptedPluginCovers(t *testing.T) {
+	x := pluginpol.ExceptedPlugin{ID: "good", Version: "1.2.3", Hash: hashA(), Source: pluginpol.SourcePlatform}
+	cases := []struct {
+		name string
+		ev   attest.PluginEvidence
+		want bool
+	}{
+		{"exact triple", ev("good", "1.2.3", hashA(), pluginpol.SourcePlatform), true},
+		{"id case-insensitive", ev("GOOD", "1.2.3", hashA(), pluginpol.SourcePlatform), true},
+		{"v-prefixed version", ev("good", "v1.2.3", hashA(), pluginpol.SourcePlatform), true},
+		{"other version", ev("good", "1.2.4", hashA(), pluginpol.SourcePlatform), false},
+		{"other hash", ev("good", "1.2.3", hashB(), pluginpol.SourcePlatform), false},
+		{"other source", ev("good", "1.2.3", hashA(), pluginpol.SourceMarketplace), false},
+		{"other plugin", ev("bad", "1.2.3", hashA(), pluginpol.SourcePlatform), false},
+		// Fail-closed: a report with no evidence for a pinned
+		// field cannot prove it is the excepted install.
+		{"no version evidence", ev("good", "", hashA(), pluginpol.SourcePlatform), false},
+		{"no hash evidence", ev("good", "1.2.3", "", pluginpol.SourcePlatform), false},
+		{"name-only report", ev("good", "", "", ""), false},
+	}
+	for _, c := range cases {
+		if got := x.Covers(c.ev); got != c.want {
+			t.Errorf("%s: Covers=%v, want %v", c.name, got, c.want)
+		}
+	}
+	// An ID-only exception waives every version of that plugin.
+	idOnly := pluginpol.ExceptedPlugin{ID: "good"}
+	if !idOnly.Covers(ev("good", "9.9.9", hashB(), pluginpol.SourceLocal)) {
+		t.Error("ID-only exception must waive any version/hash/source")
+	}
+	if !idOnly.Covers(ev("good", "", "", "")) {
+		t.Error("ID-only exception must waive a name-only report")
+	}
+	if idOnly.Covers(ev("other", "", "", "")) {
+		t.Error("ID-only exception must not waive another plugin")
+	}
+}
+
+func TestEvaluateWithExceptions(t *testing.T) {
+	now := time.Now()
+	allow := allowPolicy("p", pluginpol.PluginRule{ID: "good", VersionConstraint: ">=1.0.0"})
+	deny := denyPolicy("p", pluginpol.PluginRule{ID: "bad"})
+	run := func(pols map[string]*pluginpol.PluginPolicy, excepted []pluginpol.ExceptedPlugin, details ...attest.PluginEvidence) ([]string, []string) {
+		return pluginpol.EvaluateWithExceptions(details, pluginpol.Resolve(pols, "", nil, now), excepted)
+	}
+	waived := []pluginpol.ExceptedPlugin{{ID: "bad", Version: "1.0.0"}}
+	// Allowlist violation waived for the excepted install.
+	if r, _ := run(polMap(allow), waived, ev("bad", "1.0.0", "", "")); len(r) != 0 {
+		t.Errorf("waived allowlist violation: reasons %v, want none", r)
+	}
+	// The waiver is version-pinned: another version still fails.
+	if r, _ := run(polMap(allow), waived, ev("bad", "2.0.0", "", "")); !hasReason(r, attest.ReasonPluginNotAllowed) {
+		t.Errorf("other version: reasons %v, want plugin_not_allowed", r)
+	}
+	// Denylist block waived.
+	if r, _ := run(polMap(deny), waived, ev("bad", "1.0.0", "", "")); len(r) != 0 {
+		t.Errorf("waived denylist block: reasons %v, want none", r)
+	}
+	// Denylist unknown waived: not even flagged unknown.
+	if r, u := run(polMap(deny), []pluginpol.ExceptedPlugin{{ID: "newthing"}}, ev("newthing", "1.0.0", "", "")); len(r) != 0 || len(u) != 0 {
+		t.Errorf("waived unknown: reasons %v unknown %v, want none", r, u)
+	}
+	// A non-waived plugin in the same report is still judged.
+	if r, _ := run(polMap(allow), waived, ev("bad", "1.0.0", "", ""), ev("stranger", "1.0.0", "", "")); !hasReason(r, attest.ReasonPluginNotAllowed) {
+		t.Errorf("mixed report: reasons %v, want plugin_not_allowed for stranger", r)
+	}
+	// No exceptions: identical to Evaluate.
+	if r, _ := run(polMap(allow), nil, ev("bad", "1.0.0", "", "")); !hasReason(r, attest.ReasonPluginNotAllowed) {
+		t.Errorf("no exceptions: reasons %v, want plugin_not_allowed", r)
+	}
+}
+
+func TestClassifyWithExceptions(t *testing.T) {
+	now := time.Now()
+	eff := pluginpol.Resolve(polMap(allowPolicy("p", pluginpol.PluginRule{ID: "good"})), "", nil, now)
+	waived := []pluginpol.ExceptedPlugin{{ID: "bad"}}
+	if st, _ := pluginpol.ClassifyWithExceptions(ev("bad", "1.0.0", "", ""), eff, waived); st != pluginpol.StatusExcepted {
+		t.Errorf("waived violating: status %q, want excepted", st)
+	}
+	// A compliant install is never re-labelled excepted.
+	if st, _ := pluginpol.ClassifyWithExceptions(ev("good", "1.0.0", "", ""), eff, waived); st != pluginpol.StatusCompliant {
+		t.Errorf("compliant: status %q, want compliant", st)
+	}
+	// An unverified install stays unverified (the exception is
+	// irrelevant to it — it was not a violation).
+	if st, _ := pluginpol.ClassifyWithExceptions(ev("good", "", "", ""), eff, []pluginpol.ExceptedPlugin{{ID: "good"}}); st != pluginpol.StatusUnverified {
+		t.Errorf("unverified: status %q, want unverified", st)
+	}
+	// No exception: the plain verdict.
+	if st, _ := pluginpol.ClassifyWithExceptions(ev("bad", "1.0.0", "", ""), eff, nil); st != pluginpol.StatusViolating {
+		t.Errorf("no exception: status %q, want violating", st)
+	}
+}
+
+func TestAggregateWithExceptions(t *testing.T) {
+	now := time.Now()
+	policies := polMap(allowPolicy("a", pluginpol.PluginRule{ID: "good", VersionConstraint: ">=1.2.0"}))
+	terms := []pluginpol.AssetTerminal{
+		{ID: "t1", UserID: "u-alice", Username: "alice", Department: "RD", AgentType: "dsh",
+			Details: []attest.PluginEvidence{ev("bad-plugin", "1.0.0", "", "")}},
+		{ID: "t2", UserID: "u-bob", Username: "bob", Department: "RD", AgentType: "dsh",
+			Details: []attest.PluginEvidence{ev("bad-plugin", "1.0.0", "", "")}},
+	}
+	byUser := map[string][]pluginpol.ExceptedPlugin{
+		"u-alice": {{ID: "bad-plugin", Version: "1.0.0"}},
+	}
+	rows := pluginpol.AggregateWithExceptions(terms, policies, byUser, now)
+	if len(rows) != 1 {
+		t.Fatalf("want 1 row, got %d", len(rows))
+	}
+	row := rows[0]
+	// Worst status across installs: bob still violates, so the
+	// row stays violating; alice's own install reads excepted.
+	if row.Status != pluginpol.StatusViolating || row.Installs != 2 {
+		t.Errorf("row %+v, want violating with 2 installs", row)
+	}
+	for _, inst := range row.Terminals {
+		want := pluginpol.StatusViolating
+		if inst.Username == "alice" {
+			want = pluginpol.StatusExcepted
+		}
+		if inst.Status != want {
+			t.Errorf("%s install status %q, want %q", inst.Username, inst.Status, want)
+		}
+	}
+	// When every install is waived, the row itself is excepted.
+	byUser["u-bob"] = []pluginpol.ExceptedPlugin{{ID: "bad-plugin", Version: "1.0.0"}}
+	rows = pluginpol.AggregateWithExceptions(terms, policies, byUser, now)
+	if len(rows) != 1 || rows[0].Status != pluginpol.StatusExcepted {
+		t.Errorf("all waived: rows %+v, want one excepted row", rows)
+	}
+	// An exception for another user never waives this terminal.
+	rows = pluginpol.AggregateWithExceptions(terms, policies,
+		map[string][]pluginpol.ExceptedPlugin{"u-carol": {{ID: "bad-plugin"}}}, now)
+	if len(rows) != 1 || rows[0].Status != pluginpol.StatusViolating {
+		t.Errorf("other user's exception: rows %+v, want violating", rows)
+	}
+}

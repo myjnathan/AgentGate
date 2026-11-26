@@ -10,6 +10,7 @@ import (
 
 	"github.com/myjnathan/agentgate/internal/attest"
 	"github.com/myjnathan/agentgate/internal/audit"
+	"github.com/myjnathan/agentgate/internal/exception"
 	"github.com/myjnathan/agentgate/internal/pluginpol"
 	"github.com/myjnathan/agentgate/internal/store"
 	"github.com/myjnathan/agentgate/internal/terminal"
@@ -108,7 +109,13 @@ func (a *API) terminalHeartbeat(w http.ResponseWriter, r *http.Request, u *store
 		// uses, so a terminal cannot pass at login and drift
 		// silently afterwards (or vice versa).
 		rec.DriftReasons = terminal.DriftReasons(hb.Report(), st.AttestationPolicies[agentType])
-		reasons, unknown, action := pluginpol.EvaluateReport(hb.Report(), st.PluginPolicies, u.Department, nil, now)
+		// F38 slice 3: the terminal owner's approved plugin
+		// exceptions are honoured here, so a waived plugin stops
+		// drifting (and its disposition clears) until the
+		// exception expires — at which point the next heartbeat
+		// drifts again with no admin click anywhere.
+		excepted := exception.ExceptedPlugins(st.Exceptions, u.ID, now)
+		reasons, unknown, action := pluginpol.EvaluateReportWithExceptions(hb.Report(), st.PluginPolicies, excepted, u.Department, nil, now)
 		if len(reasons) > 0 || len(unknown) > 0 {
 			for _, r := range reasons {
 				if !containsString(rec.DriftReasons, r) {
