@@ -131,6 +131,10 @@
   .btn.danger:hover{border-color:var(--bad);color:var(--bad)}
   .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   .msg{font-size:13px;color:var(--muted)} .msg.ok{color:var(--ok)} .msg.err{color:var(--bad)}
+  /* F37 M-011: inline error emphasis — replay the shared fadeSlideIn when
+     an error appears (added by flashErr / setMsg), so the change is
+     visible and a repeated error still answers the click. */
+  .msg.errPop,#lerr.errPop,#inputErr.errPop{animation:fadeSlideIn var(--motion-base) var(--motion-ease-out)}
   .muted{color:var(--muted);font-size:12.5px}
   .empty{padding:26px 10px;text-align:center;color:var(--faint);font-size:13px}
   .bars{display:flex;flex-direction:column;gap:9px;margin-top:6px}
@@ -1135,7 +1139,7 @@ function promptInput(opts){
     _inputResolve = res; _inputValidate = opts.validate || null; _inputMultiline = !!opts.multiline;
     document.getElementById("inputTitle").textContent = opts.title;
     document.getElementById("inputBody").textContent = opts.body || "";
-    document.getElementById("inputErr").textContent = "";
+    const _ie = document.getElementById("inputErr"); _ie.textContent = ""; _ie.classList.remove("errPop");
     const f = document.getElementById("inputField"), a = document.getElementById("inputArea");
     f.style.display = _inputMultiline ? "none" : "block";
     a.style.display = _inputMultiline ? "block" : "none";
@@ -1156,12 +1160,17 @@ function submitInput(){
   const target = _inputMultiline ? document.getElementById("inputArea") : document.getElementById("inputField");
   if(_inputValidate){
     const err = _inputValidate(target.value);
-    if(err){ document.getElementById("inputErr").textContent = err; return; }
+    if(err){ flashErr(document.getElementById("inputErr"), err); return; }
   }
   closeInput(target.value);
 }
 document.addEventListener("keydown", (e)=>{ if(e.key==="Escape" && document.getElementById("confirmOverlay").classList.contains("open")) closeConfirm(false); if(e.key==="Escape" && document.getElementById("inputOverlay").classList.contains("open")) closeInput(null); if(e.key==="Enter" && !_inputMultiline && document.getElementById("inputOverlay").classList.contains("open") && document.activeElement === document.getElementById("inputField")) submitInput(); });
-function setMsg(id, msg, ok=true){ const el=document.getElementById(id); if(el){ el.textContent=msg; el.className="msg "+(ok?"ok":"err"); } }
+/* F37 M-011: inline error emphasis — replay the shared fadeSlideIn when
+   an error appears, so the change is visible (and a repeated error still
+   answers the click). transform/opacity only; the reduced-motion rule
+   collapses it to an instant switch. */
+function flashErr(el, text){ if(!el) return; el.textContent=text; el.classList.remove("errPop"); void el.offsetWidth; el.classList.add("errPop"); }
+function setMsg(id, msg, ok=true){ const el=document.getElementById(id); if(el){ el.textContent=msg; el.className="msg "+(ok?"ok":"err"); if(!ok){ void el.offsetWidth; el.classList.add("errPop"); } } }
 function esc(s){ return String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function pill(v){ return v ? `<span class="pill ${esc(v)}">${esc(v)}</span>` : ""; }
 function fmtNum(n){ n=Number(n||0); if(n>=1e6) return (n/1e6).toFixed(1)+"M"; if(n>=1e3) return (n/1e3).toFixed(1)+"K"; return String(n); }
@@ -1228,7 +1237,7 @@ async function login(){
     const d = await api("/api/login",{method:"POST",body:JSON.stringify({username:lu.value,password:lp.value})});
     session = d.session; localStorage.setItem("ag_session", session);
     me = d; enterApp();
-  }catch(e){ document.getElementById("lerr").textContent = errText(e); }
+  }catch(e){ flashErr(document.getElementById("lerr"), errText(e)); }
 }
 /* F34: first-run setup — the console shows this form instead of
    login when the server reports no users yet. */
@@ -1242,13 +1251,13 @@ function showSetupBox(){
 }
 async function doSetup(){
   const code = suCode.value.trim(), user = suUser.value.trim(), pw = suPass.value, pw2 = suPass2.value;
-  if(pw !== pw2){ document.getElementById("lerr").textContent = lang==="zh" ? "两次密码不一致" : "Passwords do not match"; return; }
+  if(pw !== pw2){ flashErr(document.getElementById("lerr"), lang==="zh" ? "两次密码不一致" : "Passwords do not match"); return; }
   try{
     await api("/api/setup",{method:"POST",body:JSON.stringify({code, username:user, password:pw})});
     const d = await api("/api/login",{method:"POST",body:JSON.stringify({username:user, password:pw})});
     session = d.session; localStorage.setItem("ag_session", session);
     me = d; sessionStorage.setItem("ag_wizard_first", "1"); enterApp();
-  }catch(e){ document.getElementById("lerr").textContent = errText(e); }
+  }catch(e){ flashErr(document.getElementById("lerr"), errText(e)); }
 }
 fetch("/api/auth/providers").then(r=>r.json()).then(d=>{
   if(d.oidc_enabled){ document.getElementById("ssoRow").style.display="block";
