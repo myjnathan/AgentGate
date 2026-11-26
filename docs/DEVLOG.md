@@ -2,6 +2,20 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-26 · F37 收尾验收复审：全部重跑无回归，F37 标记 done
+
+- 本轮按上一轮 DEVLOG「下一轮」计划做 F37 收尾验收复审（切片 1+2+3 合并后的本地代码，HEAD 6eed923）。先跑基线：`gofmt`/`go vet`/`go test ./...` 全绿（34 包），`make smoke` 0 失败。演示模式（127.0.0.1:8899，全新数据目录，主密钥 `closing-review-master-key`）+ 无头浏览器全量重跑：`verify-slice1.js` 29 项断言全过（ALL PASS）、`verify-slice2.js` 83 项断言 0 失败、`verify-slice3.js` 25 项断言全过（ALL PASS）；`measure-overflow.js` 24 页 × 390px/1440px 共 48 项 0 溢出 0 错误；`measure-i18n.js` EN 模式总 CJK 480 字、逐页与切片 3 基线完全一致、0 错误。M-001–M-014 全部落地或明确不做，全站动效只用统一变量、无散落自定义曲线，F37 验收达成，backlog 与 motion-audit 标记 `done`。证据在 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/f37-motion/measure4/`（`verify-slice1/2/3` + `measure4-overflow/overflow.json` + `measure4-i18n/i18n.json` + `server.log`）。
+- 队列至此清空：F1–F37 全部 done，后续轮次转入待机——无新条目时只做基线维护（go vet/test/smoke 保持绿），等 Nathan 新指示；不要自行立项新条目。
+- 推送结果（切片 2，本轮已合并）：第一次重试的审批卡 `connector-attempt-659ca21e`（UTC 11-25 22:52 请求）因服务重启中断、卡片于 00:31 UTC 超时，远端未变、无重复提交风险；第二次重试（早上，Nathan 在线）获批，整包快照 4 文件一次推送成功（提交 c687b329），推送后 4 文件远端 blob 与快照逐一核对一致；PR #46 文件清单与本轮一致（4/4），已合并进远端 main，远端 HEAD 2bb4967f（合并提交）。切片 3（6eed923 + 本轮收尾提交）随后建独立快照推送。
+
+## 2026-11-26 · F37 第三切片：M-011 行内错误强调 + 窄屏 / EN 复审
+
+- 推送重试（阻塞，第三次超时）：按上一轮 DEVLOG 计划优先重试 F37 第二切片推送。快照仍固定在 dc30df6（`~/workspace/agentgate-f37-snap`，4 个文件已与 dc30df6 逐字节核对一致），推送前核对：远端 `loop/f37` 头仍为 fac3a5a8（与同步记录一致）、4 文件内容与同步基点一致、无分叉；远端 main 未动（084cb4fb）。本次 `push-files` 调用生成审批卡 `connector-attempt-4ce2d168`（UTC 11-25 20:34 请求），因深夜无人决策于 22:28 UTC 超时；`list_pending` 当前无待批卡；读回确认远端分支未变、未落盘。注意：本次调用中途服务重启、执行曾报中断——已核对远端状态确认推送未发生、无重复提交风险，同步记录未推进（仍为 fac3a5a8）。快照目录保持 dc30df6 不动，下一轮 Nathan 在线时直接重试即可；切片 3 不并入该快照（每切片独立 PR），待切片 2 合并后再为切片 3 建快照。
+- M-011 决策：做轻量强调，不用抖动。错误出现即状态变化（无 → 有），值得交代来源；抖动是装饰性强调，与「动效只解释变化」不符。实现（只改 `internal/webui/assets/index.html`，不碰分级/脱敏/审计、不删测试、不改后端）：新增 `flashErr(el, text)`（登录 `lerr` 三处、输入框 `inputErr` 校验失败处）与 `setMsg` 的错误分支（各页 `.msg`），错误出现时重播共享 `fadeSlideIn`（`--motion-base` 180ms + ease-out，只动 opacity/transform）；重复错误先清后加 `errPop` 类 + 强制重排重播（`setMsg` 的 `className` 重置天然清掉旧类），符合标尺⑤「按下去有回应」；`prefers-reduced-motion` 下全局规则自动退化为瞬间切换；错误行已有 `min-height`，无布局位移。`wizChecklist` / `cacheStats` / `otelStats` 的纯文本错误不在 M-011 清单内，未动。
+- 验证：新脚本 `verify-slice3.js` 25 项断言全过、0 控制台/页面/请求错误、0 原生弹窗——登录错密中英双语均现 `fadeSlideIn`（180ms，中途 opacity 0.46、落定 1.0）、重复错误重播（`animationstart` 计 2 次）、`prefers-reduced-motion` 下动画时长压到 0.01ms 且文案照常出现、深色下错误红 `#f87171` 在卡片底 `#131c2e` 上对比度 6.16:1、渠道页 `.msg` 与 REST 测试框 `inputErr` 同款强调且对话框保持打开、390px 登录与向导错误均无溢出（卡片 342px）、深色 + EN 在 390px 下仪表盘/渠道/审计三页无溢出且主题按钮为 "Light mode"。静态核对：除 `:root` 变量定义外无字面时长/曲线，14 处 `transition`/`animation` 声明只用 `var(--motion-*)` 与 `fadeSlideIn`，全站仅一个关键帧。另跑既有脚本全量复测：`measure-overflow.js` 24 页 × 390px/1440px 共 48 项 0 溢出 0 错误（390px 表内横向滚动为既有设计，文档本身不溢出）；`measure-i18n.js` EN 模式 480 字、逐页与 F36 切片 3 基线完全一致，0 新增漏译。`gofmt`/`go vet`/`go test ./...` 全绿（34 包）；`make smoke` 0 失败。
+- 关键决策与教训：① `CHROME_EXE` 须指向 `.../chrome-headless-shell/linux-158.0.8127.36/chrome-headless-shell-linux64/chrome-headless-shell` 这个二进制文件，`.../browsers/chrome-headless-shell` 本身是目录，直接指它会 `EACCES`（本次首跑即因此失败）；② 主密钥须 ≥16 字符（`slice3-demo-key` 15 字符被拒，改 `slice3-demo-master-key` 后启动）；③ 停演示服务仍按端口取 pid 再 kill（本次实得 pid 2291，与 shell 回显的 2288 不同——2288 是 nohup 包装层）。
+- 清单状态：M-001–M-014 至此全部落地或明确不做；F37 保持 `doing`。下一轮：优先重试切片 2 推送（Nathan 在线时），随后做 F37 收尾验收复审（`verify-slice1/2/3` + 溢出 + 双语全量重跑，确认无回归后标记 F37 `done`）。
+
 ## 2026-11-26 · F37 第二切片：全站深色主题
 
 - 本轮按上一轮 DEVLOG「下一轮」计划执行 F37 第二切片（F36 已 done，队列只剩 F37；F37 保持 `doing`）。体内 12:26 特别指令与待办登记 1–13 均已在先前轮次执行完毕、作废。本地另有一条 docs 提交 4765546（F37 第一切片推送结果记录）随本轮整包快照一并带上。
