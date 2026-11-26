@@ -17,6 +17,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/seed"
 	"github.com/myjnathan/agentgate/internal/store"
+	"github.com/myjnathan/agentgate/internal/terminal"
 )
 
 // testEnv spins up a gateway backed by the demo seed and a mock upstream.
@@ -192,5 +193,73 @@ func TestSecretLevelBlockedWhenNoChannel(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != 403 {
 		t.Fatalf("expected 403 no_channel_for_data_level, got %d", resp.StatusCode)
+	}
+}
+
+// TestPluginDispositionLiveCut covers the F38 slice 2 ladder at the
+// model gateway: a managed token whose terminal is under a plugin
+// disposition is treated as BYOA live (no re-login needed), and a
+// clean terminal restores managed access. observe records only.
+func TestPluginDispositionLiveCut(t *testing.T) {
+	e := setup(t)
+	// The managed token belongs to chenjing (dsh). Give her terminal
+	// a disposition, as a violating heartbeat would.
+	var chenjing *store.User
+	e.st.Read(func(s *store.State) {
+		for _, u := range s.Users {
+			if u.Username == "chenjing" {
+				cp := *u
+				chenjing = &cp
+			}
+		}
+	})
+	setAction := func(action string) {
+		e.st.WithLock(func(s *store.State) {
+			s.Terminals["term_test"] = &terminal.Terminal{ID: "term_test", UserID: chenjing.ID,
+				Username: "chenjing", Department: chenjing.Department, AgentType: "dsh",
+				PluginAction: action, PluginReasons: []string{"plugin_not_allowed"}}
+		})
+	}
+	// block_sensitive: confidential blocked even on a managed token;
+	// public traffic still flows.
+	setAction("block_sensitive")
+	code, body := e.chat(t, e.mgdTok, "mock-pro", "请分析 XH-200 项目的进展")
+	if code != 403 || !strings.Contains(body, "data_level_forbidden") {
+		t.Fatalf("block_sensitive confidential: got %d %s, want 403 data_level_forbidden", code, body)
+	}
+	code, _ = e.chat(t, e.mgdTok, "mock-eco", "你好，帮我写一封请假邮件")
+	if code != 200 {
+		t.Fatalf("block_sensitive public: got %d, want 200", code)
+	}
+	// The block is audited as a plugin-policy block, not a native
+	// BYOA tier block, so operators can tell the two apart.
+	found := false
+	for _, ev := range e.al.All() {
+		if ev.Action == "model_call_blocked" && ev.Detail["reason"] == "plugin_policy" &&
+			ev.Detail["plugin_action"] == "block_sensitive" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("want a plugin_policy model_call_blocked audit event")
+	}
+	// downgrade: the same confidential cut (effective BYOA).
+	setAction("downgrade")
+	code, body = e.chat(t, e.mgdTok, "mock-pro", "请分析 XH-200 项目的进展")
+	if code != 403 || !strings.Contains(body, "data_level_forbidden") {
+		t.Fatalf("downgrade confidential: got %d %s, want 403", code, body)
+	}
+	// observe: no enforcement at all.
+	setAction("observe")
+	code, body = e.chat(t, e.mgdTok, "mock-pro", "请分析 XH-200 项目的进展")
+	if code != 200 || !strings.Contains(body, "XH-200") {
+		t.Fatalf("observe confidential: got %d %s, want 200 with XH-200", code, body)
+	}
+	// Remediation: clearing the disposition restores the managed
+	// token's confidential access without re-login.
+	setAction("")
+	code, body = e.chat(t, e.mgdTok, "mock-pro", "请分析 XH-200 项目的进展")
+	if code != 200 || !strings.Contains(body, "XH-200") {
+		t.Fatalf("remediated confidential: got %d %s, want 200 with XH-200", code, body)
 	}
 }

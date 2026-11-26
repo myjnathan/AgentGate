@@ -1265,6 +1265,73 @@ def main():
     s, _ = call("/api/plugin/policies/" + ppid, token=admin_tok, method="DELETE")
     check("plugin policy deleted", s == 200)
 
+    # F38 slice 2: asset view + disposition ladder. A managed dsh
+    # login with a listed plugin stays managed; a violating
+    # heartbeat cuts confidential calls live (block_sensitive) and
+    # a clean heartbeat restores them; the asset view aggregates
+    # the same evidence.
+    s, pp2 = call("/api/plugin/policies",
+                 {"name": "smoke slice2", "mode": "allowlist",
+                  "scope": {"level": "global"}, "action": "block_sensitive", "enabled": True,
+                  "rules": [{"id": "good-plugin", "version_constraint": ">=1.2.0"}]}, token=admin_tok)
+    check("plugin policy slice2 created", s == 201 and pp2.get("policy", {}).get("id", "").startswith("plg_"))
+    ppid2 = pp2["policy"]["id"]
+    s, start6 = call("/api/setup/device/start", {"agent_type": "dsh", "tier": "managed"})
+    s, att6 = call("/api/setup/device/attest", {"code": start6["code"], "secret": start6["secret"],
+                                                "report": {"version": "0.1.0", "guard_applied": True,
+                                                           "plugin_details": [{"id": "good-plugin", "version": "1.5.0"}]}})
+    check("listed plugin attestation passes",
+          s == 200 and att6.get("verdict", {}).get("status") == "pass")
+    s, appr6 = call("/api/device/approve", {"code": start6["code"], "device_name": "ci-smoke-f38s2"}, token=sess)
+    check("listed plugin approves as managed",
+          s == 200 and appr6.get("issued_tier") == "managed")
+    s, poll6 = call("/api/setup/device/poll", {"code": start6["code"], "secret": start6["secret"]})
+    tok6 = poll6.get("token", "")
+    check("slice2 managed token issued", s == 200 and tok6.startswith("ag_at_"))
+    s, chat6 = call("/v1/chat/completions",
+                    {"model": "mock-pro", "messages": [{"role": "user", "content": "请分析 XH-200 项目的进展"}]}, token=tok6)
+    check("slice2 managed confidential before drift",
+          s == 200 and "XH-200" in json.dumps(chat6))
+    # Violating heartbeat: disposition block_sensitive, live cut.
+    # The terminal still reports its good plugin alongside the
+    # violating one, so the asset view shows both rows.
+    s, hb6 = call("/api/terminals/heartbeat",
+                  {"version": "0.1.0", "config_hash": "ab" * 32, "plugins": [],
+                   "plugin_details": [{"id": "good-plugin", "version": "1.5.0"},
+                                      {"id": "bad-plugin", "version": "1.0.0"}],
+                   "guard_applied": True, "os": "linux"}, token=tok6)
+    check("slice2 violating heartbeat sets block_sensitive",
+          s == 200 and hb6.get("plugin_action") == "block_sensitive")
+    s, chat6b = call("/v1/chat/completions",
+                     {"model": "mock-pro", "messages": [{"role": "user", "content": "请分析 XH-200 项目的进展"}]}, token=tok6)
+    check("slice2 confidential blocked while block_sensitive",
+          s == 403 and chat6b.get("error", {}).get("code") == "data_level_forbidden")
+    r6 = mcp_rpc(tok6, "tools/call", {"name": "kb_search", "arguments": {"query": "报销"}})
+    check("slice2 knowledge tool cut while block_sensitive",
+          r6.get("error", {}).get("code") == -32004)
+    # Asset view aggregates the same heartbeat evidence.
+    s, assets6 = call("/api/plugin/assets", token=admin_tok, method="GET")
+    rows6 = {r["id"]: r for r in assets6.get("plugins", [])}
+    check("slice2 asset view aggregates heartbeat evidence",
+          s == 200 and rows6.get("bad-plugin", {}).get("status") == "violating"
+          and rows6.get("bad-plugin", {}).get("installs") == 1
+          and rows6.get("good-plugin", {}).get("status") == "compliant")
+    s, _ = call("/api/plugin/assets", token=sess, method="GET")
+    check("slice2 asset view forbidden for employee", s == 403)
+    # Clean heartbeat: remediation restores managed access.
+    s, hb6c = call("/api/terminals/heartbeat",
+                   {"version": "0.1.0", "config_hash": "ab" * 32, "plugins": [],
+                    "plugin_details": [{"id": "good-plugin", "version": "1.5.0"}],
+                    "guard_applied": True, "os": "linux"}, token=tok6)
+    check("slice2 clean heartbeat clears disposition",
+          s == 200 and hb6c.get("plugin_action") == "")
+    s, chat6c = call("/v1/chat/completions",
+                     {"model": "mock-pro", "messages": [{"role": "user", "content": "请分析 XH-200 项目的进展"}]}, token=tok6)
+    check("slice2 managed confidential after remediation",
+          s == 200 and "XH-200" in json.dumps(chat6c))
+    s, _ = call("/api/plugin/policies/" + ppid2, token=admin_tok, method="DELETE")
+    check("plugin policy slice2 deleted", s == 200)
+
     # F16: OpenTelemetry export. The collector above has been
     # receiving spans all run; one last marked call proves request
     # content never reaches it, then the status + test endpoints

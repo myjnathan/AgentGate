@@ -133,6 +133,59 @@ func (a *API) updatePluginPolicy(w http.ResponseWriter, r *http.Request, u *stor
 	writeJSON(w, http.StatusOK, map[string]any{"policy": p})
 }
 
+// listPluginAssets handles GET /api/plugin/assets (F38, slice 2):
+// the network-wide plugin inventory aggregated from the latest
+// heartbeat of every terminal. Filters: status (violating | unknown
+// | unverified | compliant), department (only installs in that
+// department are counted), q (substring on the plugin ID). The rows
+// reconcile with the heartbeat evidence by construction — the
+// aggregation reads the same Terminal records the heartbeats wrote.
+func (a *API) listPluginAssets(w http.ResponseWriter, r *http.Request, u *store.User) {
+	q := r.URL.Query()
+	status := q.Get("status")
+	switch status {
+	case "", pluginpol.StatusViolating, pluginpol.StatusUnknown,
+		pluginpol.StatusUnverified, pluginpol.StatusCompliant:
+	default:
+		writeErr(w, http.StatusBadRequest, "invalid status (violating|unknown|unverified|compliant)")
+		return
+	}
+	dept := q.Get("department")
+	needle := strings.ToLower(strings.TrimSpace(q.Get("q")))
+	now := time.Now()
+	var rows []pluginpol.AssetRow
+	a.st.Read(func(st *store.State) {
+		terms := make([]pluginpol.AssetTerminal, 0, len(st.Terminals))
+		for _, t := range st.Terminals {
+			if dept != "" && !strings.EqualFold(t.Department, dept) {
+				continue
+			}
+			terms = append(terms, pluginpol.AssetTerminal{
+				ID: t.ID, Username: t.Username, Department: t.Department,
+				AgentType: t.AgentType, Details: t.PluginDetails, Names: t.Plugins,
+			})
+		}
+		rows = pluginpol.Aggregate(terms, st.PluginPolicies, now)
+	})
+	if rows == nil {
+		rows = []pluginpol.AssetRow{}
+	}
+	if status != "" || needle != "" {
+		filtered := rows[:0]
+		for _, row := range rows {
+			if status != "" && row.Status != status {
+				continue
+			}
+			if needle != "" && !strings.Contains(strings.ToLower(row.ID), needle) {
+				continue
+			}
+			filtered = append(filtered, row)
+		}
+		rows = filtered
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"plugins": rows, "total": len(rows)})
+}
+
 // deletePluginPolicy handles DELETE /api/plugin/policies/{id}.
 func (a *API) deletePluginPolicy(w http.ResponseWriter, r *http.Request, u *store.User) {
 	id := strings.TrimSpace(r.PathValue("id"))

@@ -305,6 +305,24 @@ type Terminal struct {
 	// DriftReasons is the current appraisal against the F14 policy
 	// (empty = no drift). Only reason codes, never hash values.
 	DriftReasons []string `json:"drift_reasons,omitempty"`
+	// PluginAction is the F38 disposition currently in force for
+	// this terminal ("" = none): observe / warn / downgrade /
+	// block_sensitive, set by the latest heartbeat's plugin
+	// appraisal. A later heartbeat that reports clean plugins
+	// clears it (auto-remediation, slice 2); the gateway and MCP
+	// server read it on every call, so the disposition bites (and
+	// lifts) without waiting for the next login.
+	PluginAction string `json:"plugin_action,omitempty"`
+	// PluginReasons are the plugin verdict reason codes driving
+	// PluginAction (empty when none).
+	PluginReasons []string `json:"plugin_reasons,omitempty"`
+	// PluginUnknown lists denylist-unlisted plugin IDs flagged on
+	// the latest heartbeat: allowed by default, flagged for the
+	// admin (and for the asset view).
+	PluginUnknown []string `json:"plugin_unknown,omitempty"`
+	// PluginActionAt records when the current PluginAction took
+	// effect (nil when no action is in force).
+	PluginActionAt *time.Time `json:"plugin_action_at,omitempty"`
 	// LastOfflineAudit is the most recent backfilled outage summary,
 	// if any, and when the platform received it.
 	LastOfflineAudit *OfflineSummary `json:"last_offline_audit,omitempty"`
