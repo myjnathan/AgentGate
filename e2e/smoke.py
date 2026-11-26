@@ -1233,6 +1233,38 @@ def main():
             pass
     check("downgrade alert delivered to webhook", downgrade_alert)
 
+    # F38: plugin policies. CRUD + validation, then the login
+    # appraisal: an unlisted plugin downgrades a managed dsh login.
+    s, ppl = call("/api/plugin/policies", token=admin_tok, method="GET")
+    check("plugin policies list starts empty",
+          s == 200 and ppl.get("policies") == [])
+    s, _ = call("/api/plugin/policies", token=sess, method="GET")
+    check("plugin policies forbidden for employee", s == 403)
+    s, _ = call("/api/plugin/policies",
+               {"name": "bad", "mode": "denylist", "scope": {"level": "global"},
+                "action": "downgrade", "warn_unknown": False}, token=admin_tok)
+    check("denylist without warn_unknown rejected", s == 400)
+    s, pp = call("/api/plugin/policies",
+                 {"name": "smoke allowlist", "mode": "allowlist",
+                  "scope": {"level": "global"}, "action": "downgrade", "enabled": True,
+                  "rules": [{"id": "good-plugin", "version_constraint": ">=1.2.0"}]}, token=admin_tok)
+    check("plugin policy created", s == 201 and pp.get("policy", {}).get("id", "").startswith("plg_"))
+    ppid = pp["policy"]["id"]
+    s, ppg = call("/api/plugin/policies/" + ppid, token=admin_tok, method="GET")
+    check("plugin policy fetched", s == 200 and ppg.get("policy", {}).get("name") == "smoke allowlist")
+    s, start5 = call("/api/setup/device/start", {"agent_type": "dsh", "tier": "managed"})
+    s, att5 = call("/api/setup/device/attest", {"code": start5["code"], "secret": start5["secret"],
+                                                "report": {"version": "0.1.0", "guard_applied": True,
+                                                           "plugin_details": [{"id": "bad-plugin", "version": "1.0.0"}]}})
+    check("unlisted plugin attestation preview still passes (F14 only)",
+          s == 200 and att5.get("verdict", {}).get("status") == "pass")
+    s, appr5 = call("/api/device/approve", {"code": start5["code"], "device_name": "ci-smoke-f38"}, token=admin_tok)
+    check("unlisted plugin approves as byoa",
+          s == 200 and appr5.get("issued_tier") == "byoa"
+          and appr5.get("attest_verdict") == "downgraded")
+    s, _ = call("/api/plugin/policies/" + ppid, token=admin_tok, method="DELETE")
+    check("plugin policy deleted", s == 200)
+
     # F16: OpenTelemetry export. The collector above has been
     # receiving spans all run; one last marked call proves request
     # content never reaches it, then the status + test endpoints

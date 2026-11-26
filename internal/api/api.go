@@ -212,6 +212,12 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/attestation/policies", a.requireAdmin(a.upsertAttestationPolicy))
 	mux.HandleFunc("DELETE /api/attestation/policies/{agent}", a.requireAdmin(a.deleteAttestationPolicy))
 	mux.HandleFunc("GET /api/attestation/reports", a.requirePerm(roles.AuditRead, a.listAttestationReports))
+	// Plugin policies (backlog F38, slice 1).
+	mux.HandleFunc("GET /api/plugin/policies", a.requireAdmin(a.listPluginPolicies))
+	mux.HandleFunc("POST /api/plugin/policies", a.requireAdmin(a.createPluginPolicy))
+	mux.HandleFunc("GET /api/plugin/policies/{id}", a.requireAdmin(a.getPluginPolicy))
+	mux.HandleFunc("PUT /api/plugin/policies/{id}", a.requireAdmin(a.updatePluginPolicy))
+	mux.HandleFunc("DELETE /api/plugin/policies/{id}", a.requireAdmin(a.deletePluginPolicy))
 	mux.HandleFunc("GET /api/packages", a.requireAdmin(a.listPackages))
 	mux.HandleFunc("POST /api/packages", a.requireAdmin(a.uploadPackage))
 	mux.HandleFunc("POST /api/packages/uploads", a.requireAdmin(a.initUpload))

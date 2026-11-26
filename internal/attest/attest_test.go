@@ -1,6 +1,9 @@
 package attest
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCompareVersion(t *testing.T) {
 	cases := []struct {
@@ -184,6 +187,38 @@ func TestReportAndPolicyValidate(t *testing.T) {
 	}
 	if err := (Policy{AgentType: "dsh", MinVersion: "1.2.0"}).Validate(); err != nil {
 		t.Errorf("valid policy must validate: %v", err)
+	}
+}
+
+// TestReportPluginDetailsValidate covers the F38 triple evidence:
+// a present field must be well-formed, a missing one is allowed
+// (old agents report names only).
+func TestReportPluginDetailsValidate(t *testing.T) {
+	ok := Report{AgentType: "dsh", Version: "1.0.0",
+		PluginDetails: []PluginEvidence{
+			{ID: "git-helper", Version: "1.2.3", Hash: "aabbcc", Source: "platform"},
+			{ID: "name-only"},
+		}}
+	if err := ok.Validate(); err != nil {
+		t.Errorf("valid details must validate: %v", err)
+	}
+	bad := []Report{
+		{AgentType: "dsh", PluginDetails: []PluginEvidence{{ID: ""}}},
+		{AgentType: "dsh", PluginDetails: []PluginEvidence{{ID: "x", Version: "soon"}}},
+		{AgentType: "dsh", PluginDetails: []PluginEvidence{{ID: "x", Hash: "zz"}}},
+		{AgentType: "dsh", PluginDetails: []PluginEvidence{{ID: "x", Source: strings.Repeat("s", 65)}}},
+	}
+	for i, r := range bad {
+		if err := r.Validate(); err == nil {
+			t.Errorf("details case %d must fail validation", i)
+		}
+	}
+	many := Report{AgentType: "dsh"}
+	for i := 0; i < 101; i++ {
+		many.PluginDetails = append(many.PluginDetails, PluginEvidence{ID: "x"})
+	}
+	if err := many.Validate(); err == nil {
+		t.Error("101 plugin details must fail validation")
 	}
 }
 

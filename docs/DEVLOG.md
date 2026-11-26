@@ -2,11 +2,100 @@
 
 Loop 与人工开发的统一记录，最新在最上面。
 
+## 2026-11-26 · F38 切片 1：插件策略对象 + 三元组评估升级 + 插件策略页
+
+- 本轮原为待机轮次（F37 完成后队列已空），执行中 Nathan 新立 F38（待办登记 14，本地提交 773f573）与 F39–F45（待办登记 15，本地提交 53dfc0c）相继落地，队列现为 F38 → F39 → F42 → F40 → F41 → F43 → F44 → F45；本轮按规程执行队列首位 F38 的切片 1。
+- 实现：新包 `internal/pluginpol`（`PluginPolicy` 策略对象：模式 allowlist/denylist、作用域 global/department/group、规则三元组 ID + 版本约束 + SHA-256 哈希 + 来源约束 + 生效/失效窗口、处置 observe/warn/downgrade/block_sensitive、denylist 强制 warn_unknown；`Resolve` 按全局 → 部门 → 用户组只收紧合并——白名单取交集、黑名单取并集、拒绝规则恒胜；`Evaluate`/`EvaluateReport` 供登录与心跳共用）。`attest` 扩展：`Report.PluginDetails` 三元组证据 + 校验、新理由码 `plugin_version_mismatch` / `plugin_hash_mismatch` / `plugin_unknown_source`；旧版只报名字的报告按名匹配、不因缺版本/哈希判违规（兼容路径）。接线：批准时（`ApproveDeviceCode`）按审批人部门跑插件评估并入裁决（downgrade/block_sensitive 降级，observe/warn 只记录）；心跳（`terminalHeartbeat`）同样评估并入漂移原因，未知插件进审计明细与 `plugin_unknown` 回执；终端记录存 `PluginDetails` 供切片 2 的资产视图聚合。管理 API `GET/POST /api/plugin/policies` + `GET/PUT/DELETE /api/plugin/policies/{id}`（仅 admin，创建/修改/删除进审计）；管理台新增「插件策略」页（策略表单 + 动态规则行 + 列表/编辑/删除，中英双语，黑名单自动强制未知插件告警、全局策略自动清掉部门/用户组字段）。
+- 关键决策：① 提交时预览（`SubmitAttestation`）不跑插件评估——作用域需要审批人部门，提交时还不知道审批人是谁；批准时重评是权威裁决（与 F14「批准时按现行策略重评」一致），冒烟断言了这一拆分。② 用户组作用域已定义但暂不生效：平台尚无用户组成员模型，`Resolve` 的 groups 参数现为空，待 OIDC/目录同步的组映射落地后再接。③ `block_sensitive` 在切片 1 与降级相同，断机密通道与敏感能力的强制执行随切片 2 落地并逐档实测。④ 复用检查：无可直接复制的开源实现（他家插件名单多绑特定 Agent 运行时或属整套 EDR），评估约 250 行标准库自研，记于包注释与本条。
+- 测试：`pluginpol` 包 9 项（版本约束 14 组、三元组五类理由码、只报名字兼容、黑名单未知插件回执、作用域只收紧、禁用/过期/未生效规则、处置取最严、nil 报告/策略、校验 16 类拒绝）+ `attest` 三元组证据校验 + `auth` 批准时降级/观察/部门作用域 + API 策略 CRUD 全链路（含 400/403/404/409）+ 心跳漂移（含哈希不符与黑名单未知回执）；`gofmt`/`go vet`/`go test ./...` 全绿（35 个包，新增 pluginpol），`make smoke` 322 项断言 0 失败（基线 314 + F38 新增 8 项）。管理台实测：演示模式 + 无头浏览器 `verify-slice1.js` 20 项断言全过（创建/校验/编辑/删除全流程、黑名单强制告警、EN 模式 0 中文、390px 无文档溢出、深色模式、0 控制台错误、0 原生弹窗）；全量溢出复测 25 页 × 双宽 0 错误（1440px 零超限元素；390px 各页表格在 wrapper 内横滚为既有形态，复测中抓到并修好规则编辑表在 1440px 外溢 3px 的问题：表内输入加 `width:100%`）；证据在 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/f38-pluginpol/measure1/`（`verify-slice1.js` + `verify-slice1.json` + 三张截图 + `measure1-overflow/overflow.json` + `measure1-i18n/i18n.json` + `server.log`）。基线日志同 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/standby/2026-11-26/`（`agentgate-baseline-20261126-r11.log` / `agentgate-smoke-20261126-r11.log`）。
+- 远端核对：`list_commits` 读回 main，HEAD 仍为 7075dbcc（PR #47 合并提交，2026-11-26T03:02:12Z）。本轮切片 1 随 loop/f38 快照推送，合并结果待补充进本条。另记：本机克隆未配 git remote（`git remote -v` 为空），远端状态以 GitHub 连接器核对为准。
+- 推送前同步基点核对（19 文件逐一比对 blob SHA）发现一处分歧：README.md 远端多出两行架构图引用（`![AgentGate 架构图](docs/architecture.svg)`，来自远端提交 08f2c96055，2026-11-25「docs: add architecture diagram to README and demo site」，该提交不在本机克隆历史中）。已按规程和解：以远端 README 文本为底，重新落上本轮网络门条款后提交，不覆盖远端新增内容；其余 18 文件与基点一致、4 个新文件远端确认不存在。另注意：远端 main 另有该提交带入的 `docs/architecture.svg` 与 demo-site 改动，本机克隆暂缺（不在本轮 19 文件内，快照不触碰、合并后保留），留待后续轮次与远端对齐本机克隆。
+- 下一轮：F38 切片 2（插件资产视图 + 处置梯度，含整改自动恢复）。
+
+## 2026-11-26 · F39–F45 安全策略批登记（待办登记 15）
+
+- Nathan 2026-11-26 20:34 问「类似的针对公司的网络安全策略还应该加哪些」，助手提出七项并经其 20:36 批准整批立项、继续开发。已写入 backlog 为 F39–F45（均 `planned`），队列定为 F38 → F39 → F42 → F40 → F41 → F43 → F44 → F45。
+- 七项要点：F39 Prompt 注入防护（弱点清单 #7，来源分离 + 规则/语义双路检测 + 高危动作兜底，与 F28 内容审核分工）；F40 Agent 版本与配置基线（版本三策略 + 关键配置键值断言，与 F38 共用 attest 评估栈）；F41 工具风险分级与高危调用确认（动作维度四分级 + 策略矩阵 + 需确认通道，与 F39 联动）；F42 敏感目录访问策略（与 F18 共用文件夹密级映射，目录 × Agent 等级三档判定，执行点在终端侧读取代理路径）；F43 影子 AI 发现（ag-guard 增报本机 Agent 迹象，守「只盘 Agent」边界）；F44 密钥生命周期管理（到期提醒、双 Key 并行轮换、闲置盘点）；F45 网络出口白名单·终端侧（端点名单下发 + 配置锁定 + 直连检出，与渠道体系共用端点注册）。
+- 每项的现状缺口、适配、验收与诚实边界均已写入各自 backlog 条目（F39 的概率防线口径、F42/F45 的非内核级拦截边界均明说）。本条仅为登记动作，未写功能代码；Loop 后续轮次先推 F38 切片 1，再按队列顺序推进。
+
+## 2026-11-26 · F38 插件管控登记（待办登记 14）
+
+- Nathan 2026-11-26 20:28 提出并于 20:30 批准立项：限制员工桌面 Agent（以 DSH 为首）可安装的插件，实现白名单与黑名单管控。已写入 backlog 为 F38（P1，`planned`，队列排第一位），设计稿 `docs/plugin-policy.md` 同步落地。
+- 登记要点：复用 F14 `attest` 已有的 `AllowedPlugins` / `BlockedPlugins` 评估与终端心跳插件清单上报，缺口为只有名字（无版本/哈希）、无独立策略对象与管理界面、无资产视图、处置只有降级一档、无安装前校验。切片计划：① 策略对象 `PluginPolicy`（三元组标识、作用域只收紧、来源约束）+ 评估升级 + 插件策略页；② 插件资产视图 + 处置梯度；③ 例外审批打通 + 安装前校验接口 `POST /api/plugin/check`。边界明说：装前阻断依赖 Agent 侧接入校验接口，AgentGate 单方只能装后发现 + 降级（详见设计稿 §7）。
+- 本条仅为登记动作，未写功能代码；下一轮 Loop 起按 F38 切片 1 推进。
+
+## 2026-11-26 · 待机基线维护：全绿，队列仍空
+
+- 本轮为 F37 完成后的第十个待机轮次：F1–F37 全部 `done`，体内 12:26 特别指令与待办登记 1–13 均已在先前轮次执行完毕、作废；按登记 11 的待机约定，本轮只做基线维护、不立项、不写新功能代码。backlog 全文复核：37 个条目均为 `done`，`todo`/`doing` 命中仅为 F36 切片历史叙述中的「保持 `doing`」旧文，队列确为空。
+- 基线结果：`gofmt` 无输出、`go vet ./...` 通过、`go test ./...` 34 个包全绿（api 49.8s、gateway 54.7s、mcp 28.1s 为耗时大头）、`make smoke` 314 项断言 0 失败。日志存 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/standby/2026-11-26/`（`agentgate-baseline-20261126-r10.log` / `agentgate-smoke-20261126-r10.log`）。本地工作区干净，HEAD 72f17e6。
+- 远端核对：`list_commits` 读回 main，HEAD 仍为 7075dbcc（PR #47 合并提交，2026-11-26T03:02:12Z），自上一轮后未动；本地十条 docs 提交 23c38f3、9b91d86、bee9965、03dc359、2d10f5b、719a48d、5501d3f、4c6e358、f1912f1、72f17e6 与本轮新提交仍为仅本地，按 Loop 惯例随下一轮特性快照一并带上，本轮不为单条 docs 记录另开 PR（需 Nathan 审批，且待机轮次只做基线维护）。
+- 待 Nathan 新指示：新条目、F37 之后的方向，或 demo-site/CI 等遗留事项（29 个待删 loop 分支仍需 Nathan 网页端手动删除；完整版 ci.yml 仍待用浏览器加他本人登录的方式创建）。
+
+## 2026-11-26 · 待机基线维护：全绿，队列仍空
+
+- 本轮为 F37 完成后的第九个待机轮次：F1–F37 全部 `done`，体内 12:26 特别指令与待办登记 1–13 均已在先前轮次执行完毕、作废；按登记 11 的待机约定，本轮只做基线维护、不立项、不写新功能代码。backlog 全文复核：37 个条目均为 `done`，`todo`/`doing` 命中仅为 F36 切片历史叙述中的「保持 `doing`」旧文，队列确为空。
+- 基线结果：`gofmt` 无输出、`go vet ./...` 通过、`go test ./...` 34 个包全绿（api 49.1s、gateway 54.3s、mcp 27.8s 为耗时大头）、`make smoke` 314 项断言 0 失败。日志存 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/standby/2026-11-26/`（`agentgate-baseline-20261126-r9.log` / `agentgate-smoke-20261126-r9.log`）。本地工作区干净，HEAD f1912f1。
+- 远端核对：`list_commits` 读回 main，HEAD 仍为 7075dbcc（PR #47 合并提交，2026-11-26T03:02:12Z），自上一轮后未动；本地九条 docs 提交 23c38f3、9b91d86、bee9965、03dc359、2d10f5b、719a48d、5501d3f、4c6e358、f1912f1 与本轮新提交仍为仅本地，按 Loop 惯例随下一轮特性快照一并带上，本轮不为单条 docs 记录另开 PR（需 Nathan 审批，且待机轮次只做基线维护）。
+- 待 Nathan 新指示：新条目、F37 之后的方向，或 demo-site/CI 等遗留事项（29 个待删 loop 分支仍需 Nathan 网页端手动删除；完整版 ci.yml 仍待用浏览器加他本人登录的方式创建）。
+
+## 2026-11-26 · 待机基线维护：全绿，队列仍空
+
+- 本轮为 F37 完成后的第八个待机轮次：F1–F37 全部 `done`，体内 12:26 特别指令与待办登记 1–13 均已在先前轮次执行完毕、作废；按登记 11 的待机约定，本轮只做基线维护、不立项、不写新功能代码。backlog 全文复核：37 个条目均为 `done`，`todo`/`doing` 命中仅为 F36 切片历史叙述中的「保持 `doing`」旧文，队列确为空。
+- 基线结果：`gofmt` 无输出、`go vet ./...` 通过、`go test ./...` 34 个包全绿（api 50.1s、gateway 55.0s、mcp 28.8s 为耗时大头）、`make smoke` 314 项断言 0 失败。日志存 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/standby/2026-11-26/`（`agentgate-baseline-20261126-r8.log` / `agentgate-smoke-20261126-r8.log`）。本地工作区干净，HEAD 4c6e358。
+- 远端核对：`list_commits` 读回 main，HEAD 仍为 7075dbcc（PR #47 合并提交，2026-11-26T03:02:12Z），自上一轮后未动；本地八条 docs 提交 23c38f3、9b91d86、bee9965、03dc359、2d10f5b、719a48d、5501d3f、4c6e358 与本轮新提交仍为仅本地，按 Loop 惯例随下一轮特性快照一并带上，本轮不为单条 docs 记录另开 PR（需 Nathan 审批，且待机轮次只做基线维护）。
+- 待 Nathan 新指示：新条目、F37 之后的方向，或 demo-site/CI 等遗留事项（29 个待删 loop 分支仍需 Nathan 网页端手动删除；完整版 ci.yml 仍待用浏览器加他本人登录的方式创建）。
+
+## 2026-11-26 · 待机基线维护：全绿，队列仍空
+
+- 本轮为 F37 完成后的第七个待机轮次：F1–F37 全部 `done`，体内 12:26 特别指令与待办登记 1–13 均已在先前轮次执行完毕、作废；按登记 11 的待机约定，本轮只做基线维护、不立项、不写新功能代码。backlog 全文复核：37 个条目均为 `done`，`todo`/`doing` 命中仅为 F36 切片历史叙述中的「保持 `doing`」旧文，队列确为空。
+- 基线结果：`gofmt` 无输出、`go vet ./...` 通过、`go test ./...` 34 个包全绿（api 49.4s、gateway 54.0s、mcp 27.8s 为耗时大头）、`make smoke` 314 项断言 0 失败。日志存 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/standby/2026-11-26/`（`agentgate-baseline-20261126-r7.log` / `agentgate-smoke-20261126-r7.log`）。本地工作区干净，HEAD 5501d3f。
+- 远端核对：`list_commits` 读回 main，HEAD 仍为 7075dbcc（PR #47 合并提交，2026-11-26T03:02:12Z），自上一轮后未动；本地七条 docs 提交 23c38f3、9b91d86、bee9965、03dc359、2d10f5b、719a48d、5501d3f 与本轮新提交仍为仅本地，按 Loop 惯例随下一轮特性快照一并带上，本轮不为单条 docs 记录另开 PR（需 Nathan 审批，且待机轮次只做基线维护）。
+- 待 Nathan 新指示：新条目、F37 之后的方向，或 demo-site/CI 等遗留事项（29 个待删 loop 分支仍需 Nathan 网页端手动删除；完整版 ci.yml 仍待用浏览器加他本人登录的方式创建）。
+
+## 2026-11-26 · 待机基线维护：全绿，队列仍空
+
+- 本轮为 F37 完成后的第六个待机轮次：F1–F37 全部 `done`，体内 12:26 特别指令与待办登记 1–13 均已在先前轮次执行完毕、作废；按登记 11 的待机约定，本轮只做基线维护、不立项、不写新功能代码。backlog 全文复核：37 个条目均为 `done`，`todo`/`doing` 命中仅为 F36 切片历史叙述中的「保持 `doing`」旧文，队列确为空。
+- 基线结果：`gofmt` 无输出、`go vet ./...` 通过、`go test ./...` 34 个包全绿（api 49.3s、gateway 54.3s、mcp 27.9s 为耗时大头）、`make smoke` 314 项断言 0 失败。日志存 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/standby/2026-11-26/`（`agentgate-baseline-20261126-r6.log` / `agentgate-smoke-20261126-r6.log`）。本地工作区干净，HEAD 719a48d。
+- 远端核对：`list_commits` 读回 main，HEAD 仍为 7075dbcc（PR #47 合并提交，2026-11-26T03:02:12Z），自上一轮后未动；本地六条 docs 提交 23c38f3、9b91d86、bee9965、03dc359、2d10f5b、719a48d 与本轮新提交仍为仅本地，按 Loop 惯例随下一轮特性快照一并带上，本轮不为单条 docs 记录另开 PR（需 Nathan 审批，且待机轮次只做基线维护）。
+- 待 Nathan 新指示：新条目、F37 之后的方向，或 demo-site/CI 等遗留事项（29 个待删 loop 分支仍需 Nathan 网页端手动删除；完整版 ci.yml 仍待用浏览器加他本人登录的方式创建）。
+
+## 2026-11-26 · 待机基线维护：全绿，队列仍空
+
+- 本轮为 F37 完成后的第五个待机轮次：F1–F37 全部 `done`，体内 12:26 特别指令与待办登记 1–13 均已在先前轮次执行完毕、作废；按登记 11 的待机约定，本轮只做基线维护、不立项、不写新功能代码。backlog 全文复核：37 个条目均为 `done`，无 `todo`/`doing` 条目（命中仅为状态图例与历史叙述），队列确为空。
+- 基线结果：`gofmt` 无输出、`go vet ./...` 通过、`go test ./...` 34 个包全绿（api 50.8s、gateway 55.8s、mcp 28.8s 为耗时大头）、`make smoke` 314 项断言 0 失败（连跑两次确认 314 数）。日志存 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/standby/2026-11-26/`（`agentgate-baseline-20261126.log` / `agentgate-smoke-20261126.log`）。本地工作区干净，HEAD 2d10f5b。
+- 远端核对：`list_commits` 读回 main，HEAD 仍为 7075dbcc（PR #47 合并提交，2026-11-26T03:02:12Z），自上一轮后未动；本地五条 docs 提交 23c38f3、9b91d86、bee9965、03dc359、2d10f5b 与本轮新提交仍为仅本地，按 Loop 惯例随下一轮特性快照一并带上，本轮不为单条 docs 记录另开 PR（需 Nathan 审批，且待机轮次只做基线维护）。
+- 待 Nathan 新指示：新条目、F37 之后的方向，或 demo-site/CI 等遗留事项（29 个待删 loop 分支仍需 Nathan 网页端手动删除；完整版 ci.yml 仍待用浏览器加他本人登录的方式创建）。
+
+## 2026-11-26 · 待机基线维护：全绿，队列仍空
+
+- 本轮为 F37 完成后的第四个待机轮次：F1–F37 全部 `done`，体内 12:26 特别指令与待办登记 1–13 均已在先前轮次执行完毕、作废；按登记 11 的待机约定，本轮只做基线维护、不立项、不写新功能代码。backlog 全文复核：无 `todo`/`doing` 条目（命中均为历史叙述与状态图例），队列确为空。
+- 基线结果：`gofmt` 无输出、`go vet ./...` 通过、`go test ./...` 34 个包全绿（api 48.8s、gateway 54.1s、mcp 28.0s 为耗时大头）、`make smoke` 314 项断言 0 失败（连跑两次确认 314 数）。日志存 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/standby/2026-11-26/`（`agentgate-baseline-20261126.log` / `agentgate-smoke-20261126.log`）。本地工作区干净，HEAD 03dc359。
+- 远端核对：`list_commits` 读回 main，HEAD 仍为 7075dbcc（PR #47 合并提交，2026-11-26T03:02:12Z），自上一轮后未动；本地四条 docs 提交 23c38f3、9b91d86、bee9965、03dc359 与本轮新提交仍为仅本地，按 Loop 惯例随下一轮特性快照一并带上，本轮不为单条 docs 记录另开 PR（需 Nathan 审批，且待机轮次只做基线维护）。
+- 待 Nathan 新指示：新条目、F37 之后的方向，或 demo-site/CI 等遗留事项（29 个待删 loop 分支仍需 Nathan 网页端手动删除；完整版 ci.yml 仍待用浏览器加他本人登录的方式创建）。
+
+## 2026-11-26 · 待机基线维护：全绿，队列仍空
+
+- 本轮为 F37 完成后的第三个待机轮次：F1–F37 全部 `done`，体内 12:26 特别指令与待办登记 1–13 均已在先前轮次执行完毕、作废；按登记 11 的待机约定，本轮只做基线维护、不立项、不写新功能代码。backlog 全文复核：无 `todo`/`doing` 条目（命中均为历史叙述与状态图例），队列确为空。
+- 基线结果：`gofmt` 无输出、`go vet ./...` 通过、`go test ./...` 34 个包全绿（api 48.3s、gateway 53.5s、mcp 27.3s 为耗时大头）、`make smoke` 314 项断言 0 失败。执行中一次 exec 因服务重启中断、重跑后全绿；另一次 smoke 首跑因该 shell 未 export Go 路径而失败（命令失误、非产品问题），补 export 后通过。日志存 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/standby/2026-11-26/`（`agentgate-baseline-20261126.log` / `agentgate-smoke-20261126.log`）。本地工作区干净，HEAD bee9965。
+- 远端核对：`list_commits` 读回 main，HEAD 仍为 7075dbcc（PR #47 合并提交，2026-11-26T03:02:12Z），自上一轮后未动；本地三条 docs 提交 23c38f3、9b91d86、本轮新提交仍为仅本地，按 Loop 惯例随下一轮特性快照一并带上，本轮不为单条 docs 记录另开 PR（需 Nathan 审批，且待机轮次只做基线维护）。
+- 待 Nathan 新指示：新条目、F37 之后的方向，或 demo-site/CI 等遗留事项（29 个待删 loop 分支仍需 Nathan 网页端手动删除；完整版 ci.yml 仍待用浏览器加他本人登录的方式创建）。
+
+- 本轮为 F37 完成后的第二个待机轮次：F1–F37 全部 `done`，体内 12:26 特别指令与待办登记 1–13 均已在先前轮次执行完毕、作废；按登记 11 的待机约定，本轮只做基线维护、不立项、不写新功能代码。backlog 全文复核：无 `todo`/`doing` 条目（命中均为历史叙述与状态图例），队列确为空。
+- 基线结果：`gofmt` 无输出、`go vet ./...` 通过、`go test ./...` 34 个包全绿（api 48.3s、gateway 53.4s、mcp 27.0s 为耗时大头）、`make smoke` 314 项断言 0 失败（连跑四次确认 314 数，其中两次为 PASS 计数复核）。本地工作区干净，HEAD 9b91d86。
+- 远端核对：`list_commits` 读回 main，HEAD 仍为 7075dbcc（PR #47 合并提交，2026-11-26T03:02:12Z），自上一轮后未动；本地两条 docs 提交 23c38f3、9b91d86 仍为仅本地，按 Loop 惯例随下一轮特性快照一并带上，本轮不为单条 docs 记录另开 PR（需 Nathan 审批，且待机轮次只做基线维护）。
+- 待 Nathan 新指示：新条目、F37 之后的方向，或 demo-site/CI 等遗留事项（29 个待删 loop 分支仍需 Nathan 网页端手动删除；完整版 ci.yml 仍待用浏览器加他本人登录的方式创建）。
+
+- 本轮为 F37 完成后的首个待机轮次：F1–F37 全部 `done`，体内 12:26 特别指令与待办登记 1–13 均已在先前轮次执行完毕、作废；按登记 11 的待机约定，本轮只做基线维护、不立项、不写新功能代码。
+- 基线结果：`gofmt` 无输出、`go vet ./...` 通过、`go test ./...` 34 个包全绿（api 48.7s、gateway 54.0s、mcp 27.5s 为耗时大头）、`make smoke` 314 项断言 0 失败（连跑两次确认 314 数）。本地工作区干净，HEAD 23c38f3。
+- 远端核对：`list_commits` 读回 main，HEAD 仍为 7075dbcc（PR #47 合并提交，2026-11-26T03:02:12Z），自上一轮后未动；本地提交 23c38f3（F37 第三切片推送结果记录）仍为仅本地，按 Loop 惯例随下一轮特性快照一并带上，本轮不为单条 docs 记录另开 PR（需 Nathan 审批，且待机轮次只做基线维护）。
+- 待 Nathan 新指示：新条目、F37 之后的方向，或 demo-site/CI 等遗留事项（29 个待删 loop 分支仍需 Nathan 网页端手动删除；完整版 ci.yml 仍待用浏览器加他本人登录的方式创建）。
+
 ## 2026-11-26 · F37 收尾验收复审：全部重跑无回归，F37 标记 done
 
 - 本轮按上一轮 DEVLOG「下一轮」计划做 F37 收尾验收复审（切片 1+2+3 合并后的本地代码，HEAD 6eed923）。先跑基线：`gofmt`/`go vet`/`go test ./...` 全绿（34 包），`make smoke` 0 失败。演示模式（127.0.0.1:8899，全新数据目录，主密钥 `closing-review-master-key`）+ 无头浏览器全量重跑：`verify-slice1.js` 29 项断言全过（ALL PASS）、`verify-slice2.js` 83 项断言 0 失败、`verify-slice3.js` 25 项断言全过（ALL PASS）；`measure-overflow.js` 24 页 × 390px/1440px 共 48 项 0 溢出 0 错误；`measure-i18n.js` EN 模式总 CJK 480 字、逐页与切片 3 基线完全一致、0 错误。M-001–M-014 全部落地或明确不做，全站动效只用统一变量、无散落自定义曲线，F37 验收达成，backlog 与 motion-audit 标记 `done`。证据在 `~/workspace/goals/agentgate-enterprise-agent-platform/hidden_files/f37-motion/measure4/`（`verify-slice1/2/3` + `measure4-overflow/overflow.json` + `measure4-i18n/i18n.json` + `server.log`）。
 - 队列至此清空：F1–F37 全部 done，后续轮次转入待机——无新条目时只做基线维护（go vet/test/smoke 保持绿），等 Nathan 新指示；不要自行立项新条目。
-- 推送结果（切片 2，本轮已合并）：第一次重试的审批卡 `connector-attempt-659ca21e`（UTC 11-25 22:52 请求）因服务重启中断、卡片于 00:31 UTC 超时，远端未变、无重复提交风险；第二次重试（早上，Nathan 在线）获批，整包快照 4 文件一次推送成功（提交 c687b329），推送后 4 文件远端 blob 与快照逐一核对一致；PR #46 文件清单与本轮一致（4/4），已合并进远端 main，远端 HEAD 2bb4967f（合并提交）。切片 3（6eed923 + 本轮收尾提交）随后建独立快照推送。
+- 推送结果（切片 2，本轮已合并）：第一次重试的审批卡 `connector-attempt-659ca21e`（UTC 11-25 22:52 请求）因服务重启中断、卡片于 00:31 UTC 超时，远端未变、无重复提交风险；第二次重试（早上，Nathan 在线）获批，整包快照 4 文件一次推送成功（提交 c687b329），推送后 4 文件远端 blob 与快照逐一核对一致；PR #46 文件清单与本轮一致（4/4），已合并进远端 main，远端 HEAD 2bb4967f（合并提交）。
+- 推送结果（切片 3 + 收尾复审，本轮已合并）：快照固定在 84a19c6（`~/workspace/agentgate-f37-snap-slice3`，4 文件与 HEAD 逐字节核对一致），推送前核对远端 `loop/f37` 头仍为 c687b329、4 文件内容与同步基点一致；整包快照一次推送成功（提交 b2970b22），推送后 4 文件远端 blob 与快照逐一核对一致；PR #47 文件清单与本轮一致（4/4），已合并进远端 main，远端 HEAD 7075dbcc（合并提交），读回 main 上 docs/feature-backlog.md 核对 F37 `done` 与收尾记录均已落地。F37 至此全部上远端，队列清空。
 
 ## 2026-11-26 · F37 第三切片：M-011 行内错误强调 + 窄屏 / EN 复审
 

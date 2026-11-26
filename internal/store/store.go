@@ -19,6 +19,7 @@ import (
 
 	"github.com/myjnathan/agentgate/internal/attest"
 	"github.com/myjnathan/agentgate/internal/distrib"
+	"github.com/myjnathan/agentgate/internal/pluginpol"
 	"github.com/myjnathan/agentgate/internal/report"
 	"github.com/myjnathan/agentgate/internal/terminal"
 )
@@ -535,6 +536,11 @@ type State struct {
 	// (backlog F14), keyed by agent type; an agent type with no entry
 	// has no attestation requirement.
 	AttestationPolicies map[string]*attest.Policy `json:"attestation_policies"`
+	// PluginPolicies holds the plugin allow/deny-list policies
+	// (backlog F38), keyed by policy ID. An empty map means no
+	// plugin appraisal: login and heartbeat evaluate only the F14
+	// name lists.
+	PluginPolicies map[string]*pluginpol.PluginPolicy `json:"plugin_policies"`
 	// Packages holds the hosted install packages (backlog F20),
 	// keyed by package ID; the files live under the distrib registry
 	// root (<data>/packages/<id>/<filename>).
@@ -733,6 +739,7 @@ func newState() *State {
 		Budgets:             map[string]*DepartmentBudget{},
 		KBFolderSources:     map[string]*KBFolderSource{},
 		AttestationPolicies: map[string]*attest.Policy{},
+		PluginPolicies:      map[string]*pluginpol.PluginPolicy{},
 		Packages:            map[string]*distrib.Package{},
 		PackageUploads:      map[string]*distrib.Upload{},
 		OrgProviders:        map[string]*OrgProvider{},
@@ -811,6 +818,9 @@ func New(dir string) (*Store, error) {
 		}
 		if st.AttestationPolicies == nil {
 			st.AttestationPolicies = map[string]*attest.Policy{}
+		}
+		if st.PluginPolicies == nil {
+			st.PluginPolicies = map[string]*pluginpol.PluginPolicy{}
 		}
 		if st.Packages == nil {
 			st.Packages = map[string]*distrib.Package{}

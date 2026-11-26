@@ -190,14 +190,19 @@ func (o OfflineSummary) Validate() error {
 // from it too, so a heartbeat can only ever describe the agent that
 // holds the token.
 type Heartbeat struct {
-	AgentType    string          `json:"agent_type,omitempty"`
-	Version      string          `json:"version"`
-	ConfigHash   string          `json:"config_hash,omitempty"`
-	BinaryHash   string          `json:"binary_hash,omitempty"`
-	Plugins      []string        `json:"plugins,omitempty"`
-	GuardApplied bool            `json:"guard_applied"`
-	OS           string          `json:"os,omitempty"`
-	Offline      *OfflineSummary `json:"offline,omitempty"`
+	AgentType string `json:"agent_type,omitempty"`
+	Version   string `json:"version"`
+	// ConfigHash and BinaryHash are hex digests (see attest.Report).
+	ConfigHash string `json:"config_hash,omitempty"`
+	BinaryHash string `json:"binary_hash,omitempty"`
+	// Plugins is the name-only list old sidecars report.
+	// PluginDetails is the F38 triple evidence; when present it is
+	// authoritative for plugin appraisal, same as attest.Report.
+	Plugins       []string                `json:"plugins,omitempty"`
+	PluginDetails []attest.PluginEvidence `json:"plugin_details,omitempty"`
+	GuardApplied  bool                    `json:"guard_applied"`
+	OS            string                  `json:"os,omitempty"`
+	Offline       *OfflineSummary         `json:"offline,omitempty"`
 }
 
 // Validate checks a heartbeat's shape, reusing the attestation
@@ -227,16 +232,17 @@ func (h Heartbeat) Validate() error {
 
 // Report converts the heartbeat into attestation evidence, so drift
 // is judged by exactly the same appraisal as the login-time report
-// (backlog F14).
+// (backlog F14). Plugin details ride along for the F38 appraisal.
 func (h Heartbeat) Report() *attest.Report {
 	return &attest.Report{
-		AgentType:    h.AgentType,
-		Version:      h.Version,
-		ConfigHash:   h.ConfigHash,
-		BinaryHash:   h.BinaryHash,
-		Plugins:      h.Plugins,
-		GuardApplied: h.GuardApplied,
-		OS:           h.OS,
+		AgentType:     h.AgentType,
+		Version:       h.Version,
+		ConfigHash:    h.ConfigHash,
+		BinaryHash:    h.BinaryHash,
+		Plugins:       h.Plugins,
+		PluginDetails: h.PluginDetails,
+		GuardApplied:  h.GuardApplied,
+		OS:            h.OS,
 	}
 }
 
@@ -284,6 +290,10 @@ type Terminal struct {
 	ConfigHash string   `json:"config_hash,omitempty"`
 	BinaryHash string   `json:"binary_hash,omitempty"`
 	Plugins    []string `json:"plugins,omitempty"`
+	// PluginDetails is the F38 triple evidence from the latest
+	// heartbeat (empty for old sidecars that report names only);
+	// the asset view (slice 2) aggregates from here.
+	PluginDetails []attest.PluginEvidence `json:"plugin_details,omitempty"`
 	// GuardApplied records whether the endpoint was running ag-guard
 	// at the last heartbeat (F14's guard_applied, kept current).
 	GuardApplied bool      `json:"guard_applied"`

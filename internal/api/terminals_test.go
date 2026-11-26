@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -224,5 +225,137 @@ func TestTerminalHeartbeatAndInventory(t *testing.T) {
 	}
 	if got := terminals(""); len(got) != 3 {
 		t.Fatalf("want 3 terminals (dsh, claude-code, codex), got %d", len(got))
+	}
+}
+
+// TestTerminalHeartbeatPluginDrift covers the F38 heartbeat wiring:
+// the same plugin evaluation as login approval runs on every
+// heartbeat, drift reasons carry the plugin codes, and denylist
+// unknown plugins come back in plugin_unknown.
+func TestTerminalHeartbeatPluginDrift(t *testing.T) {
+	srv, _, adminSess, empSess := setupTokensAPI(t)
+
+	call := func(method, path, auth string, body any) (int, map[string]any) {
+		t.Helper()
+		var buf *bytes.Buffer
+		if body != nil {
+			b, _ := json.Marshal(body)
+			buf = bytes.NewBuffer(b)
+		} else {
+			buf = bytes.NewBuffer(nil)
+		}
+		req, _ := http.NewRequest(method, srv.URL+path, buf)
+		req.Header.Set("Content-Type", "application/json")
+		if auth != "" {
+			req.Header.Set("Authorization", "Bearer "+auth)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+	mintToken := func(agent, tier string) string {
+		t.Helper()
+		_, start := call("POST", "/api/setup/device/start", "", map[string]any{"agent_type": agent, "tier": tier})
+		code, _ := start["code"].(string)
+		secret, _ := start["secret"].(string)
+		if code == "" || secret == "" {
+			t.Fatalf("device start failed: %v", start)
+		}
+		if s, _ := call("POST", "/api/device/approve", empSess, map[string]any{"code": code, "device_name": "test"}); s != 200 {
+			t.Fatalf("device approve: got %d", s)
+		}
+		_, poll := call("POST", "/api/setup/device/poll", "", map[string]any{"code": code, "secret": secret})
+		tok, _ := poll["token"].(string)
+		if tok == "" {
+			t.Fatalf("device poll returned no token: %v", poll)
+		}
+		return tok
+	}
+	hb := func(tok string, details []any) (int, map[string]any) {
+		body := map[string]any{"version": "0.1.0",
+			"config_hash":    "abababababababababababababababababababababababababababababababab",
+			"plugins":        []string{},
+			"plugin_details": details,
+			"guard_applied":  true, "os": "linux"}
+		return call("POST", "/api/terminals/heartbeat", tok, body)
+	}
+	hasReason := func(out map[string]any, want string) bool {
+		reasons, _ := out["drift_reasons"].([]any)
+		for _, r := range reasons {
+			if r == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Allowlist policy: only good-plugin.
+	code, created := call("POST", "/api/plugin/policies", adminSess,
+		map[string]any{"name": "allow", "mode": "allowlist",
+			"scope": map[string]any{"level": "global"}, "action": "downgrade", "enabled": true,
+			"rules": []any{map[string]any{"id": "good-plugin"}}})
+	if code != 201 {
+		t.Fatalf("create allowlist: got %d (%v)", code, created)
+	}
+	pol, _ := created["policy"].(map[string]any)
+	allowID, _ := pol["id"].(string)
+
+	tok := mintToken("dsh", "byoa")
+	// Unlisted plugin drifts with plugin_not_allowed.
+	code, out := hb(tok, []any{map[string]any{"id": "bad-plugin", "version": "1.0.0"}})
+	if code != 200 {
+		t.Fatalf("heartbeat: got %d (%v)", code, out)
+	}
+	if !hasReason(out, "plugin_not_allowed") {
+		t.Errorf("drift reasons %v, want plugin_not_allowed", out["drift_reasons"])
+	}
+	// Listed plugin clears the drift.
+	code, out = hb(tok, []any{map[string]any{"id": "good-plugin", "version": "1.0.0"}})
+	if code != 200 {
+		t.Fatalf("heartbeat: got %d (%v)", code, out)
+	}
+	if reasons, _ := out["drift_reasons"].([]any); len(reasons) != 0 {
+		t.Errorf("drift reasons %v, want none after fix", reasons)
+	}
+	// Bad hash drifts with plugin_hash_mismatch (version matches).
+	code, _ = call("PUT", "/api/plugin/policies/"+allowID, adminSess,
+		map[string]any{"name": "allow", "mode": "allowlist",
+			"scope": map[string]any{"level": "global"}, "action": "downgrade", "enabled": true,
+			"rules": []any{map[string]any{"id": "good-plugin", "hash": strings.Repeat("a", 64)}}})
+	if code != 200 {
+		t.Fatalf("update policy: got %d", code)
+	}
+	code, out = hb(tok, []any{map[string]any{"id": "good-plugin", "version": "1.0.0", "hash": strings.Repeat("b", 64)}})
+	if code != 200 {
+		t.Fatalf("heartbeat: got %d (%v)", code, out)
+	}
+	if !hasReason(out, "plugin_hash_mismatch") {
+		t.Errorf("drift reasons %v, want plugin_hash_mismatch", out["drift_reasons"])
+	}
+	// Switch to a denylist: an unknown plugin is allowed but
+	// reported in plugin_unknown.
+	code, _ = call("PUT", "/api/plugin/policies/"+allowID, adminSess,
+		map[string]any{"name": "deny", "mode": "denylist",
+			"scope": map[string]any{"level": "global"}, "action": "downgrade",
+			"warn_unknown": true, "enabled": true,
+			"rules": []any{map[string]any{"id": "bad-plugin"}}})
+	if code != 200 {
+		t.Fatalf("update policy: got %d", code)
+	}
+	code, out = hb(tok, []any{map[string]any{"id": "newthing", "version": "1.0.0"}})
+	if code != 200 {
+		t.Fatalf("heartbeat: got %d (%v)", code, out)
+	}
+	if reasons, _ := out["drift_reasons"].([]any); len(reasons) != 0 {
+		t.Errorf("denylist unknown: drift reasons %v, want none", reasons)
+	}
+	unknown, _ := out["plugin_unknown"].([]any)
+	if len(unknown) != 1 || unknown[0] != "newthing" {
+		t.Errorf("plugin_unknown %v, want [newthing]", unknown)
 	}
 }
