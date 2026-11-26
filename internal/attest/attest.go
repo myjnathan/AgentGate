@@ -54,13 +54,34 @@ const (
 // sensitive, but the audit trail records only verdicts and reason
 // codes, never the hash values.
 type Report struct {
-	AgentType    string   `json:"agent_type"`
-	Version      string   `json:"version"`
-	ConfigHash   string   `json:"config_hash,omitempty"`
-	BinaryHash   string   `json:"binary_hash,omitempty"`
-	Plugins      []string `json:"plugins,omitempty"`
-	GuardApplied bool     `json:"guard_applied"`
-	OS           string   `json:"os,omitempty"`
+	AgentType string `json:"agent_type"`
+	Version   string `json:"version"`
+	// ConfigHash and BinaryHash are hex digests (see above).
+	ConfigHash string `json:"config_hash,omitempty"`
+	BinaryHash string `json:"binary_hash,omitempty"`
+	// Plugins is the name-only list old agents report. PluginDetails
+	// is the F38 triple evidence (ID, version, content hash, source);
+	// when present it is authoritative for plugin appraisal, and
+	// Plugins is kept for display and for the F14 name-based
+	// compatibility path.
+	Plugins       []string         `json:"plugins,omitempty"`
+	PluginDetails []PluginEvidence `json:"plugin_details,omitempty"`
+	GuardApplied  bool             `json:"guard_applied"`
+	OS            string           `json:"os,omitempty"`
+}
+
+// PluginEvidence is one installed plugin as reported by an agent:
+// the F38 triple (ID, version, content SHA-256) plus install source
+// ("platform" = distributed by AgentGate itself, "marketplace" =
+// public market, "local" = side-loaded file, "" = unknown). Old
+// agents report names only (Report.Plugins); those are matched by
+// name and carry no version/hash evidence, so they can neither
+// prove a version constraint nor be failed for a missing one.
+type PluginEvidence struct {
+	ID      string `json:"id"`
+	Version string `json:"version,omitempty"`
+	Hash    string `json:"hash,omitempty"`
+	Source  string `json:"source,omitempty"`
 }
 
 // Policy is the appraisal policy plus reference values for one agent
@@ -101,7 +122,13 @@ const (
 	ReasonBinaryHashNotAllow  = "binary_hash_not_allowed"
 	ReasonBlockedPlugin       = "blocked_plugin"
 	ReasonPluginNotAllowed    = "plugin_not_allowed"
-	ReasonGuardNotApplied     = "guard_not_applied"
+	// F38: triple-appraisal reasons. A version/hash/source failure
+	// is reported with the specific code so the admin sees *why* a
+	// plugin failed, not just that it did.
+	ReasonPluginVersionMismatch = "plugin_version_mismatch"
+	ReasonPluginHashMismatch    = "plugin_hash_mismatch"
+	ReasonPluginUnknownSource   = "plugin_unknown_source"
+	ReasonGuardNotApplied       = "guard_not_applied"
 )
 
 // Validate checks a report's shape: bounded sizes and hex hashes, so
@@ -134,6 +161,27 @@ func (r Report) Validate() error {
 	for _, p := range r.Plugins {
 		if len(p) == 0 || len(p) > 128 {
 			return fmt.Errorf("plugin name must be 1-128 characters")
+		}
+	}
+	// F38: triple evidence, same bounds. A missing version/hash/
+	// source is allowed (old agents report names only); a present
+	// one must be well-formed, so a hostile client cannot stuff
+	// the snapshot with junk.
+	if len(r.PluginDetails) > 100 {
+		return fmt.Errorf("too many plugin details (max 100)")
+	}
+	for _, d := range r.PluginDetails {
+		if len(d.ID) == 0 || len(d.ID) > 128 {
+			return fmt.Errorf("plugin id must be 1-128 characters")
+		}
+		if len(d.Version) > 64 || (d.Version != "" && !ValidVersion(d.Version)) {
+			return fmt.Errorf("plugin version %q is not a version", d.Version)
+		}
+		if len(d.Hash) > 128 || !isHex(d.Hash) {
+			return fmt.Errorf("plugin hash must be hex")
+		}
+		if len(d.Source) > 64 {
+			return fmt.Errorf("plugin source too long")
 		}
 	}
 	if len(r.OS) > 64 {
@@ -234,6 +282,16 @@ func containsFold(list []string, v string) bool {
 		}
 	}
 	return false
+}
+
+// isHex reports whether s is empty or all hex digits.
+func isHex(s string) bool {
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // ValidVersion reports whether s looks like a dotted numeric version

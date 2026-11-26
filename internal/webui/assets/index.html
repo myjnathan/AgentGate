@@ -122,6 +122,10 @@
   .formGrid.cols2a{grid-template-columns:1fr 1fr auto;align-items:end}
   .formGrid.cols3a{grid-template-columns:1fr 1fr 1fr auto;align-items:end}
   .formGrid input,.formGrid select{width:100%}
+  /* F38: the rule editor's inputs live in table cells, not in a
+     formGrid — without this they keep the browser default width
+     and the table outgrows its card even on desktop. */
+  #ppRules input,#ppRules select{width:100%;min-width:0}
   .btn{background:var(--btn-bg);border:1px solid var(--btn-bg);color:#fff;padding:8px 15px;border-radius:8px;font-size:13.5px;cursor:pointer;font-weight:550;transition:background-color var(--motion-fast) var(--motion-ease-standard),border-color var(--motion-fast) var(--motion-ease-standard),color var(--motion-fast) var(--motion-ease-standard),transform var(--motion-fast) var(--motion-ease-standard)}
   .btn:hover{background:var(--btn-bg-hover)}
   .btn:active{transform:scale(.97)}
@@ -455,6 +459,32 @@
       </div>
       <div class="card"><h3 data-i18n="attestReports">最近证明记录</h3>
         <div class="tableWrap"><table id="attestReports"><thead><tr><th data-i18n="time">时间</th><th>Agent</th><th data-i18n="action">动作</th><th data-i18n="decision">处置</th><th data-i18n="verdict">裁决</th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <section class="page" id="page-pluginpol">
+      <div class="pageHead"><div><h1 data-i18n="pluginPolTitle">插件策略</h1><p class="desc" data-i18n="pluginPolDesc">桌面 Agent 可安装的插件白名单 / 黑名单：三元组（ID + 版本 + 内容哈希）+ 来源约束，按全局 → 部门 → 用户组逐层收紧；不符的登录降级、终端漂移标红。</p></div>
+      <div class="pageActions"><button class="btn ghost" onclick="loadPluginPolicies()" data-i18n="refresh">刷新</button></div></div>
+      <div class="card"><h3 data-i18n="addPluginPolicy">添加插件策略</h3>
+        <input type="hidden" id="ppId">
+        <div class="formGrid">
+          <div><label class="f" data-i18n="pluginPolName">策略名称</label><input id="ppName" placeholder="e.g. dsh allowlist"></div>
+          <div><label class="f" data-i18n="pluginPolMode">模式</label><select id="ppMode"><option value="allowlist" data-i18n="pluginPolModeAllow">白名单（默认拒绝）</option><option value="denylist" data-i18n="pluginPolModeDeny">黑名单（默认允许）</option></select></div>
+          <div><label class="f" data-i18n="pluginPolScope">作用域</label><select id="ppScope"><option value="global" data-i18n="pluginPolScopeGlobal">全局</option><option value="department" data-i18n="pluginPolScopeDept">部门</option><option value="group" data-i18n="pluginPolScopeGroup">用户组</option></select></div>
+          <div><label class="f" data-i18n="pluginPolDept">部门（部门作用域时填）</label><input id="ppDept" placeholder="e.g. RD"></div>
+          <div><label class="f" data-i18n="pluginPolGroup">用户组（用户组作用域时填）</label><input id="ppGroup" placeholder="e.g. sec-ops"></div>
+          <div><label class="f" data-i18n="pluginPolAction">处置</label><select id="ppAction"><option value="observe" data-i18n="pluginPolActionObserve">仅观察</option><option value="warn" data-i18n="pluginPolActionWarn">告警</option><option value="downgrade" data-i18n="pluginPolActionDowngrade">降级为自带级</option><option value="block_sensitive" data-i18n="pluginPolActionBlock">断敏感能力</option></select></div>
+          <div><label class="f" data-i18n="pluginPolWarnUnknown">未知插件告警</label><select id="ppWarn"><option value="false">false</option><option value="true">true</option></select></div>
+          <div><label class="f" data-i18n="pluginPolEnabled">启用</label><select id="ppEnabled"><option value="true">true</option><option value="false">false</option></select></div>
+        </div>
+        <h4 data-i18n="pluginPolRules">规则（插件三元组）</h4>
+        <div class="tableWrap"><table id="ppRules"><thead><tr><th data-i18n="pluginPolRuleId">插件 ID</th><th data-i18n="pluginPolRuleVer">版本约束</th><th>SHA-256</th><th data-i18n="pluginPolRuleSrc">来源</th><th data-i18n="pluginPolRuleNote">备注</th><th></th></tr></thead><tbody></tbody></table></div>
+        <div class="row"><button class="btn ghost" onclick="addPluginRuleRow()" data-i18n="pluginPolAddRule">添加规则</button></div>
+        <div class="row"><button class="btn" onclick="savePluginPolicy()" data-i18n="save">保存</button><button class="btn ghost" onclick="resetPluginPolicyForm()" data-i18n="cancel">取消</button><span id="ppMsg" class="msg"></span></div>
+        <p class="hint" style="margin-top:10px" data-i18n="pluginPolHint">白名单：名单外的插件不许装；黑名单：名单内的插件不许装，且未知插件告警强制开启（否则改名即绕过）。作用域只能收紧：下级可新增禁止、不可解除上级的禁止。规则可只写 ID（管全部版本），也可加版本约束（如 &gt;=1.2.0、2.0.0）与 SHA-256 内容哈希；旧版 Agent 只报名字时按名匹配、不判违规（资产视图中标为未验证）。观察 / 告警只记录不降级；断敏感能力在下一切片落地前与降级相同。安装前校验接口随切片 3 提供，在此之前只有装后发现 + 降级。</p>
+      </div>
+      <div class="card"><h3 data-i18n="pluginPolList">插件策略</h3>
+        <div class="tableWrap"><table id="pluginPolicies"><thead><tr><th data-i18n="pluginPolName">名称</th><th data-i18n="pluginPolMode">模式</th><th data-i18n="pluginPolScope">作用域</th><th data-i18n="pluginPolAction">处置</th><th data-i18n="pluginPolRules">规则</th><th data-i18n="pluginPolEnabled">启用</th><th></th></tr></thead><tbody></tbody></table></div>
       </div>
     </section>
 
@@ -868,6 +898,7 @@ const I18N = {
     tokensTitle:"令牌与限流",tokensDesc:"每个接入令牌的速率限制（RPM / TPM）与本月用量；0 表示使用等级默认值。",user:"用户",tier:"等级",used:"已用",expires:"过期",
     tokensHint:"等级默认：受管级 60 RPM / 100000 TPM，自带级 20 RPM / 20000 TPM。修改后即时生效并写入审计。",
     attestTitle:"Agent 证明",attestDesc:"受管 Agent 登录时上报版本 / 配置哈希 / 插件清单，平台校验后才发受管级令牌；不符自动降级为自带级并告警。",addAttestPolicy:"添加证明策略",attestPolicyList:"证明策略",attestReports:"最近证明记录",minVersion:"最低版本",requireReport:"要求证明",requireGuard:"要求守卫",allowedConfigHashes:"允许的配置哈希（逗号分隔，空为不限）",allowedPlugins:"允许的插件（逗号分隔，空为不限）",blockedPlugins:"禁用的插件（逗号分隔）",verdict:"裁决",attested:"证明",
+    pluginPolTitle:"插件策略",pluginPolDesc:"桌面 Agent 可安装的插件白名单 / 黑名单：三元组（ID + 版本 + 内容哈希）+ 来源约束，按全局 → 部门 → 用户组逐层收紧；不符的登录降级、终端漂移标红。",addPluginPolicy:"添加插件策略",pluginPolName:"策略名称",pluginPolMode:"模式",pluginPolModeAllow:"白名单（默认拒绝）",pluginPolModeDeny:"黑名单（默认允许）",pluginPolScope:"作用域",pluginPolScopeGlobal:"全局",pluginPolScopeDept:"部门",pluginPolScopeGroup:"用户组",pluginPolDept:"部门（部门作用域时填）",pluginPolGroup:"用户组（用户组作用域时填）",pluginPolAction:"处置",pluginPolActionObserve:"仅观察",pluginPolActionWarn:"告警",pluginPolActionDowngrade:"降级为自带级",pluginPolActionBlock:"断敏感能力",pluginPolWarnUnknown:"未知插件告警",pluginPolEnabled:"启用",pluginPolRules:"规则（插件三元组）",pluginPolRuleId:"插件 ID",pluginPolRuleVer:"版本约束",pluginPolRuleSrc:"来源",pluginPolRuleNote:"备注",pluginPolSrcAny:"不限",pluginPolAddRule:"添加规则",pluginPolList:"插件策略",pluginPolHint:"白名单：名单外的插件不许装；黑名单：名单内的插件不许装，且未知插件告警强制开启（否则改名即绕过）。作用域只能收紧：下级可新增禁止、不可解除上级的禁止。规则可只写 ID（管全部版本），也可加版本约束（如 >=1.2.0、2.0.0）与 SHA-256 内容哈希；旧版 Agent 只报名字时按名匹配、不判违规（资产视图中标为未验证）。观察 / 告警只记录不降级；断敏感能力在下一切片落地前与降级相同。安装前校验接口随切片 3 提供，在此之前只有装后发现 + 降级。",pluginPolNameRequired:"请填写策略名称",ppEdit:"编辑",
     attestHint:"无策略的 Agent 类型保持旧行为（按申请发令牌，标记为未验证）；策略一旦要求提交证明，未提交或未通过的受管申请一律降级为自带级。本轮证明为软件自报证据，不防有意伪造，详见 docs/attestation.md。",terminalsTitle:"终端清单",terminalsDesc:"ag-guard 定期心跳上报版本 / 配置哈希 / 插件清单，平台维护全量终端 Agent 资产视图；配置漂移（版本 / 配置 / 插件不符合证明策略）标红并告警。",termFilter:"筛选",filterBtn:"筛选",terminalsList:"终端列表",termVersion:"版本",termStatus:"状态",termLastSeen:"最近心跳",termDrift:"漂移",termOffline:"断网补报",terminalsHint:"在线：5 分钟内有心跳；失联超过 60 分钟记为离线。心跳只含版本、哈希与插件清单等元数据，不含任何请求内容。网关断网期间 ag-guard 按缓存策略执行、高密级默认拦截，恢复后经心跳补报断网期间的审计（只含计数与类别）。",exceptionsTitle:"例外审批",exceptionsDesc:"被分级策略拦截的高密级调用，员工可申请例外；管理员审批通过后发一次性放行凭证（绑定申请人 / 密级 / 有效期，仅限一次调用），违禁词拦截永不例外，绝密默认不可例外。",excApply:"申请例外",excLevel:"数据密级",excHours:"有效期（小时，1–72）",excReason:"申请理由",excScope:"调用范围",excApplyBtn:"提交申请",excGrantHint:"批准后放行凭证只显示一次：管理员须当即把它交给申请人，申请人在被拦截的调用上以 X-AgentGate-Exception-Grant 请求头携带；凭证用一次即作废，过期也作废。",excGrant:"一次性放行凭证（只显示一次，请立即复制交给申请人）",excList:"例外申请",excStatus:"状态",excExpires:"有效期至",excDecidedBy:"审批人",excApprove:"批准",excReject:"驳回",excRevoke:"撤销",
     channelsTitle:"模型渠道",channelsDesc:"上游模型服务与其可承载的最高数据等级、信任类型；网关按分级策略选路，密钥只加密存储、永不回显。",addChannel:"添加渠道",channelList:"渠道列表",
     name:"名称",models:"模型",maxLevel:"最高数据等级",trustType:"信任类型",health:"健康",addBtn:"添加",
@@ -922,6 +953,7 @@ const I18N = {
     tokensTitle:"Tokens & rate limits",tokensDesc:"Per-token rate limits (RPM / TPM) and this month's usage; 0 means the tier default.",user:"User",tier:"Tier",used:"Used",expires:"Expires",
     tokensHint:"Tier defaults: managed 60 RPM / 100000 TPM, BYOA 20 RPM / 20000 TPM. Changes apply immediately and are audited.",
     attestTitle:"Agent attestation",attestDesc:"A managed agent reports its version / config hash / plugin list at login; the platform verifies it before issuing a managed-tier token. Failures are downgraded to BYOA and alerted.",addAttestPolicy:"Add attestation policy",attestPolicyList:"Attestation policies",attestReports:"Recent attestation records",minVersion:"Min version",requireReport:"Require report",requireGuard:"Require guard",allowedConfigHashes:"Allowed config hashes (comma-separated, empty = any)",allowedPlugins:"Allowed plugins (comma-separated, empty = any)",blockedPlugins:"Blocked plugins (comma-separated)",verdict:"Verdict",attested:"Attested",
+    pluginPolTitle:"Plugin policies",pluginPolDesc:"Allow/deny-list for desktop-agent plugins: triple (ID + version + content hash) + source constraint, tightening global → department → group; violations downgrade the login and show up as terminal drift.",addPluginPolicy:"Add plugin policy",pluginPolName:"Policy name",pluginPolMode:"Mode",pluginPolModeAllow:"Allowlist (default deny)",pluginPolModeDeny:"Denylist (default allow)",pluginPolScope:"Scope",pluginPolScopeGlobal:"Global",pluginPolScopeDept:"Department",pluginPolScopeGroup:"User group",pluginPolDept:"Department (for department scope)",pluginPolGroup:"User group (for group scope)",pluginPolAction:"Disposition",pluginPolActionObserve:"Observe only",pluginPolActionWarn:"Warn",pluginPolActionDowngrade:"Downgrade to BYOA",pluginPolActionBlock:"Block sensitive capabilities",pluginPolWarnUnknown:"Unknown-plugin alert",pluginPolEnabled:"Enabled",pluginPolRules:"Rules (plugin triples)",pluginPolRuleId:"Plugin ID",pluginPolRuleVer:"Version constraint",pluginPolRuleSrc:"Source",pluginPolRuleNote:"Note",pluginPolSrcAny:"Any",pluginPolAddRule:"Add rule",pluginPolList:"Plugin policies",pluginPolHint:"Allowlist: plugins off the list may not be installed. Denylist: plugins on the list may not be installed, and the unknown-plugin alert is forced on (otherwise a rename defeats it). Scopes can only tighten: a lower scope may add bans, never lift an upper scope's ban. A rule may list only the ID (all versions), or add a version constraint (e.g. >=1.2.0, 2.0.0) and a SHA-256 content hash; old agents that report names only are matched by name and never failed (flagged unverified in the asset view). Observe / warn only record, never downgrade; block-sensitive behaves as downgrade until the next slice lands it. The pre-install check API comes with slice 3; until then only post-install detection + downgrade.",pluginPolNameRequired:"Policy name is required",ppEdit:"Edit",
     attestHint:"Agent types without a policy keep the old behaviour (token as requested, marked unverified). Once a policy requires a report, a managed request without a passing report is downgraded to BYOA. This round is self-reported software evidence and does not stop deliberate forgery; see docs/attestation.md.",terminalsTitle:"Terminal inventory",terminalsDesc:"ag-guard reports a periodic heartbeat (version / config hash / plugin list); the platform keeps a live asset view of all terminal agents. Config drift (version / config / plugins failing the attestation policy) is highlighted and alerted.",termFilter:"Filter",filterBtn:"Filter",terminalsList:"Terminals",termVersion:"Version",termStatus:"Status",termLastSeen:"Last heartbeat",termDrift:"Drift",termOffline:"Offline backfill",terminalsHint:"Online: heartbeat within 5 minutes; offline after 60 minutes without one. Heartbeats carry metadata only (version, hashes, plugin list) — no request content. While the gateway is unreachable ag-guard enforces the cached policy and denies high data levels; after recovery the outage is backfilled through the heartbeat (counts and categories only).",exceptionsTitle:"Exception approvals",exceptionsDesc:"Calls blocked by the classification policy can be excepted on application; an approval issues a one-time grant (bound to applicant / data level / expiry, good for one call). Banned-word blocks are never excepted; top-secret exceptions are closed by default.",excApply:"Apply for an exception",excLevel:"Data level",excHours:"Valid for (hours, 1–72)",excReason:"Reason",excScope:"Call scope",excApplyBtn:"Submit application",excGrantHint:"The grant is shown exactly once after approval: hand it to the applicant right away; they send it as the X-AgentGate-Exception-Grant header on the blocked call. It is spent on first use and void after expiry.",excGrant:"One-time grant (shown once — copy it to the applicant now)",excList:"Exception requests",excStatus:"Status",excExpires:"Expires",excDecidedBy:"Decided by",excApprove:"Approve",excReject:"Reject",excRevoke:"Revoke",
     channelsTitle:"Model channels",channelsDesc:"Upstream model services with the max data level and trust type they may carry; the gateway routes by classification policy. Keys are encrypted at rest and never echoed.",addChannel:"Add channel",channelList:"Channels",
     name:"Name",models:"Models",maxLevel:"Max data level",trustType:"Trust type",health:"Health",addBtn:"Add",
@@ -1180,7 +1212,7 @@ function timeShort(s){ return (s||"").slice(5,19).replace("T"," "); }
 /* ---------- navigation ---------- */
 const NAV = [
   {group:"navOps", items:[["wizard","✦","wizardTitle",["admin","security"]],["dashboard","◈","dashTitle"],["stats","▦","statsTitle",["admin","security","auditor"]],["audit","☰","auditTitle",["admin","security","auditor"]],["reports","▤","reportsTitle",["admin","security","auditor"]]]},
-  {group:"navAccess", items:[["device","▣","deviceTitle"],["tokens","⚿","tokensTitle",["admin","security","operator"]],["attest","✓","attestTitle"],["terminals","◉","terminalsTitle"],["exceptions","⧉","exceptionsTitle"],["orgsync","⚭","orgsyncTitle"],["users","⚇","usersTitle",["admin","security"]]]},
+  {group:"navAccess", items:[["device","▣","deviceTitle"],["tokens","⚿","tokensTitle",["admin","security","operator"]],["attest","✓","attestTitle"],["pluginpol","⊞","pluginPolTitle"],["terminals","◉","terminalsTitle"],["exceptions","⧉","exceptionsTitle"],["orgsync","⚭","orgsyncTitle"],["users","⚇","usersTitle",["admin","security"]]]},
   {group:"navModel", items:[["channels","⇄","channelsTitle",["admin","security","operator"]],["dlpwords","☷","dlpwordsTitle",["admin","security"]],["semreview","◐","semReviewTitle",["admin","security"]],["autoroute","↗","autoRouteTitle",["admin","security"]]]},
   {group:"navCap", items:[["kb","🗀","foldersTitle"],["skills","✦","skillsTitle"],["prompts","✎","promptsTitle"],["knowpack","🗂","knowpackTitle"],["upstreams","⛓","fedTitle"],["resttools","⇢","restTitle"]]},
   {group:"navSys", items:[["alerts","⚠","alertsTitle"],["packages","▤","packagesTitle"]]}
@@ -1227,7 +1259,7 @@ function showPage(id){
   document.querySelectorAll(".page").forEach(p=>p.classList.toggle("active", p.id==="page-"+id));
   document.querySelectorAll(".navItem").forEach(n=>n.classList.toggle("active", n.getAttribute("data-nav")===id));
   const loaders = {wizard:loadWizard, dashboard:loadDashboard, stats:()=>{loadStats(); loadCache(); loadBudgets(); loadOtel();}, audit:loadAudit, device:loadSidecar, tokens:loadTokens, attest:loadAttest, terminals:loadTerminals, channels:loadChannels, dlpwords:loadDLPWords, semreview:loadSemReview, autoroute:loadAutoRoute,
-    kb:loadFolders, reports:loadReports, skills:loadSkills, prompts:loadPrompts, knowpack:loadKnowpacks, upstreams:loadUpstreams, resttools:loadRESTTools, alerts:loadAlerts, packages:loadPackages, orgsync:loadOrgProviders, exceptions:loadExceptions, users:loadUsers};
+    kb:loadFolders, reports:loadReports, skills:loadSkills, prompts:loadPrompts, knowpack:loadKnowpacks, upstreams:loadUpstreams, resttools:loadRESTTools, alerts:loadAlerts, packages:loadPackages, orgsync:loadOrgProviders, exceptions:loadExceptions, users:loadUsers, pluginpol:loadPluginPolicies};
   if(loaders[id]) loaders[id]();
 }
 
@@ -1709,6 +1741,70 @@ async function deleteAttestPolicy(agent){
   try{ await api("/api/attestation/policies/"+encodeURIComponent(agent),{method:"DELETE"}); toast(T("deleted")); loadAttest();
   }catch(e){ toast(errText(e), false); }
 }
+
+/* ---------- plugin policies (F38) ---------- */
+let ppPolicies = [];
+async function loadPluginPolicies(){
+  try{ const d = await api("/api/plugin/policies");
+    ppPolicies = d.policies||[];
+    document.querySelector("#pluginPolicies tbody").innerHTML = ppPolicies.map(p=>{
+      const scope = p.scope.level==="global" ? T("pluginPolScopeGlobal") : p.scope.level==="department" ? T("pluginPolScopeDept")+": "+esc(p.scope.department||"") : T("pluginPolScopeGroup")+": "+esc(p.scope.group||"");
+      const rules = (p.rules||[]).map(r=>esc(r.id)+(r.version_constraint?(" "+esc(r.version_constraint)):"")).join(", ") || "—";
+      return `<tr><td style="font-weight:600;color:var(--ink)">${esc(p.name)}</td><td>${esc(p.mode)}</td><td class="muted">${scope}</td><td>${esc(p.action)}</td><td class="muted">${rules}</td><td>${p.enabled?"✓":"—"}</td>`+
+      `<td style="white-space:nowrap"><button class="btn ghost small" onclick="editPluginPolicy('${esc(p.id)}')">${T("ppEdit")}</button> <button class="btn ghost small danger" onclick="deletePluginPolicy('${esc(p.id)}')">✕</button></td></tr>`;}).join("") || `<tr><td colspan="7" class="empty">${T("empty")}</td></tr>`;
+  }catch(e){ toast(errText(e), false); }
+}
+function ppRuleRow(r){
+  r = r||{};
+  const src = v=>`<option value="${v}"${r.source===v?" selected":""}>${v}</option>`;
+  return `<tr><td><input value="${esc(r.id||"")}" placeholder="plugin-id"></td><td><input value="${esc(r.version_constraint||"")}" placeholder=">=1.2.0"></td><td><input value="${esc(r.hash||"")}" placeholder="sha256…"></td><td><select><option value="">${T("pluginPolSrcAny")}</option>${src("platform")}${src("marketplace")}${src("local")}</select></td><td><input value="${esc(r.note||"")}"></td><td><button class="btn ghost small danger" onclick="this.closest('tr').remove()">✕</button></td></tr>`;
+}
+function addPluginRuleRow(){ document.querySelector("#ppRules tbody").insertAdjacentHTML("beforeend", ppRuleRow()); }
+function readPluginRules(){
+  return [...document.querySelectorAll("#ppRules tbody tr")].map(tr=>{
+    const inputs = [...tr.querySelectorAll("input")].map(i=>i.value.trim());
+    return {id:inputs[0]||"", version_constraint:inputs[1]||"", hash:inputs[2]||"", source:tr.querySelector("select").value, note:inputs[3]||""};
+  }).filter(r=>r.id);
+}
+function resetPluginPolicyForm(){
+  ppId.value=""; ppName.value=""; ppMode.value="allowlist"; ppScope.value="global"; ppDept.value=""; ppGroup.value=""; ppAction.value="downgrade"; ppWarn.value="false"; ppEnabled.value="true";
+  document.querySelector("#ppRules tbody").innerHTML = ppRuleRow();
+  setMsg("ppMsg", "");
+}
+function editPluginPolicy(id){
+  const p = ppPolicies.find(x=>x.id===id); if(!p) return;
+  ppId.value=p.id; ppName.value=p.name||""; ppMode.value=p.mode; ppScope.value=p.scope.level; ppDept.value=p.scope.department||""; ppGroup.value=p.scope.group||"";
+  ppAction.value=p.action; ppWarn.value=String(!!p.warn_unknown); ppEnabled.value=String(!!p.enabled);
+  document.querySelector("#ppRules tbody").innerHTML = (p.rules||[]).map(ppRuleRow).join("") || ppRuleRow();
+  setMsg("ppMsg", "");
+}
+async function savePluginPolicy(){
+  const name = ppName.value.trim();
+  if(!name){ setMsg("ppMsg", T("pluginPolNameRequired"), false); return; }
+  // The console decides what the user need not: a global policy
+  // carries no department/group, and a denylist always carries the
+  // unknown-plugin alarm (the server rejects it otherwise).
+  const scope = {level:ppScope.value, department:"", group:""};
+  if(ppScope.value==="department") scope.department = ppDept.value.trim();
+  if(ppScope.value==="group") scope.group = ppGroup.value.trim();
+  const body = {name, mode:ppMode.value, scope, action:ppAction.value,
+    warn_unknown: ppMode.value==="denylist" ? true : ppWarn.value==="true",
+    enabled:ppEnabled.value==="true", rules:readPluginRules()};
+  const id = ppId.value;
+  try{
+    if(id) await api("/api/plugin/policies/"+encodeURIComponent(id),{method:"PUT",body:JSON.stringify(body)});
+    else await api("/api/plugin/policies",{method:"POST",body:JSON.stringify(body)});
+    resetPluginPolicyForm(); setMsg("ppMsg", T("saved")); loadPluginPolicies();
+  }catch(e){ setMsg("ppMsg", errText(e), false); }
+}
+async function deletePluginPolicy(id){
+  if(!(await confirmDelete())) return;
+  try{ await api("/api/plugin/policies/"+encodeURIComponent(id),{method:"DELETE"}); toast(T("deleted")); loadPluginPolicies();
+  }catch(e){ toast(errText(e), false); }
+}
+// The rules table starts with one empty row so the form is usable
+// at first sight (no extra click to add the first rule).
+if(!document.querySelector("#ppRules tbody").children.length) addPluginRuleRow();
 
 /* ---------- terminal inventory ---------- */
 async function loadTerminals(){

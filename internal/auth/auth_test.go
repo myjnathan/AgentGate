@@ -6,6 +6,7 @@ import (
 
 	"github.com/myjnathan/agentgate/internal/attest"
 	"github.com/myjnathan/agentgate/internal/auth"
+	"github.com/myjnathan/agentgate/internal/pluginpol"
 	"github.com/myjnathan/agentgate/internal/store"
 )
 
@@ -313,5 +314,106 @@ func TestAttestationDowngradesManagedTokens(t *testing.T) {
 	}
 	if _, err := svc.SubmitAttestation(dc.Code, dc.Secret, good); err == nil {
 		t.Fatal("attestation after approval must fail")
+	}
+}
+
+// TestApprovePluginPolicyDowngrades covers the F38 login wiring:
+// the plugin appraisal runs at approval time (when the approving
+// user's department is known) and merges into the verdict. The
+// submit-time preview is F14-only by design.
+func TestApprovePluginPolicyDowngrades(t *testing.T) {
+	svc, st, user := newServiceWithUser(t, "alice", "demo12345")
+	st.WithLock(func(s *store.State) {
+		// F14 policy: version 1.0.0+ passes, so the verdict is
+		// pass unless the plugin appraisal downgrades it.
+		s.AttestationPolicies["dsh"] = &attest.Policy{
+			AgentType: "dsh", MinVersion: "1.0.0",
+		}
+		s.PluginPolicies["allow"] = &pluginpol.PluginPolicy{
+			ID: "allow", Name: "allow", Mode: pluginpol.ModeAllowlist,
+			Scope:  pluginpol.Scope{Level: pluginpol.ScopeGlobal},
+			Rules:  []pluginpol.PluginRule{{ID: "good-plugin"}},
+			Action: pluginpol.ActionDowngrade, Enabled: true,
+		}
+	})
+	approve := func(report attest.Report) (store.Tier, string, []string) {
+		t.Helper()
+		dc := svc.StartDeviceCode("dsh", store.TierManaged)
+		if _, err := svc.SubmitAttestation(dc.Code, dc.Secret, report); err != nil {
+			t.Fatalf("submit: %v", err)
+		}
+		_, issued, err := svc.ApproveDeviceCode(dc.Code, user, "laptop")
+		if err != nil {
+			t.Fatalf("approve: %v", err)
+		}
+		var verdict string
+		var reasons []string
+		st.Read(func(s *store.State) {
+			verdict = s.DeviceCodes[dc.Code].AttestVerdict
+			reasons = append([]string(nil), s.DeviceCodes[dc.Code].AttestReasons...)
+		})
+		return issued, verdict, reasons
+	}
+
+	// Unlisted plugin + downgrade action -> BYOA.
+	issued, verdict, _ := approve(attest.Report{Version: "1.0.0", GuardApplied: true,
+		PluginDetails: []attest.PluginEvidence{{ID: "bad-plugin", Version: "1.0.0"}}})
+	if issued != store.TierBYOA || verdict != attest.VerdictDowngraded {
+		t.Errorf("bad plugin: issued=%v verdict=%v, want byoa/downgraded", issued, verdict)
+	}
+	// Listed plugin -> managed.
+	issued, verdict, _ = approve(attest.Report{Version: "1.0.0", GuardApplied: true,
+		PluginDetails: []attest.PluginEvidence{{ID: "good-plugin", Version: "1.0.0"}}})
+	if issued != store.TierManaged || verdict != attest.VerdictPass {
+		t.Errorf("good plugin: issued=%v verdict=%v, want managed/pass", issued, verdict)
+	}
+	// Name-only report: the name list still applies.
+	issued, verdict, _ = approve(attest.Report{Version: "1.0.0", GuardApplied: true,
+		Plugins: []string{"bad-plugin"}})
+	if issued != store.TierBYOA || verdict != attest.VerdictDowngraded {
+		t.Errorf("name-only bad plugin: issued=%v verdict=%v, want byoa/downgraded", issued, verdict)
+	}
+	// Observe action records the reasons but does not downgrade.
+	st.WithLock(func(s *store.State) {
+		s.PluginPolicies["allow"].Action = pluginpol.ActionObserve
+	})
+	issued, verdict, reasons := approve(attest.Report{Version: "1.0.0", GuardApplied: true,
+		PluginDetails: []attest.PluginEvidence{{ID: "bad-plugin", Version: "1.0.0"}}})
+	if issued != store.TierManaged || verdict != attest.VerdictPass {
+		t.Errorf("observe action: issued=%v verdict=%v, want managed/pass", issued, verdict)
+	}
+	found := false
+	for _, r := range reasons {
+		if r == attest.ReasonPluginNotAllowed {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("observe action: reasons %v, want plugin_not_allowed recorded", reasons)
+	}
+}
+
+// TestApprovePluginPolicyDepartmentScope covers scope resolution at
+// approval: a department policy only bites for its own department.
+func TestApprovePluginPolicyDepartmentScope(t *testing.T) {
+	svc, st, user := newServiceWithUser(t, "alice", "demo12345")
+	st.WithLock(func(s *store.State) {
+		s.PluginPolicies["dept"] = &pluginpol.PluginPolicy{
+			ID: "dept", Name: "dept", Mode: pluginpol.ModeAllowlist,
+			Scope:  pluginpol.Scope{Level: pluginpol.ScopeDepartment, Department: "市场部"},
+			Rules:  []pluginpol.PluginRule{{ID: "good-plugin"}},
+			Action: pluginpol.ActionDowngrade, Enabled: true,
+		}
+	})
+	// The test user is in 研发部, so the 市场部 policy does not apply.
+	dc := svc.StartDeviceCode("dsh", store.TierManaged)
+	rep := attest.Report{Version: "1.0.0", GuardApplied: true,
+		PluginDetails: []attest.PluginEvidence{{ID: "anything", Version: "1.0.0"}}}
+	if _, err := svc.SubmitAttestation(dc.Code, dc.Secret, rep); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	_, issued, err := svc.ApproveDeviceCode(dc.Code, user, "laptop")
+	if err != nil || issued != store.TierManaged {
+		t.Fatalf("approve: issued=%v err=%v, want managed", issued, err)
 	}
 }

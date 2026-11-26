@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/myjnathan/agentgate/internal/attest"
+	"github.com/myjnathan/agentgate/internal/pluginpol"
 	"github.com/myjnathan/agentgate/internal/roles"
 	"github.com/myjnathan/agentgate/internal/store"
 )
@@ -353,6 +354,17 @@ func (s *Service) SubmitAttestation(code, secret string, report attest.Report) (
 	return verdict, err
 }
 
+// containsReason reports whether a verdict reason list already
+// holds code (F38 merges plugin reasons into the F14 verdict).
+func containsReason(reasons []string, code string) bool {
+	for _, r := range reasons {
+		if r == code {
+			return true
+		}
+	}
+	return false
+}
+
 // evaluateAttestation is the approval-time appraisal: the stored
 // report (if any) against the policy in force now. No policy means
 // "unverified"; no report means the policy's RequireReport decides
@@ -383,6 +395,26 @@ func (s *Service) ApproveDeviceCode(code string, user *store.User, deviceName st
 			return
 		}
 		verdict := evaluateAttestation(dc, st.AttestationPolicies)
+		// F38: plugin policy appraisal, the same evaluation the
+		// heartbeat uses (login and drift share one function, so
+		// the verdict is identical in both places). It runs here,
+		// not at SubmitAttestation: the scope needs the approving
+		// user's department, which is only known at approval time.
+		// Groups are not modelled yet, so the group list is empty
+		// for now. observe/warn record the reasons without
+		// changing the verdict; downgrade/block_sensitive
+		// downgrade (block_sensitive's extra cut of confidential
+		// channels lands in slice 2).
+		if reasons, _, action := pluginpol.EvaluateReport(dc.Attestation, st.PluginPolicies, user.Department, nil, time.Now()); len(reasons) > 0 {
+			for _, r := range reasons {
+				if !containsReason(verdict.Reasons, r) {
+					verdict.Reasons = append(verdict.Reasons, r)
+				}
+			}
+			if action == pluginpol.ActionDowngrade || action == pluginpol.ActionBlockSensitive {
+				verdict.Status = attest.VerdictDowngraded
+			}
+		}
 		dc.AttestVerdict = verdict.Status
 		dc.AttestReasons = verdict.Reasons
 		issued = dc.Tier

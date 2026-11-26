@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/myjnathan/agentgate/internal/attest"
 	"github.com/myjnathan/agentgate/internal/audit"
+	"github.com/myjnathan/agentgate/internal/pluginpol"
 	"github.com/myjnathan/agentgate/internal/store"
 	"github.com/myjnathan/agentgate/internal/terminal"
 )
@@ -61,6 +63,7 @@ func (a *API) terminalHeartbeat(w http.ResponseWriter, r *http.Request, u *store
 	now := time.Now()
 	var rec *terminal.Terminal
 	var prevDrift []string
+	var pluginUnknown []string
 	isNew := false
 	a.st.WithLock(func(st *store.State) {
 		for _, t := range st.Terminals {
@@ -83,13 +86,29 @@ func (a *API) terminalHeartbeat(w http.ResponseWriter, r *http.Request, u *store
 		rec.ConfigHash = hb.ConfigHash
 		rec.BinaryHash = hb.BinaryHash
 		rec.Plugins = append([]string(nil), hb.Plugins...)
+		if len(hb.PluginDetails) > 0 {
+			rec.PluginDetails = append([]attest.PluginEvidence(nil), hb.PluginDetails...)
+		} else {
+			rec.PluginDetails = nil
+		}
 		rec.GuardApplied = hb.GuardApplied
 		rec.OS = hb.OS
 		rec.LastSeen = now
 		rec.HeartbeatCount++
 		// Drift is judged by the F14 appraisal policy for this
-		// agent type (nil policy = no appraisal, no drift).
+		// agent type (nil policy = no appraisal, no drift), plus
+		// the F38 plugin appraisal — the same evaluation login
+		// uses, so a terminal cannot pass at login and drift
+		// silently afterwards (or vice versa).
 		rec.DriftReasons = terminal.DriftReasons(hb.Report(), st.AttestationPolicies[agentType])
+		if reasons, unknown, _ := pluginpol.EvaluateReport(hb.Report(), st.PluginPolicies, u.Department, nil, now); len(reasons) > 0 || len(unknown) > 0 {
+			for _, r := range reasons {
+				if !containsString(rec.DriftReasons, r) {
+					rec.DriftReasons = append(rec.DriftReasons, r)
+				}
+			}
+			pluginUnknown = unknown
+		}
 		if hb.Offline != nil && hb.Offline.Events > 0 {
 			off := *hb.Offline
 			rec.LastOfflineAudit = &off
@@ -110,6 +129,12 @@ func (a *API) terminalHeartbeat(w http.ResponseWriter, r *http.Request, u *store
 	if driftNow && !driftWas {
 		d := map[string]string{"agent_type": agentType, "version": hb.Version,
 			"reasons": strings.Join(rec.DriftReasons, ",")}
+		// Denylist unknown plugins are allowed by default but
+		// flagged: record them so the alert (slice 2) has the
+		// names without waiting for the next drift transition.
+		if len(pluginUnknown) > 0 {
+			d["plugin_unknown"] = strings.Join(pluginUnknown, ",")
+		}
 		a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, AgentType: agentType,
 			Kind: "terminal", Action: "terminal_drift", Decision: "allow", Detail: d})
 	} else if !driftNow && driftWas {
@@ -136,10 +161,24 @@ func (a *API) terminalHeartbeat(w http.ResponseWriter, r *http.Request, u *store
 	if drift == nil {
 		drift = []string{}
 	}
+	if pluginUnknown == nil {
+		pluginUnknown = []string{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"terminal_id": rec.ID, "status": rec.Status(now), "drift_reasons": drift,
-		"last_seen": rec.LastSeen,
+		"plugin_unknown": pluginUnknown,
+		"last_seen":      rec.LastSeen,
 	})
+}
+
+// containsString reports whether list holds s.
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 // terminalView is the admin-facing terminal row: the record plus its
