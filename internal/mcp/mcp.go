@@ -25,6 +25,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/kb"
 	"github.com/myjnathan/agentgate/internal/knowpack"
 	"github.com/myjnathan/agentgate/internal/otel"
+	"github.com/myjnathan/agentgate/internal/pluginpol"
 	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/semidx"
 	"github.com/myjnathan/agentgate/internal/store"
@@ -145,6 +146,18 @@ var tools = []toolDef{
 	},
 }
 
+// knowledgeTools are the company-knowledge readers a
+// block_sensitive terminal loses entirely (backlog F38, slice 2):
+// unlike the tier drop (which only caps the data level), the
+// knowledge cut denies them at every level until remediation.
+// kb_get is not listed: it is managed-only and the effective tier
+// is already BYOA, so it is hidden and denied by the tier rule.
+var knowledgeTools = map[string]bool{
+	"kb_search": true, "kb_catalog": true, "kb_entries": true,
+	"kb_structure": true, "kb_section": true,
+	"kb_pack_list": true, "kb_pack_get": true,
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -155,6 +168,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		writeRPCError(w, nil, -32001, "unauthorized")
 		return
+	}
+	// F38 slice 2: a terminal under a plugin disposition
+	// (downgrade / block_sensitive) is treated as BYOA for
+	// authorization — the copy leaves the stored token untouched,
+	// and every tier/level check below sees the effective tier.
+	if pluginpol.DowngradesTier(s.st.PluginActionFor(user.ID, tok.AgentType)) {
+		cp := *tok
+		cp.Tier = store.TierBYOA
+		tok = &cp
 	}
 	var req rpcRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -173,7 +195,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "ping":
 		writeRPCResult(w, req.ID, map[string]any{})
 	case "tools/list":
-		writeRPCResult(w, req.ID, map[string]any{"tools": s.listTools(r.Context(), tok)})
+		writeRPCResult(w, req.ID, map[string]any{"tools": s.listTools(r.Context(), tok, user)})
 	case "tools/call", "prompts/get":
 		// Traced calls (F16): the response is buffered so the
 		// deferred span end can tell success from a JSON-RPC error
@@ -299,10 +321,17 @@ func (s *Server) endTrace(span *otel.Span, req rpcRequest, rec *rpcRecorder) {
 // "invisible" and "uncallable" are the same set. Argument-dependent
 // gates (the DLP scan and the data-level cap on a call's arguments)
 // cannot be decided at list time and stay call-side only.
-func (s *Server) listTools(ctx context.Context, tok *store.APIToken) []toolDef {
+func (s *Server) listTools(ctx context.Context, tok *store.APIToken, user *store.User) []toolDef {
 	out := []toolDef{}
+	// F38 slice 2: a block_sensitive terminal loses the knowledge
+	// tools entirely, so they must not be advertised either (list
+	// and call agree, backlog F31).
+	knowledgeCut := pluginpol.BlocksKnowledge(s.st.PluginActionFor(user.ID, tok.AgentType))
 	for _, t := range tools {
 		if !s.builtinToolVisible(tok, t.Name) {
+			continue
+		}
+		if knowledgeCut && knowledgeTools[t.Name] {
 			continue
 		}
 		out = append(out, t)
@@ -545,6 +574,19 @@ func (s *Server) callTool(w http.ResponseWriter, ctx context.Context, req rpcReq
 			Kind: "violation", Action: "tool_call_denied", Decision: "block",
 			Detail: map[string]string{"tool": params.Name, "reason": "tier_insufficient"}})
 		writeRPCError(w, req.ID, -32602, "unknown tool")
+		return
+	}
+
+	// F38 slice 2: block_sensitive cuts sensitive capabilities
+	// entirely — company-knowledge tools are denied at every data
+	// level until the terminal remediates. (kb_get never reaches
+	// this check: it is managed-only and the effective tier is
+	// already BYOA, so the tier rule above denies it.)
+	if pluginpol.BlocksKnowledge(s.st.PluginActionFor(user.ID, tok.AgentType)) && knowledgeTools[params.Name] {
+		s.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
+			Kind: "violation", Action: "tool_call_denied", Decision: "block",
+			Detail: map[string]string{"tool": params.Name, "reason": "plugin_block_sensitive"}})
+		writeRPCError(w, req.ID, -32004, "request blocked by data policy")
 		return
 	}
 

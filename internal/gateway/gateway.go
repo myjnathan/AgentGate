@@ -29,6 +29,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/guard"
 	"github.com/myjnathan/agentgate/internal/onboard"
 	"github.com/myjnathan/agentgate/internal/otel"
+	"github.com/myjnathan/agentgate/internal/pluginpol"
 	"github.com/myjnathan/agentgate/internal/ratelimit"
 	"github.com/myjnathan/agentgate/internal/secretbox"
 	"github.com/myjnathan/agentgate/internal/semreview"
@@ -626,6 +627,17 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "unauthorized", "invalid or expired token")
 		return
 	}
+	// F38 slice 2: a terminal under a plugin disposition
+	// (downgrade / block_sensitive) is treated as BYOA for
+	// authorization — the stored token is unchanged, and the next
+	// login re-issues at the right tier. The cut is about the
+	// terminal, not the request, so neither the warn phase nor an
+	// F24 exception grant waives it (see the tier block below).
+	pluginAction := g.st.PluginActionFor(user.ID, tok.AgentType)
+	effTier := tok.Tier
+	if pluginpol.DowngradesTier(pluginAction) {
+		effTier = store.TierBYOA
+	}
 	// OpenTelemetry (F16): one server span per call, finished by a
 	// deferred end that reads the recorder status and the trace
 	// state filled in below. The recorder forwards Flush so SSE
@@ -771,8 +783,21 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// can see exactly what blocking would have caught before
 	// switching to block phase. A grant still waives the block in
 	// block phase and is spent; in warn phase no grant is needed
-	// and none is consumed.
-	if tok.Tier == store.TierBYOA && level >= store.LevelConfidential && !g.dryRun() {
+	// and none is consumed. A plugin disposition (effTier BYOA via
+	// the terminal, not the token) is exempt from both waivers: the
+	// terminal is restricted until its next clean heartbeat.
+	if effTier == store.TierBYOA && level >= store.LevelConfidential && !g.dryRun() {
+		if pluginpol.DowngradesTier(pluginAction) {
+			ts.decision, ts.level = "block", level.String()
+			d := mergeDetail(detail, "reason", "plugin_policy")
+			d["plugin_action"] = pluginAction
+			g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
+				Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
+				Detail: d})
+			writeErr(w, http.StatusForbidden, "data_level_forbidden",
+				"this terminal is restricted by plugin policy ("+pluginAction+"); remove the violating plugin and wait for the next heartbeat")
+			return
+		}
 		if grant != nil {
 			// A valid grant waives the tier block for this one call;
 			// the call is still desensitized when the channel
@@ -951,7 +976,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// channels receive the original text.
 	mustRedact := trustRequiresRedaction(level, candidates[0].TrustTypeOrDefault())
 	var mapping map[string]string
-	if len(allFindings) > 0 && (g.redactForTier(tok.Tier) || mustRedact) && !g.dryRun() {
+	if len(allFindings) > 0 && (g.redactForTier(effTier) || mustRedact) && !g.dryRun() {
 		body, mapping = redactBody(body, det)
 		if decision == "allow" {
 			decision = "redact"

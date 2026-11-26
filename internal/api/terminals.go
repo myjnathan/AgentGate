@@ -63,7 +63,11 @@ func (a *API) terminalHeartbeat(w http.ResponseWriter, r *http.Request, u *store
 	now := time.Now()
 	var rec *terminal.Terminal
 	var prevDrift []string
+	var prevPluginAction string
+	var prevPluginReasons []string
+	var prevPluginUnknown []string
 	var pluginUnknown []string
+	var pluginActionChanged, pluginReasonsChanged, pluginUnknownChanged bool
 	isNew := false
 	a.st.WithLock(func(st *store.State) {
 		for _, t := range st.Terminals {
@@ -79,6 +83,9 @@ func (a *API) terminalHeartbeat(w http.ResponseWriter, r *http.Request, u *store
 			isNew = true
 		}
 		prevDrift = append([]string(nil), rec.DriftReasons...)
+		prevPluginAction = rec.PluginAction
+		prevPluginReasons = append([]string(nil), rec.PluginReasons...)
+		prevPluginUnknown = append([]string(nil), rec.PluginUnknown...)
 		rec.Username = u.Username
 		rec.Department = u.Department
 		rec.Tier = tier
@@ -101,7 +108,8 @@ func (a *API) terminalHeartbeat(w http.ResponseWriter, r *http.Request, u *store
 		// uses, so a terminal cannot pass at login and drift
 		// silently afterwards (or vice versa).
 		rec.DriftReasons = terminal.DriftReasons(hb.Report(), st.AttestationPolicies[agentType])
-		if reasons, unknown, _ := pluginpol.EvaluateReport(hb.Report(), st.PluginPolicies, u.Department, nil, now); len(reasons) > 0 || len(unknown) > 0 {
+		reasons, unknown, action := pluginpol.EvaluateReport(hb.Report(), st.PluginPolicies, u.Department, nil, now)
+		if len(reasons) > 0 || len(unknown) > 0 {
 			for _, r := range reasons {
 				if !containsString(rec.DriftReasons, r) {
 					rec.DriftReasons = append(rec.DriftReasons, r)
@@ -109,6 +117,40 @@ func (a *API) terminalHeartbeat(w http.ResponseWriter, r *http.Request, u *store
 			}
 			pluginUnknown = unknown
 		}
+		// F38 slice 2: the disposition in force for this terminal.
+		// Violations take the policy's disposition; unknown plugins
+		// alone (denylist, flagged but allowed) sit at warn; a
+		// clean report clears the disposition — remediation is
+		// automatic, no admin click needed.
+		newAction := ""
+		switch {
+		case len(reasons) > 0:
+			newAction = action
+		case len(unknown) > 0:
+			newAction = pluginpol.ActionWarn
+		}
+		pluginActionChanged = newAction != prevPluginAction
+		pluginReasonsChanged = strings.Join(reasons, ",") != strings.Join(prevPluginReasons, ",")
+		if pluginActionChanged {
+			rec.PluginAction = newAction
+			if newAction != "" {
+				rec.PluginReasons = append([]string(nil), reasons...)
+				at := now
+				rec.PluginActionAt = &at
+			} else {
+				rec.PluginReasons = nil
+				rec.PluginActionAt = nil
+			}
+		} else if newAction != "" {
+			// Same disposition, new reasons: keep the record
+			// current so the asset view never shows stale causes.
+			rec.PluginReasons = append([]string(nil), reasons...)
+		}
+		rec.PluginUnknown = append([]string(nil), unknown...)
+		if len(rec.PluginUnknown) == 0 {
+			rec.PluginUnknown = nil
+		}
+		pluginUnknownChanged = strings.Join(unknown, ",") != strings.Join(prevPluginUnknown, ",")
 		if hb.Offline != nil && hb.Offline.Events > 0 {
 			off := *hb.Offline
 			rec.LastOfflineAudit = &off
@@ -141,6 +183,33 @@ func (a *API) terminalHeartbeat(w http.ResponseWriter, r *http.Request, u *store
 		a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, AgentType: agentType,
 			Kind: "terminal", Action: "terminal_drift_cleared", Decision: "allow", Detail: detail})
 	}
+	// F38 slice 2: plugin disposition transitions are audited on
+	// their own — drift alone does not say which rung of the ladder
+	// is in force, and a terminal already drifted for F14 reasons
+	// would otherwise escalate silently. The action event is not
+	// alerted (the drift alert covers first entry); remediation is
+	// recorded so the auto-restore is visible in the audit trail.
+	if rec.PluginAction != "" && (pluginActionChanged || pluginReasonsChanged) {
+		d := map[string]string{"agent_type": agentType, "version": hb.Version,
+			"action": rec.PluginAction, "reasons": strings.Join(rec.PluginReasons, ",")}
+		a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, AgentType: agentType,
+			Kind: "terminal", Action: "terminal_plugin_action", Decision: "allow", Detail: d})
+	} else if rec.PluginAction == "" && prevPluginAction != "" {
+		d := map[string]string{"agent_type": agentType, "version": hb.Version,
+			"previous_action": prevPluginAction}
+		a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, AgentType: agentType,
+			Kind: "terminal", Action: "terminal_plugin_remediated", Decision: "allow", Detail: d})
+	}
+	// Unknown plugins alone do not drift, so they get their own
+	// alertable event — unless this heartbeat already fired a
+	// terminal_drift event, which carries the same names in its
+	// detail and already alerted.
+	if pluginUnknownChanged && len(pluginUnknown) > 0 && !(driftNow && !driftWas) {
+		d := map[string]string{"agent_type": agentType, "version": hb.Version,
+			"plugins": strings.Join(pluginUnknown, ",")}
+		a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, AgentType: agentType,
+			Kind: "terminal", Action: "terminal_plugin_unknown", Decision: "allow", Detail: d})
+	}
 	if hb.Offline != nil && hb.Offline.Events > 0 {
 		byCat := make([]string, 0, len(hb.Offline.ByCategory))
 		for k, v := range hb.Offline.ByCategory {
@@ -166,8 +235,8 @@ func (a *API) terminalHeartbeat(w http.ResponseWriter, r *http.Request, u *store
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"terminal_id": rec.ID, "status": rec.Status(now), "drift_reasons": drift,
-		"plugin_unknown": pluginUnknown,
-		"last_seen":      rec.LastSeen,
+		"plugin_unknown": pluginUnknown, "plugin_action": rec.PluginAction,
+		"last_seen": rec.LastSeen,
 	})
 }
 

@@ -64,6 +64,8 @@ func TestMatchesConstraint(t *testing.T) {
 		{"<1.0.0", "1.0.0", false},
 		{"!=1.0.0", "1.0.1", true},
 		{"!=1.0.0", "1.0.0", false},
+		{"==1.2.3", "1.2.3", true}, // double-equals exact (asset view pins versions this way)
+		{"==1.2.3", "1.2.4", false},
 		{"v1.2.3", "1.2.3", true}, // leading v tolerated
 	}
 	for _, c := range cases {
@@ -359,6 +361,161 @@ func TestValidate(t *testing.T) {
 	// The base allowlist passes.
 	if err := base().Validate(); err != nil {
 		t.Errorf("base policy: %v", err)
+	}
+}
+
+func TestClassify(t *testing.T) {
+	now := time.Now()
+	allow := allowPolicy("a",
+		pluginpol.PluginRule{ID: "good", VersionConstraint: ">=1.2.0"},
+		pluginpol.PluginRule{ID: "pinned", Hash: hashA()},
+	)
+	deny := denyPolicy("d", pluginpol.PluginRule{ID: "bad"})
+	classify := func(p *pluginpol.PluginPolicy, details ...attest.PluginEvidence) (string, string) {
+		eff := pluginpol.Resolve(polMap(p), "", nil, now)
+		if len(details) == 1 {
+			return pluginpol.Classify(details[0], eff)
+		}
+		return "", ""
+	}
+	// Allowlist: admitted triple is compliant; version failure is
+	// violating with the specific code; name-only admitted plugin
+	// is unverified, never failed.
+	if st, rs := classify(allow, ev("good", "1.5.0", "", "")); st != pluginpol.StatusCompliant || rs != "" {
+		t.Errorf("good 1.5.0: %s/%s, want compliant", st, rs)
+	}
+	if st, rs := classify(allow, ev("good", "1.0.0", "", "")); st != pluginpol.StatusViolating || rs != attest.ReasonPluginVersionMismatch {
+		t.Errorf("good 1.0.0: %s/%s, want violating/plugin_version_mismatch", st, rs)
+	}
+	if st, rs := classify(allow, ev("pinned", "9.9.9", hashB(), "")); st != pluginpol.StatusViolating || rs != attest.ReasonPluginHashMismatch {
+		t.Errorf("pinned bad hash: %s/%s, want violating/plugin_hash_mismatch", st, rs)
+	}
+	if st, _ := classify(allow, ev("good", "", "", "")); st != pluginpol.StatusUnverified {
+		t.Errorf("name-only good: %s, want unverified", st)
+	}
+	if st, rs := classify(allow, ev("stranger", "1.0.0", "", "")); st != pluginpol.StatusViolating || rs != attest.ReasonPluginNotAllowed {
+		t.Errorf("stranger: %s/%s, want violating/plugin_not_allowed", st, rs)
+	}
+	// Denylist: listed plugin violating; uncovered plugin unknown;
+	// covered-but-unproven (name-only, version-scoped rule) is
+	// unverified, not unknown.
+	if st, rs := classify(deny, ev("bad", "1.0.0", "", "")); st != pluginpol.StatusViolating || rs != attest.ReasonBlockedPlugin {
+		t.Errorf("bad: %s/%s, want violating/blocked_plugin", st, rs)
+	}
+	if st, _ := classify(deny, ev("newthing", "1.0.0", "", "")); st != pluginpol.StatusUnknown {
+		t.Errorf("newthing: %s, want unknown", st)
+	}
+	if st, _ := classify(deny, ev("newthing", "", "", "")); st != pluginpol.StatusUnknown {
+		t.Errorf("name-only newthing: %s, want unknown (denylist flags it before unverified)", st)
+	}
+	// No policy at all: a tripled plugin is compliant, a
+	// name-only one unverified.
+	if st, _ := pluginpol.Classify(ev("x", "1.0.0", "", ""), nil); st != pluginpol.StatusCompliant {
+		t.Errorf("no policy tripled: %s, want compliant", st)
+	}
+	if st, _ := pluginpol.Classify(ev("x", "", "", ""), nil); st != pluginpol.StatusUnverified {
+		t.Errorf("no policy name-only: %s, want unverified", st)
+	}
+}
+
+func TestDispositionPredicates(t *testing.T) {
+	if pluginpol.DowngradesTier(pluginpol.ActionObserve) || pluginpol.DowngradesTier(pluginpol.ActionWarn) {
+		t.Errorf("observe/warn must not downgrade the tier")
+	}
+	if !pluginpol.DowngradesTier(pluginpol.ActionDowngrade) || !pluginpol.DowngradesTier(pluginpol.ActionBlockSensitive) {
+		t.Errorf("downgrade/block_sensitive must downgrade the tier")
+	}
+	if pluginpol.BlocksKnowledge(pluginpol.ActionDowngrade) || pluginpol.BlocksKnowledge(pluginpol.ActionWarn) {
+		t.Errorf("only block_sensitive cuts knowledge tools")
+	}
+	if !pluginpol.BlocksKnowledge(pluginpol.ActionBlockSensitive) {
+		t.Errorf("block_sensitive must cut knowledge tools")
+	}
+}
+
+func TestAggregate(t *testing.T) {
+	now := time.Now()
+	policies := polMap(
+		allowPolicy("a", pluginpol.PluginRule{ID: "good", VersionConstraint: ">=1.2.0"}),
+	)
+	terms := []pluginpol.AssetTerminal{
+		{ID: "t1", Username: "alice", Department: "RD", AgentType: "dsh",
+			Details: []attest.PluginEvidence{ev("good", "1.5.0", "", ""), ev("bad-plugin", "1.0.0", "", "")}},
+		{ID: "t2", Username: "bob", Department: "RD", AgentType: "dsh",
+			Details: []attest.PluginEvidence{ev("good", "1.3.0", "", ""), ev("Good", "1.5.0", "", "")}},
+		{ID: "t3", Username: "carol", Department: "RD", AgentType: "codex",
+			Names: []string{"good"}},
+	}
+	rows := pluginpol.Aggregate(terms, policies, now)
+	if len(rows) != 2 {
+		t.Fatalf("want 2 rows, got %d: %+v", len(rows), rows)
+	}
+	// Worst status first: violating (bad-plugin), then unverified
+	// (good: two compliant installs plus one name-only install —
+	// the row rolls up to the worst install status).
+	if rows[0].ID != "bad-plugin" || rows[0].Status != pluginpol.StatusViolating {
+		t.Errorf("row 0: %+v, want bad-plugin/violating", rows[0])
+	}
+	if rows[1].ID != "good" || rows[1].Status != pluginpol.StatusUnverified {
+		t.Errorf("row 1: %+v, want good/unverified", rows[1])
+	}
+	// Case-insensitive grouping: "good" and "Good" are one plugin;
+	// t2's duplicate counts once, t3's name-only report counts as
+	// an install with no version.
+	good := rows[1]
+	if good.Installs != 3 || len(good.Versions) != 2 || good.Versions[0] != "1.3.0" || good.Versions[1] != "1.5.0" {
+		t.Errorf("good row: installs=%d versions=%v, want 3 and [1.3.0 1.5.0]", good.Installs, good.Versions)
+	}
+	if good.Terminals[2].Status != pluginpol.StatusUnverified || good.Terminals[2].Version != "" {
+		t.Errorf("good installs %+v, want carol unverified with no version", good.Terminals)
+	}
+	// Violating row carries the reason code.
+	if len(rows[0].Reasons) != 1 || rows[0].Reasons[0] != attest.ReasonPluginNotAllowed {
+		t.Errorf("bad-plugin reasons %v, want [plugin_not_allowed]", rows[0].Reasons)
+	}
+	// One terminal listing the same plugin twice counts once.
+	dupes := pluginpol.Aggregate([]pluginpol.AssetTerminal{
+		{ID: "t1", Username: "alice", Department: "RD", AgentType: "dsh",
+			Details: []attest.PluginEvidence{ev("good", "1.0.0", "", ""), ev("good", "1.0.0", "", "")}},
+	}, policies, now)
+	if len(dupes) != 1 || dupes[0].Installs != 1 {
+		t.Errorf("duplicate report: %+v, want 1 row with 1 install", dupes)
+	}
+	// Empty input aggregates to nothing (not nil, so the API
+	// renders []).
+	if rows := pluginpol.Aggregate(nil, policies, now); len(rows) != 0 {
+		t.Errorf("empty input: got %d rows", len(rows))
+	}
+}
+
+func TestAggregateDepartmentScope(t *testing.T) {
+	// A department allowlist narrows the global one: the same
+	// plugin is compliant globally but violating for RD.
+	now := time.Now()
+	globalAllow := allowPolicy("g",
+		pluginpol.PluginRule{ID: "a"},
+		pluginpol.PluginRule{ID: "b"},
+	)
+	deptAllow := &pluginpol.PluginPolicy{
+		ID: "d", Name: "d", Mode: pluginpol.ModeAllowlist,
+		Scope: pluginpol.Scope{Level: pluginpol.ScopeDepartment, Department: "RD"},
+		Rules: []pluginpol.PluginRule{{ID: "a"}}, Action: pluginpol.ActionDowngrade, Enabled: true,
+	}
+	terms := []pluginpol.AssetTerminal{
+		{ID: "t1", Username: "alice", Department: "RD", AgentType: "dsh",
+			Details: []attest.PluginEvidence{ev("b", "1.0.0", "", "")}},
+		{ID: "t2", Username: "bob", Department: "OPS", AgentType: "dsh",
+			Details: []attest.PluginEvidence{ev("b", "1.0.0", "", "")}},
+	}
+	rows := pluginpol.Aggregate(terms, polMap(globalAllow, deptAllow), now)
+	if len(rows) != 1 || rows[0].Status != pluginpol.StatusViolating {
+		t.Fatalf("rows %+v, want one violating row for b", rows)
+	}
+	if len(rows[0].Terminals) != 2 {
+		t.Fatalf("want 2 installs, got %d", len(rows[0].Terminals))
+	}
+	if rows[0].Terminals[0].Status != pluginpol.StatusViolating || rows[0].Terminals[1].Status != pluginpol.StatusCompliant {
+		t.Errorf("installs %+v, want alice violating / bob compliant", rows[0].Terminals)
 	}
 }
 

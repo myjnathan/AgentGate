@@ -50,11 +50,10 @@ const (
 	ScopeGroup      = "group"
 )
 
-// Dispositions, weakest to strongest. Slice 1 honours observe/warn
-// as record-only and downgrade/block_sensitive as downgrade; the
-// block_sensitive enforcement (cut confidential channels and
-// sensitive capabilities) lands in slice 2, where it is tested
-// per档.
+// Dispositions, weakest to strongest. observe/warn record only
+// (warn also alerts); downgrade drops the terminal's authorization
+// tier to BYOA live, and block_sensitive adds the knowledge cut on
+// top — see DowngradesTier / BlocksKnowledge (slice 2).
 const (
 	ActionObserve        = "observe"
 	ActionWarn           = "warn"
@@ -495,6 +494,249 @@ func EvaluateReport(report *attest.Report, policies map[string]*PluginPolicy, de
 	return reasons, unknown, eff.Action
 }
 
+// Disposition predicates (slice 2): the ladder is observe → warn →
+// downgrade → block_sensitive. observe/warn only record (warn also
+// alerts, via the terminal_drift / terminal_plugin_unknown audit
+// events); downgrade drops the terminal's authorization tier to BYOA
+// live (gateway + MCP level checks); block_sensitive adds the
+// knowledge cut on top — company-knowledge tools are denied at
+// every data level until remediation.
+func DowngradesTier(action string) bool {
+	return action == ActionDowngrade || action == ActionBlockSensitive
+}
+
+// BlocksKnowledge reports whether the disposition cuts sensitive
+// capabilities entirely: only block_sensitive.
+func BlocksKnowledge(action string) bool {
+	return action == ActionBlockSensitive
+}
+
+// Asset statuses, worst first (used both for sorting and for the
+// per-plugin worst-status rollup).
+const (
+	StatusViolating  = "violating"
+	StatusUnknown    = "unknown"
+	StatusUnverified = "unverified"
+	StatusCompliant  = "compliant"
+)
+
+func statusRank(s string) int {
+	switch s {
+	case StatusViolating:
+		return 0
+	case StatusUnknown:
+		return 1
+	case StatusUnverified:
+		return 2
+	case StatusCompliant:
+		return 3
+	}
+	return 4
+}
+
+// Classify appraises one reported plugin against the resolved
+// policy and returns its asset status plus the verdict reason code
+// ("" when the status needs none):
+//
+//   - violating: the plugin matches a deny rule, or an allowlist
+//     does not admit it (specific mismatch code when the rule
+//     constrains a field the report contradicts, plugin_not_allowed
+//     otherwise);
+//   - unknown: denylist mode, no rule covers the plugin at all, and
+//     the policy wants unknowns flagged (allowed by default, but
+//     surfaced so a rename cannot hide);
+//   - unverified: name-only evidence (no version, no hash) that is
+//     not violating — it cannot prove a version/hash failure, so it
+//     is flagged rather than failed;
+//   - compliant: everything else.
+func Classify(ev attest.PluginEvidence, eff *Effective) (status, reason string) {
+	if eff != nil {
+		// A deny rule always wins.
+		for _, rule := range eff.DenyRules {
+			if kind, _ := matchRule(rule, ev); kind == matchYes {
+				return StatusViolating, attest.ReasonBlockedPlugin
+			}
+		}
+		if eff.Mode == ModeAllowlist {
+			allowed := true
+			var failReason string
+			for _, set := range eff.AllowSets {
+				setOK := false
+				var setFail string
+				for _, rule := range set {
+					kind, r := matchRule(rule, ev)
+					if kind == matchYes || kind == matchPartial {
+						setOK = true
+						break
+					}
+					if r != "" && setFail == "" {
+						setFail = r
+					}
+				}
+				if !setOK {
+					allowed = false
+					failReason = setFail
+					break
+				}
+			}
+			if !allowed {
+				if failReason == "" {
+					failReason = attest.ReasonPluginNotAllowed
+				}
+				return StatusViolating, failReason
+			}
+		} else {
+			// Denylist: flag plugins no rule covers at all.
+			covered := false
+			for _, rule := range eff.DenyRules {
+				if kind, _ := matchRule(rule, ev); kind != matchNo {
+					covered = true
+					break
+				}
+			}
+			if !covered && eff.WarnUnknown {
+				return StatusUnknown, ""
+			}
+		}
+	}
+	if ev.Version == "" && ev.Hash == "" {
+		return StatusUnverified, ""
+	}
+	return StatusCompliant, ""
+}
+
+// AssetTerminal is one terminal's plugin evidence for aggregation:
+// the triple details when the sidecar reports them, the name-only
+// list otherwise.
+type AssetTerminal struct {
+	ID         string
+	Username   string
+	Department string
+	AgentType  string
+	Details    []attest.PluginEvidence
+	Names      []string
+}
+
+// AssetInstall is one terminal's install of one plugin.
+type AssetInstall struct {
+	TerminalID string `json:"terminal_id"`
+	Username   string `json:"username"`
+	Department string `json:"department"`
+	AgentType  string `json:"agent_type"`
+	Version    string `json:"version,omitempty"`
+	Hash       string `json:"hash,omitempty"`
+	Source     string `json:"source,omitempty"`
+	Status     string `json:"status"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+// AssetRow is one plugin aggregated across terminals: install count,
+// distinct versions, the worst status across installs, and the
+// per-terminal installs behind the numbers (so the counts in the
+// asset view always reconcile with the heartbeat evidence).
+type AssetRow struct {
+	ID        string         `json:"id"`
+	Installs  int            `json:"installs"`
+	Versions  []string       `json:"versions"`
+	Status    string         `json:"status"`
+	Reasons   []string       `json:"reasons,omitempty"`
+	Terminals []AssetInstall `json:"terminals"`
+}
+
+// Aggregate rolls terminal plugin evidence up into per-plugin rows.
+// Each terminal's plugins are classified against the policies that
+// apply to its department (resolved once per department); a plugin
+// with no evidence of a version or hash is unverified, never failed.
+// Rows sort by worst status, then install count (descending), then
+// ID; installs within a row sort by username, then agent type.
+func Aggregate(terminals []AssetTerminal, policies map[string]*PluginPolicy, now time.Time) []AssetRow {
+	byDept := map[string]*Effective{}
+	effFor := func(department string) *Effective {
+		if eff, ok := byDept[department]; ok {
+			return eff
+		}
+		eff := Resolve(policies, department, nil, now)
+		byDept[department] = eff
+		return eff
+	}
+	rows := map[string]*AssetRow{}
+	for _, t := range terminals {
+		eff := effFor(t.Department)
+		evidence := t.Details
+		if len(evidence) == 0 {
+			for _, name := range t.Names {
+				evidence = append(evidence, attest.PluginEvidence{ID: name})
+			}
+		}
+		// Dedupe one terminal's report by ID (first wins), as in
+		// Evaluate: a client that lists the same plugin twice
+		// must not double-count.
+		seenID := map[string]bool{}
+		for _, ev := range evidence {
+			key := strings.ToLower(strings.TrimSpace(ev.ID))
+			if key == "" || seenID[key] {
+				continue
+			}
+			seenID[key] = true
+			status, reason := Classify(ev, eff)
+			row, ok := rows[key]
+			if !ok {
+				row = &AssetRow{ID: ev.ID}
+				rows[key] = row
+			}
+			row.Terminals = append(row.Terminals, AssetInstall{
+				TerminalID: t.ID, Username: t.Username, Department: t.Department,
+				AgentType: t.AgentType, Version: ev.Version, Hash: ev.Hash,
+				Source: ev.Source, Status: status, Reason: reason,
+			})
+		}
+	}
+	out := make([]AssetRow, 0, len(rows))
+	for _, row := range rows {
+		sort.Slice(row.Terminals, func(i, j int) bool {
+			if row.Terminals[i].Username != row.Terminals[j].Username {
+				return row.Terminals[i].Username < row.Terminals[j].Username
+			}
+			return row.Terminals[i].AgentType < row.Terminals[j].AgentType
+		})
+		row.Installs = len(row.Terminals)
+		versions := map[string]bool{}
+		reasons := map[string]bool{}
+		worst := StatusCompliant
+		for _, inst := range row.Terminals {
+			if inst.Version != "" {
+				versions[inst.Version] = true
+			}
+			if inst.Reason != "" {
+				reasons[inst.Reason] = true
+			}
+			if statusRank(inst.Status) < statusRank(worst) {
+				worst = inst.Status
+			}
+		}
+		for v := range versions {
+			row.Versions = append(row.Versions, v)
+		}
+		sort.Strings(row.Versions)
+		for r := range reasons {
+			row.Reasons = append(row.Reasons, r)
+		}
+		sort.Strings(row.Reasons)
+		row.Status = worst
+		out = append(out, *row)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if statusRank(out[i].Status) != statusRank(out[j].Status) {
+			return statusRank(out[i].Status) < statusRank(out[j].Status)
+		}
+		if out[i].Installs != out[j].Installs {
+			return out[i].Installs > out[j].Installs
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
 // parseConstraint splits a version constraint into operator and
 // version. "" means "any version" (op "", ok); a bare version is
 // an exact match.
@@ -503,7 +745,7 @@ func parseConstraint(c string) (op, ver string, ok bool) {
 	if c == "" {
 		return "", "", true
 	}
-	for _, p := range []string{">=", "<=", "!=", ">", "<", "=", "=="} {
+	for _, p := range []string{">=", "<=", "!=", "==", ">", "<", "="} {
 		if strings.HasPrefix(c, p) {
 			ver = strings.TrimSpace(strings.TrimPrefix(c, p))
 			if ver == "" || !attest.ValidVersion(ver) {

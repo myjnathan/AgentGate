@@ -952,6 +952,25 @@ func (s *Store) LastSaveError() error {
 	return s.lastSaveErr
 }
 
+// PluginActionFor returns the F38 plugin disposition currently in
+// force for the terminal of (userID, agentType) — "" when the
+// terminal has none (no record, or a clean latest heartbeat). The
+// gateway and MCP server call it on every request, so a disposition
+// bites (and lifts on remediation) without waiting for the next
+// login.
+func (s *Store) PluginActionFor(userID, agentType string) string {
+	var action string
+	s.Read(func(st *State) {
+		for _, t := range st.Terminals {
+			if t.UserID == userID && t.AgentType == agentType {
+				action = t.PluginAction
+				break
+			}
+		}
+	})
+	return action
+}
+
 // WithLock runs fn with exclusive access to the state.
 func (s *Store) WithLock(fn func(*State)) {
 	s.mu.Lock()

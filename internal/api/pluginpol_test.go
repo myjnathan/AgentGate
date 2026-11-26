@@ -153,3 +153,132 @@ func TestPluginPoliciesCRUD(t *testing.T) {
 		t.Fatalf("policies after delete = %d, want 0", len(policies))
 	}
 }
+
+// TestPluginAssets covers the F38 slice 2 asset view: the rows
+// aggregate the latest heartbeat evidence, the counts reconcile
+// with what the terminals reported, and the filters narrow them.
+func TestPluginAssets(t *testing.T) {
+	srv, _, adminSess, empSess := setupTokensAPI(t)
+
+	call := func(method, path, auth string, body any) (int, map[string]any) {
+		t.Helper()
+		var buf *bytes.Buffer
+		if body != nil {
+			b, _ := json.Marshal(body)
+			buf = bytes.NewBuffer(b)
+		} else {
+			buf = bytes.NewBuffer(nil)
+		}
+		req, _ := http.NewRequest(method, srv.URL+path, buf)
+		req.Header.Set("Content-Type", "application/json")
+		if auth != "" {
+			req.Header.Set("Authorization", "Bearer "+auth)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+	mintToken := func(agent, tier string) string {
+		t.Helper()
+		_, start := call("POST", "/api/setup/device/start", "", map[string]any{"agent_type": agent, "tier": tier})
+		code, _ := start["code"].(string)
+		secret, _ := start["secret"].(string)
+		if code == "" || secret == "" {
+			t.Fatalf("device start failed: %v", start)
+		}
+		if s, _ := call("POST", "/api/device/approve", empSess, map[string]any{"code": code, "device_name": "test"}); s != 200 {
+			t.Fatalf("device approve: got %d", s)
+		}
+		_, poll := call("POST", "/api/setup/device/poll", "", map[string]any{"code": code, "secret": secret})
+		tok, _ := poll["token"].(string)
+		if tok == "" {
+			t.Fatalf("device poll returned no token: %v", poll)
+		}
+		return tok
+	}
+
+	code, created := call("POST", "/api/plugin/policies", adminSess,
+		map[string]any{"name": "allow", "mode": "allowlist",
+			"scope": map[string]any{"level": "global"}, "action": "downgrade", "enabled": true,
+			"rules": []any{map[string]any{"id": "good-plugin"}}})
+	if code != 201 {
+		t.Fatalf("create allowlist: got %d (%v)", code, created)
+	}
+
+	tok := mintToken("dsh", "byoa")
+	body := map[string]any{"version": "0.1.0",
+		"config_hash":    "abababababababababababababababababababababababababababababababab",
+		"plugins":        []string{},
+		"plugin_details": []any{map[string]any{"id": "good-plugin", "version": "1.5.0"}, map[string]any{"id": "bad-plugin", "version": "1.0.0"}},
+		"guard_applied":  true, "os": "linux"}
+	if code, out := call("POST", "/api/terminals/heartbeat", tok, body); code != 200 {
+		t.Fatalf("heartbeat: got %d (%v)", code, out)
+	}
+
+	assets := func(query string) (int, map[string]any) {
+		return call("GET", "/api/plugin/assets"+query, adminSess, nil)
+	}
+	findRow := func(out map[string]any, id string) map[string]any {
+		rows, _ := out["plugins"].([]any)
+		for _, r := range rows {
+			m, _ := r.(map[string]any)
+			if m["id"] == id {
+				return m
+			}
+		}
+		return nil
+	}
+	code, out := assets("")
+	if code != 200 {
+		t.Fatalf("assets: got %d (%v)", code, out)
+	}
+	if total, _ := out["total"].(float64); total != 2 {
+		t.Fatalf("total %v, want 2: %v", total, out)
+	}
+	bad := findRow(out, "bad-plugin")
+	if bad == nil || bad["status"] != "violating" || bad["installs"] != float64(1) {
+		t.Errorf("bad-plugin row %v, want violating with 1 install", bad)
+	}
+	good := findRow(out, "good-plugin")
+	if good == nil || good["status"] != "compliant" || good["installs"] != float64(1) {
+		t.Errorf("good-plugin row %v, want compliant with 1 install", good)
+	}
+	// The violating row's install names the terminal that
+	// reported it, so the count reconciles with the heartbeat.
+	installs, _ := bad["terminals"].([]any)
+	if len(installs) != 1 {
+		t.Fatalf("bad-plugin installs %v, want 1", installs)
+	}
+	inst, _ := installs[0].(map[string]any)
+	if inst["username"] != "lixiaofeng" || inst["version"] != "1.0.0" || inst["status"] != "violating" {
+		t.Errorf("bad-plugin install %v, want lixiaofeng/1.0.0/violating", inst)
+	}
+
+	code, out = assets("?status=violating")
+	if code != 200 || out["total"] != float64(1) || findRow(out, "good-plugin") != nil {
+		t.Errorf("status filter: got %d %v, want only bad-plugin", code, out)
+	}
+	code, out = assets("?q=GOOD")
+	if code != 200 || out["total"] != float64(1) || findRow(out, "good-plugin") == nil {
+		t.Errorf("q filter (case-insensitive): got %d %v, want only good-plugin", code, out)
+	}
+	code, out = assets("?department=研发部")
+	if code != 200 || out["total"] != float64(2) {
+		t.Errorf("department filter: got %d %v, want 2", code, out)
+	}
+	code, out = assets("?department=注册部")
+	if code != 200 || out["total"] != float64(0) {
+		t.Errorf("other department filter: got %d %v, want 0", code, out)
+	}
+	if code, _ := assets("?status=bogus"); code != 400 {
+		t.Errorf("bad status filter: got %d, want 400", code)
+	}
+	if code, _ := call("GET", "/api/plugin/assets", empSess, nil); code != 403 {
+		t.Errorf("employee assets: got %d, want 403", code)
+	}
+}

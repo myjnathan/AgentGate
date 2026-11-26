@@ -359,3 +359,170 @@ func TestTerminalHeartbeatPluginDrift(t *testing.T) {
 		t.Errorf("plugin_unknown %v, want [newthing]", unknown)
 	}
 }
+
+// TestTerminalHeartbeatPluginAction covers the F38 slice 2
+// disposition ladder on heartbeats: a violating heartbeat sets the
+// terminal's plugin action (visible in the receipt and the record),
+// a clean heartbeat clears it (auto-remediation, audited), and
+// unknown plugins alone sit at warn with their own audit event.
+func TestTerminalHeartbeatPluginAction(t *testing.T) {
+	srv, _, adminSess, empSess := setupTokensAPI(t)
+
+	call := func(method, path, auth string, body any) (int, map[string]any) {
+		t.Helper()
+		var buf *bytes.Buffer
+		if body != nil {
+			b, _ := json.Marshal(body)
+			buf = bytes.NewBuffer(b)
+		} else {
+			buf = bytes.NewBuffer(nil)
+		}
+		req, _ := http.NewRequest(method, srv.URL+path, buf)
+		req.Header.Set("Content-Type", "application/json")
+		if auth != "" {
+			req.Header.Set("Authorization", "Bearer "+auth)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+	mintToken := func(agent, tier string) string {
+		t.Helper()
+		_, start := call("POST", "/api/setup/device/start", "", map[string]any{"agent_type": agent, "tier": tier})
+		code, _ := start["code"].(string)
+		secret, _ := start["secret"].(string)
+		if code == "" || secret == "" {
+			t.Fatalf("device start failed: %v", start)
+		}
+		if s, _ := call("POST", "/api/device/approve", empSess, map[string]any{"code": code, "device_name": "test"}); s != 200 {
+			t.Fatalf("device approve: got %d", s)
+		}
+		_, poll := call("POST", "/api/setup/device/poll", "", map[string]any{"code": code, "secret": secret})
+		tok, _ := poll["token"].(string)
+		if tok == "" {
+			t.Fatalf("device poll returned no token: %v", poll)
+		}
+		return tok
+	}
+	hb := func(tok string, details []any) (int, map[string]any) {
+		body := map[string]any{"version": "0.1.0",
+			"config_hash":    "abababababababababababababababababababababababababababababababab",
+			"plugins":        []string{},
+			"plugin_details": details,
+			"guard_applied":  true, "os": "linux"}
+		return call("POST", "/api/terminals/heartbeat", tok, body)
+	}
+	auditActions := func() map[string]bool {
+		code, out := call("GET", "/api/audit?kind=terminal", adminSess, nil)
+		if code != 200 {
+			t.Fatalf("audit query: got %d", code)
+		}
+		events, _ := out["events"].([]any)
+		seen := map[string]bool{}
+		for _, e := range events {
+			m, _ := e.(map[string]any)
+			seen[m["action"].(string)] = true
+		}
+		return seen
+	}
+	terminal := func() map[string]any {
+		code, out := call("GET", "/api/terminals", adminSess, nil)
+		if code != 200 {
+			t.Fatalf("list terminals: got %d", code)
+		}
+		list, _ := out["terminals"].([]any)
+		if len(list) != 1 {
+			t.Fatalf("want 1 terminal, got %d", len(list))
+		}
+		rec, _ := list[0].(map[string]any)
+		return rec
+	}
+
+	code, created := call("POST", "/api/plugin/policies", adminSess,
+		map[string]any{"name": "allow", "mode": "allowlist",
+			"scope": map[string]any{"level": "global"}, "action": "downgrade", "enabled": true,
+			"rules": []any{map[string]any{"id": "good-plugin"}}})
+	if code != 201 {
+		t.Fatalf("create allowlist: got %d (%v)", code, created)
+	}
+	pol, _ := created["policy"].(map[string]any)
+	allowID, _ := pol["id"].(string)
+
+	tok := mintToken("dsh", "byoa")
+	// Violating heartbeat: disposition downgrade, in the receipt
+	// and on the record, with the action audited.
+	code, out := hb(tok, []any{map[string]any{"id": "bad-plugin", "version": "1.0.0"}})
+	if code != 200 {
+		t.Fatalf("heartbeat: got %d (%v)", code, out)
+	}
+	if out["plugin_action"] != "downgrade" {
+		t.Errorf("plugin_action %v, want downgrade", out["plugin_action"])
+	}
+	rec := terminal()
+	if rec["plugin_action"] != "downgrade" {
+		t.Errorf("record plugin_action %v, want downgrade", rec["plugin_action"])
+	}
+	reasons, _ := rec["plugin_reasons"].([]any)
+	if len(reasons) != 1 || reasons[0] != "plugin_not_allowed" {
+		t.Errorf("record plugin_reasons %v, want [plugin_not_allowed]", reasons)
+	}
+	if rec["plugin_action_at"] == nil {
+		t.Errorf("record plugin_action_at missing")
+	}
+	if !auditActions()["terminal_plugin_action"] {
+		t.Errorf("want terminal_plugin_action audited")
+	}
+	// Same disposition, same reasons: no new event is needed, but
+	// the state stays put.
+	if code, out := hb(tok, []any{map[string]any{"id": "bad-plugin", "version": "1.0.0"}}); code != 200 || out["plugin_action"] != "downgrade" {
+		t.Fatalf("repeat heartbeat: got %d (%v)", code, out)
+	}
+	// Clean heartbeat: disposition clears on its own (remediation)
+	// and the restore is audited.
+	code, out = hb(tok, []any{map[string]any{"id": "good-plugin", "version": "1.0.0"}})
+	if code != 200 {
+		t.Fatalf("heartbeat: got %d (%v)", code, out)
+	}
+	if out["plugin_action"] != "" {
+		t.Errorf("plugin_action %v, want empty after fix", out["plugin_action"])
+	}
+	if rec := terminal(); rec["plugin_action"] != nil && rec["plugin_action"] != "" || rec["plugin_action_at"] != nil {
+		t.Errorf("record after fix %v, want action cleared", rec["plugin_action"])
+	}
+	if !auditActions()["terminal_plugin_remediated"] {
+		t.Errorf("want terminal_plugin_remediated audited")
+	}
+	// Denylist: an unknown plugin alone sits at warn (allowed but
+	// flagged) and gets its own audit event.
+	code, _ = call("PUT", "/api/plugin/policies/"+allowID, adminSess,
+		map[string]any{"name": "deny", "mode": "denylist",
+			"scope": map[string]any{"level": "global"}, "action": "warn",
+			"warn_unknown": true, "enabled": true,
+			"rules": []any{map[string]any{"id": "bad-plugin"}}})
+	if code != 200 {
+		t.Fatalf("update policy: got %d", code)
+	}
+	code, out = hb(tok, []any{map[string]any{"id": "newthing", "version": "1.0.0"}})
+	if code != 200 {
+		t.Fatalf("heartbeat: got %d (%v)", code, out)
+	}
+	if out["plugin_action"] != "warn" {
+		t.Errorf("plugin_action %v, want warn for unknown plugin", out["plugin_action"])
+	}
+	rec = terminal()
+	if rec["plugin_action"] != "warn" {
+		t.Errorf("record plugin_action %v, want warn", rec["plugin_action"])
+	}
+	unknown, _ := rec["plugin_unknown"].([]any)
+	if len(unknown) != 1 || unknown[0] != "newthing" {
+		t.Errorf("record plugin_unknown %v, want [newthing]", unknown)
+	}
+	if !auditActions()["terminal_plugin_unknown"] {
+		t.Errorf("want terminal_plugin_unknown audited")
+	}
+}

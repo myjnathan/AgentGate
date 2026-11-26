@@ -92,6 +92,9 @@ func FromEvent(ev audit.Event) (Alert, bool) {
 	case ev.Kind == "terminal" && ev.Action == "terminal_drift":
 		a.Severity = "warning"
 		a.Title = "终端配置漂移（版本/配置/插件不符合证明策略）"
+	case ev.Kind == "terminal" && ev.Action == "terminal_plugin_unknown":
+		a.Severity = "warning"
+		a.Title = "终端出现未登记的插件（黑名单模式，未知插件告警）"
 	case ev.Kind == "exception" && ev.Action == "exception_requested":
 		a.Severity = "warning"
 		a.Title = "收到高密级调用例外申请"

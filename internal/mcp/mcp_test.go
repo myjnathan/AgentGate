@@ -22,6 +22,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/seed"
 	"github.com/myjnathan/agentgate/internal/semidx"
 	"github.com/myjnathan/agentgate/internal/store"
+	"github.com/myjnathan/agentgate/internal/terminal"
 )
 
 type testEnv struct {
@@ -1040,5 +1041,74 @@ func TestKBSearchMergesFolderHits(t *testing.T) {
 	text = resultText(t, e.callTool(t, e.byoaTok, "kb_search", map[string]any{"query": "报销"}))
 	if !strings.Contains(text, "kb_reimburse") || !strings.Contains(text, `"source":"kb"`) {
 		t.Fatalf("kb_search seeded hit missing: %s", text)
+	}
+}
+
+// TestPluginBlockSensitiveKnowledgeCut covers the F38 slice 2
+// ladder at the MCP server: block_sensitive denies the knowledge
+// tools at every data level (and hides them from tools/list),
+// downgrade only caps the data level (effective BYOA), and clearing
+// the disposition restores full managed access.
+func TestPluginBlockSensitiveKnowledgeCut(t *testing.T) {
+	e := setup(t)
+	// The managed token belongs to chenjing (workbuddy). Give her
+	// terminal a disposition, as a violating heartbeat would.
+	var chenjing *store.User
+	e.st.Read(func(s *store.State) {
+		for _, u := range s.Users {
+			if u.Username == "chenjing" {
+				cp := *u
+				chenjing = &cp
+			}
+		}
+	})
+	setAction := func(action string) {
+		e.st.WithLock(func(s *store.State) {
+			s.Terminals["term_test"] = &terminal.Terminal{ID: "term_test", UserID: chenjing.ID,
+				Username: "chenjing", Department: chenjing.Department, AgentType: "workbuddy",
+				PluginAction: action, PluginReasons: []string{"plugin_not_allowed"}}
+		})
+	}
+	// Baseline: the managed token reads internal knowledge.
+	text := resultText(t, e.callTool(t, e.mgdTok, "kb_search", map[string]any{"query": "报销"}))
+	if !strings.Contains(text, "kb_reimburse") {
+		t.Fatalf("baseline kb_search: %s", text)
+	}
+	// block_sensitive: knowledge tools are denied at every level
+	// and hidden from tools/list.
+	setAction("block_sensitive")
+	r := e.callTool(t, e.mgdTok, "kb_search", map[string]any{"query": "报销"})
+	if r.Error == nil || r.Error.Code != -32004 {
+		t.Fatalf("block_sensitive kb_search: %+v, want -32004", r.Error)
+	}
+	names := e.listToolNames(t, e.mgdTok)
+	for _, n := range names {
+		if n == "kb_search" || n == "kb_catalog" || n == "kb_get" {
+			t.Fatalf("block_sensitive tools/list must hide knowledge tools: %v", names)
+		}
+	}
+	// A non-knowledge tool still works; whoami reports the
+	// effective BYOA tier.
+	text = resultText(t, e.callTool(t, e.mgdTok, "whoami", map[string]any{}))
+	if !strings.Contains(text, `"tier":"byoa"`) {
+		t.Fatalf("whoami under block_sensitive: %s, want effective tier byoa", text)
+	}
+	// downgrade: internal knowledge still readable (effective BYOA
+	// caps the level, it does not cut knowledge), confidential
+	// knowledge is not.
+	setAction("downgrade")
+	text = resultText(t, e.callTool(t, e.mgdTok, "kb_search", map[string]any{"query": "报销"}))
+	if !strings.Contains(text, "kb_reimburse") {
+		t.Fatalf("downgrade kb_search internal: %s", text)
+	}
+	text = resultText(t, e.callTool(t, e.mgdTok, "kb_search", map[string]any{"query": "机密资料"}))
+	if strings.Contains(text, "机密资料") {
+		t.Fatalf("downgrade kb_search must not leak confidential folder doc: %s", text)
+	}
+	// Remediation restores full managed access.
+	setAction("")
+	text = resultText(t, e.callTool(t, e.mgdTok, "kb_search", map[string]any{"query": "机密资料"}))
+	if !strings.Contains(text, "机密资料") {
+		t.Fatalf("remediated kb_search: %s, want confidential folder doc", text)
 	}
 }
