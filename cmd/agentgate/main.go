@@ -448,6 +448,7 @@ func main() {
 	}
 	rest.SetCache(gw.Cache())
 	rest.SetSemReviewStats(gw.SemReviewStats)
+	rest.SetInjectionStats(gw.InjectionStats)
 	rest.SetAutoRouteStats(gw.AutoRouteStats)
 	rest.SetAlertDispatcher(dispatcher)
 	// Terminal inventory (backlog F23): the sidecar policy snapshot

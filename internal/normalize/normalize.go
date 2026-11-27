@@ -42,6 +42,17 @@ const (
 	ForKeywords Mode = iota
 	// ForPatterns keeps punctuation; see the package doc.
 	ForPatterns
+	// ForTokens keeps word boundaries for phrase matching: letters
+	// and digits are kept (fullwidth folded, case folded), every
+	// other rune — punctuation, whitespace, invisible characters —
+	// becomes a single-space separator (runs collapse to one).
+	// Unlike ForKeywords, "ignore all previous instructions"
+	// stays four words instead of one glued token, so an English
+	// phrase rule can match word by word; CJK text is unchanged
+	// (no spaces are inserted between CJK runes). Added for the
+	// F39 prompt-injection rule layer, which needs word-level
+	// English matching on top of the same folding rules.
+	ForTokens
 )
 
 // Normalized is a normalized view of a source string plus the map back
@@ -69,11 +80,17 @@ func Patterns(text string) Normalized {
 	return Normalize(text, ForPatterns)
 }
 
+// Tokens returns the word-boundary view of text.
+func Tokens(text string) Normalized {
+	return Normalize(text, ForTokens)
+}
+
 // Normalize canonicalizes text under the given mode.
 func Normalize(text string, mode Mode) Normalized {
 	var b strings.Builder
 	b.Grow(len(text))
 	var orig, ends []int
+	lastSpace := false
 	for i := 0; i < len(text); {
 		r, size := utf8.DecodeRuneInString(text[i:])
 		// Fullwidth ASCII (U+FF01–U+FF5E) folds to halfwidth by a
@@ -87,6 +104,18 @@ func Normalize(text string, mode Mode) Normalized {
 		// Case folding (single-rune, so the 1:1 map below holds).
 		r = unicode.ToLower(r)
 		if isInvisible(r) {
+			// In ForTokens an invisible character is a separator
+			// (like a space), not nothing: "Ignore\u200ball"
+			// must stay two words, or the word-boundary view
+			// would glue the evasion back together.
+			if mode == ForTokens {
+				if len(orig) > 0 && !lastSpace {
+					orig = append(orig, i)
+					ends = append(ends, i+size)
+					b.WriteRune(' ')
+					lastSpace = true
+				}
+			}
 			i += size
 			continue
 		}
@@ -101,13 +130,33 @@ func Normalize(text string, mode Mode) Normalized {
 				i += size
 				continue
 			}
+		case ForTokens:
+			if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+				// Separator: one space per run, never leading.
+				if len(orig) > 0 && !lastSpace {
+					orig = append(orig, i)
+					ends = append(ends, i+size)
+					b.WriteRune(' ')
+					lastSpace = true
+				}
+				i += size
+				continue
+			}
 		}
 		orig = append(orig, i)
 		ends = append(ends, i+size)
 		b.WriteRune(r)
+		lastSpace = false
 		i += size
 	}
-	return Normalized{Text: b.String(), Orig: orig, Ends: ends}
+	out := b.String()
+	if mode == ForTokens && lastSpace && len(out) > 0 {
+		// Drop the trailing separator space (and its map entry).
+		out = out[:len(out)-1]
+		orig = orig[:len(orig)-1]
+		ends = ends[:len(ends)-1]
+	}
+	return Normalized{Text: out, Orig: orig, Ends: ends}
 }
 
 // isInvisible reports whether r is a zero-width or otherwise invisible

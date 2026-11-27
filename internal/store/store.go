@@ -575,6 +575,10 @@ type State struct {
 	// the gateway falls back to the built-in defaults
 	// (semreview.DefaultConfig) instead of an empty library.
 	SemanticReview *SemanticReviewConfig `json:"semantic_review,omitempty"`
+	// Injection holds the prompt-injection policy (backlog F39).
+	// Nil means never configured: the gateway falls back to the
+	// built-in defaults (inject.DefaultConfig).
+	Injection *InjectionConfig `json:"injection,omitempty"`
 	// AutoRoute holds the smart-routing policy and complexity
 	// sample library (backlog F30). Nil means never configured:
 	// the gateway falls back to the built-in defaults

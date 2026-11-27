@@ -651,7 +651,7 @@
     <!-- semantic review (F28) -->
     <section class="page" id="page-semreview">
       <div class="pageHead"><div><h1 data-i18n="semReviewTitle">语义复核</h1><p class="desc" data-i18n="semReviewDesc">规则 DLP 之上的第二层语义研判：本地样本匹配识别越狱 / 诱导 / 伪装 / 拆分外发等风险意图；可选的深层调用自托管审核小模型（Qwen3Guard 式）。绝密内容永不送审，复核先脱敏再送审。</p></div>
-      <div class="pageActions"><button class="btn ghost" onclick="loadSemReview()" data-i18n="refresh">刷新</button></div></div>
+      <div class="pageActions"><button class="btn ghost" onclick="loadSemReview();loadInjection()" data-i18n="refresh">刷新</button></div></div>
       <div class="card"><h3 data-i18n="semReviewPolicy">复核策略</h3>
         <div class="row" style="margin-bottom:10px"><span id="semReviewStats" class="muted"></span></div>
         <div class="formGrid">
@@ -665,6 +665,15 @@
         </div>
         <div class="row"><button class="btn" onclick="saveSemReview()" data-i18n="save">保存</button><span id="srMsg" class="msg"></span></div>
         <p class="hint" data-i18n="semReviewHint">样本匹配在本地完成，不调模型、不出站；判定（命中样本、相似度、判定来源）写入审计。深层复核走配置渠道的分级路由，绝密内容永不送审；超时与深层故障默认保守处置：机密以上拦截、低密级告警放行。关闭本层后网关行为与此前完全一致。</p>
+      </div>
+      <div class="card"><h3 data-i18n="injPolicy">注入防护策略</h3>
+        <div class="row" style="margin-bottom:10px"><span id="injStats" class="muted"></span></div>
+        <div class="formGrid">
+          <div><label class="f" data-i18n="injEnabled">启用注入防护</label><select id="injEnabled"><option value="true" data-i18n="orgEnabled">启用</option><option value="false" data-i18n="optDisable">停用</option></select></div>
+          <div><label class="f" data-i18n="injMode">命中处置</label><select id="injMode"><option value="observe" data-i18n="injObserve">仅记录</option><option value="alert" data-i18n="semAlert">告警放行</option><option value="block" data-i18n="semBlock">拦截</option></select></div>
+        </div>
+        <div class="row"><button class="btn" onclick="saveInjection()" data-i18n="save">保存</button><span id="injMsg" class="msg"></span></div>
+        <p class="hint" data-i18n="injHint">按消息来源打标（用户直输 / 工具返回 / 模型回显），非用户内容默认只作数据、不作指令；规则路识别改写指令、越狱、窃取系统提示词、外发、隐藏与编码藏指令等写法，判定（来源、规则、严重度）写入审计，不含请求原文。高严重度命中在机密以上默认拦截，仅记录模式永不拦截。关闭本层后网关行为与此前完全一致。</p>
       </div>
       <div class="card"><h3 data-i18n="semReviewSamples">风险样本库</h3>
         <div class="tableWrap"><table id="semSamples"><thead><tr><th data-i18n="semReviewCategory">类别</th><th data-i18n="semReviewSampleText">样本内容</th><th data-i18n="semReviewAction">处置</th><th></th></tr></thead><tbody></tbody></table></div>
@@ -929,7 +938,7 @@ const I18N = {
     pricing:"单价",pricingL:"单价（JSON，USD / 每百万 Token）",unpriced:"未定价",
     manageKeys:"管理渠道密钥",chVendor:"厂商预设",dlpwordsTitle:"DLP 词表",dlpwordsDesc:"违禁词与企业敏感词：改动即时生效、无需重启；变更记入审计（只记数量，不记词本身）。",dlpBanned:"违禁词",dlpBannedDesc:"命中即拦截调用。",dlpCustom:"企业敏感词",dlpCustomDesc:"命中即按机密级处理：自带级拦截、受管级脱敏后上云。",dlpAdd:"添加",dlpWordPh:"输入词…",dlpSrc_env:"环境变量",dlpSrc_template:"模板",dlpSrc_manual:"手动",dlpHint:"说明：环境变量仍是全新安装的默认值；一旦在本页改过某张表，该表即以本页为准、重启后不变。MCP 工具侧的检测器只在启动时建成，词表改动需重启才对 MCP 生效。",addKey:"添加密钥",keyDisabled:"已停用",enable:"启用",disable:"停用",
     keysHint:"同一渠道可配多把上游密钥，网关按轮询分摊调用；上游返回 401 的密钥会自动摘除并告警，管理员也可在此停用 / 恢复 / 删除。密钥只显示后四位，永不回显。",
-    semReviewTitle:"语义复核",semReviewDesc:"规则 DLP 之上的第二层语义研判：本地样本匹配识别越狱 / 诱导 / 伪装 / 拆分外发等风险意图；可选的深层调用自托管审核小模型（Qwen3Guard 式）。绝密内容永不送审，复核先脱敏再送审。",semReviewPolicy:"复核策略",semReviewEnabled:"启用语义复核",semReviewThreshold:"样本相似度阈值（0–1）",semReviewTimeout:"深层复核超时（毫秒）",semReviewControversial:"深层「有争议」处置",semReviewDeep:"深层复核（自托管审核小模型）",semReviewDeepChannel:"深层复核渠道",semReviewDeepModel:"审核模型",semReviewSamples:"风险样本库",semReviewCategory:"类别",semReviewSampleText:"样本内容",semReviewAction:"处置",semReviewHint:"样本匹配在本地完成，不调模型、不出站；判定（命中样本、相似度、判定来源）写入审计。深层复核走配置渠道的分级路由，绝密内容永不送审；超时与深层故障默认保守处置：机密以上拦截、低密级告警放行。关闭本层后网关行为与此前完全一致。",
+    semReviewTitle:"语义复核",semReviewDesc:"规则 DLP 之上的第二层语义研判：本地样本匹配识别越狱 / 诱导 / 伪装 / 拆分外发等风险意图；可选的深层调用自托管审核小模型（Qwen3Guard 式）。绝密内容永不送审，复核先脱敏再送审。",semReviewPolicy:"复核策略",semReviewEnabled:"启用语义复核",semReviewThreshold:"样本相似度阈值（0–1）",semReviewTimeout:"深层复核超时（毫秒）",semReviewControversial:"深层「有争议」处置",semReviewDeep:"深层复核（自托管审核小模型）",semReviewDeepChannel:"深层复核渠道",semReviewDeepModel:"审核模型",semReviewSamples:"风险样本库",semReviewCategory:"类别",semReviewSampleText:"样本内容",semReviewAction:"处置",semReviewHint:"样本匹配在本地完成，不调模型、不出站；判定（命中样本、相似度、判定来源）写入审计。深层复核走配置渠道的分级路由，绝密内容永不送审；超时与深层故障默认保守处置：机密以上拦截、低密级告警放行。关闭本层后网关行为与此前完全一致。",injPolicy:"注入防护策略",injEnabled:"启用注入防护",injMode:"命中处置",injObserve:"仅记录",injHint:"按消息来源打标（用户直输 / 工具返回 / 模型回显），非用户内容默认只作数据、不作指令；规则路识别改写指令、越狱、窃取系统提示词、外发、隐藏与编码藏指令等写法，判定（来源、规则、严重度）写入审计，不含请求原文。高严重度命中在机密以上默认拦截，仅记录模式永不拦截。关闭本层后网关行为与此前完全一致。",
     autoRouteTitle:"智能路由",autoRouteDesc:"客户端请求 model=auto 时，网关按请求复杂度在简单（便宜）与复杂（强）两个模型组之间选路；分级约束永远优先，复杂度只在合规渠道集合内做成本优化。",autoRoutePolicy:"路由策略",autoRouteEnabled:"启用智能路由",autoRouteThreshold:"样本相似度阈值（0–1）",autoRouteSimpleGroup:"简单模型组（便宜，逗号分隔）",autoRouteComplexGroup:"复杂模型组（强，逗号分隔）",autoRouteSamples:"复杂度样本库",autoRouteTier:"层级",autoRouteSampleText:"样本内容",autoRouteHint:"先按样本匹配判定复杂度（样本未命中时按长度 / 轮次 / 工具调用规则兜底）；每组按顺序选第一个有合规渠道的模型，某层无合规渠道时回落到另一层，判定（层级、来源、置信度、回落）写入审计。关闭后 model=auto 不再可用。",
     foldersTitle:"文件夹知识库",foldersDesc:"指定共享文件夹即自动索引，按文件夹映射密级；Agent 按「目录 → 章节树 → 原文」渐进式取用。",addFolder:"添加文件夹",folderList:"已索引文件夹",path:"路径",docs:"文档",lastScan:"最近扫描",
     foldersHint:"支持 .md / .txt / .docx / .pdf，增量更新只索引变化文件；引用精确到文件 + 章节 + 页码。摘要为抽取式（章节首句），不经过模型，不产生泄漏通道。",
@@ -984,7 +993,7 @@ const I18N = {
     pricing:"Pricing",pricingL:"Pricing (JSON, USD per million tokens)",unpriced:"unpriced",
     manageKeys:"Manage channel keys",chVendor:"Vendor preset",dlpwordsTitle:"DLP word lists",dlpwordsDesc:"Banned and enterprise-sensitive words: changes take effect immediately without a restart; changes are audited (counts only, never the word itself).",dlpBanned:"Banned words",dlpBannedDesc:"A hit blocks the call.",dlpCustom:"Enterprise-sensitive words",dlpCustomDesc:"A hit treats the text as confidential: blocked for BYOA, redacted before the cloud for managed.",dlpAdd:"Add",dlpWordPh:"Enter a word…",dlpSrc_env:"env var",dlpSrc_template:"template",dlpSrc_manual:"manual",dlpHint:"Note: env vars remain the fresh-install defaults; once a list is edited here, this page is its source of truth across restarts. The MCP-side detector is built once at startup, so word changes reach MCP tools only after a restart.",addKey:"Add key",keyDisabled:"disabled",enable:"Enable",disable:"Disable",
     keysHint:"A channel can hold several upstream keys; the gateway round-robins calls across them. A key the upstream rejects with 401 is auto-removed and alerted; admins can also disable, re-enable or delete keys here. Only the last 4 characters are ever shown.",
-    semReviewTitle:"Semantic review",semReviewDesc:"A second semantic layer above rule DLP: local sample matching catches jailbreak / inducement / disguise / split-exfiltration intent; an optional deep layer calls a self-hosted guard model (Qwen3Guard style). Top-secret content is never reviewed; review happens after desensitisation.",semReviewPolicy:"Review policy",semReviewEnabled:"Enable semantic review",semReviewThreshold:"Sample similarity threshold (0–1)",semReviewTimeout:"Deep review timeout (ms)",semReviewControversial:"Deep “Controversial” action",semReviewDeep:"Deep review (self-hosted guard model)",semReviewDeepChannel:"Deep review channel",semReviewDeepModel:"Guard model",semReviewSamples:"Risk sample library",semReviewCategory:"Category",semReviewSampleText:"Sample text",semReviewAction:"Action",semReviewHint:"Sample matching runs locally — no model call, nothing leaves the process; each decision (matched sample, similarity, source) is written to the audit log. Deep review follows the configured channel's tiered routing and never sees top-secret content; timeouts and deep failures fail closed for confidential and above, alert-and-allow below. Switching the layer off restores pre-F28 behaviour exactly.",
+    semReviewTitle:"Semantic review",semReviewDesc:"A second semantic layer above rule DLP: local sample matching catches jailbreak / inducement / disguise / split-exfiltration intent; an optional deep layer calls a self-hosted guard model (Qwen3Guard style). Top-secret content is never reviewed; review happens after desensitisation.",semReviewPolicy:"Review policy",semReviewEnabled:"Enable semantic review",semReviewThreshold:"Sample similarity threshold (0–1)",semReviewTimeout:"Deep review timeout (ms)",semReviewControversial:"Deep “Controversial” action",semReviewDeep:"Deep review (self-hosted guard model)",semReviewDeepChannel:"Deep review channel",semReviewDeepModel:"Guard model",semReviewSamples:"Risk sample library",semReviewCategory:"Category",semReviewSampleText:"Sample text",semReviewAction:"Action",semReviewHint:"Sample matching runs locally — no model call, nothing leaves the process; each decision (matched sample, similarity, source) is written to the audit log. Deep review follows the configured channel's tiered routing and never sees top-secret content; timeouts and deep failures fail closed for confidential and above, alert-and-allow below. Switching the layer off restores pre-F28 behaviour exactly.",injPolicy:"Injection protection policy",injEnabled:"Enable injection protection",injMode:"Action on match",injObserve:"Log only",injHint:"Messages are tagged by source (user input / tool result / model echo); non-user content is data, not instructions, by default. The rule layer catches instruction override, jailbreak, system-prompt theft, exfiltration, concealment and encoded instructions; each decision (source, rule, severity) is written to the audit log without request text. A high-severity match on confidential data and above blocks by default; log-only mode never blocks. Switching the layer off restores pre-F39 behaviour exactly.",
     autoRouteTitle:"Smart routing",autoRouteDesc:"When a client requests model=auto, the gateway routes by request complexity between a simple (cheap) and a complex (strong) model group; tiered constraints always win — complexity only optimises cost inside the compliant channel set.",autoRoutePolicy:"Routing policy",autoRouteEnabled:"Enable smart routing",autoRouteThreshold:"Sample similarity threshold (0–1)",autoRouteSimpleGroup:"Simple model group (cheap, comma-separated)",autoRouteComplexGroup:"Complex model group (strong, comma-separated)",autoRouteSamples:"Complexity sample library",autoRouteTier:"Tier",autoRouteSampleText:"Sample text",autoRouteHint:"Complexity is decided by sample matching first (length / rounds / tool-call rules decide when no sample matches); each group is tried in order and the first model with a compliant channel serves. When a tier has no compliant channel it falls back to the other tier; each decision (tier, source, confidence, fallback) is written to the audit log. When off, model=auto is unavailable.",
     foldersTitle:"Folder knowledge base",foldersDesc:"Register a shared folder and it is indexed automatically, at the folder's data level; agents drill down catalog → section tree → section text.",addFolder:"Add folder",folderList:"Indexed folders",path:"Path",docs:"Docs",lastScan:"Last scan",
     foldersHint:"Supports .md / .txt / .docx / .pdf; rescans only re-index changed files. Citations are precise to file + section + pages. Summaries are extractive (the section's opening sentence), never produced by a model, so they open no leak channel.",
@@ -1118,6 +1127,7 @@ const ERR_EXACT = {
   "cannot decrypt provider secret":"errDecryptSecret",
   "cannot persist semantic review policy":"errPersistConfig",
   "cannot persist semantic review sample":"errPersistConfig",
+  "cannot persist injection policy":"errPersistConfig",
   "cannot persist smart routing policy":"errPersistConfig",
   "cannot persist smart routing sample":"errPersistConfig",
   "failed to start oidc login":"errOidcStart",
@@ -1287,7 +1297,7 @@ function go(id){
 function showPage(id){
   document.querySelectorAll(".page").forEach(p=>p.classList.toggle("active", p.id==="page-"+id));
   document.querySelectorAll(".navItem").forEach(n=>n.classList.toggle("active", n.getAttribute("data-nav")===id));
-  const loaders = {wizard:loadWizard, dashboard:loadDashboard, stats:()=>{loadStats(); loadCache(); loadBudgets(); loadOtel();}, audit:loadAudit, device:loadSidecar, tokens:loadTokens, attest:loadAttest, terminals:loadTerminals, channels:loadChannels, dlpwords:loadDLPWords, semreview:loadSemReview, autoroute:loadAutoRoute,
+  const loaders = {wizard:loadWizard, dashboard:loadDashboard, stats:()=>{loadStats(); loadCache(); loadBudgets(); loadOtel();}, audit:loadAudit, device:loadSidecar, tokens:loadTokens, attest:loadAttest, terminals:loadTerminals, channels:loadChannels, dlpwords:loadDLPWords, semreview:()=>{loadSemReview(); loadInjection();}, autoroute:loadAutoRoute,
     kb:loadFolders, reports:loadReports, skills:loadSkills, prompts:loadPrompts, knowpack:loadKnowpacks, upstreams:loadUpstreams, resttools:loadRESTTools, alerts:loadAlerts, packages:loadPackages, orgsync:loadOrgProviders, exceptions:loadExceptions, users:loadUsers, pluginpol:loadPluginPolicies, pluginassets:loadPluginAssets};
   if(loaders[id]) loaders[id]();
 }
@@ -2055,6 +2065,24 @@ async function delSemSample(id){
   try{ await api("/api/semantic-review/samples/"+id,{method:"DELETE"});
     toast(T("saved")); loadSemReview();
   }catch(e){ toast(errText(e), false); }
+}
+
+/* ---------- prompt injection (F39) ---------- */
+async function loadInjection(){
+  try{ const d = await api("/api/injection");
+    injEnabled.value = String(!!d.enabled);
+    injMode.value = d.mode || "alert";
+    const st = d.stats || {};
+    document.getElementById("injStats").textContent =
+      `reviewed ${st.reviewed||0} · blocked ${st.blocked||0} · alerted ${st.alerted||0} · observed ${st.observed||0}` +
+      (d.configured ? "" : (lang==="zh" ? " · 未配置（显示内置默认值）" : " · unconfigured (built-in defaults)"));
+  }catch(e){ toast(errText(e), false); }
+}
+async function saveInjection(){
+  try{
+    await api("/api/injection",{method:"POST",body:JSON.stringify({enabled: injEnabled.value==="true", mode: injMode.value})});
+    setMsg("injMsg", T("saved")); loadInjection();
+  }catch(e){ setMsg("injMsg", errText(e), false); }
 }
 
 /* ---------- smart routing (F30) ---------- */

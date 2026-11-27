@@ -104,6 +104,9 @@ func FromEvent(ev audit.Event) (Alert, bool) {
 	case ev.Kind == "semantic_review" && ev.Action == "semantic_review_alert":
 		a.Severity = "warning"
 		a.Title = "语义复核告警：请求疑似风险意图，已放行并记录"
+	case ev.Kind == "prompt_injection" && ev.Action == "prompt_injection_alert":
+		a.Severity = "warning"
+		a.Title = "提示词注入告警：非用户内容含可疑指令，已放行并记录"
 	case ev.Kind == "auth" && ev.Action == "account_locked":
 		a.Severity = "critical"
 		a.Title = "账号因多次登录失败被锁定"

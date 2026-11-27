@@ -27,6 +27,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/billing"
 	"github.com/myjnathan/agentgate/internal/cache"
 	"github.com/myjnathan/agentgate/internal/guard"
+	"github.com/myjnathan/agentgate/internal/inject"
 	"github.com/myjnathan/agentgate/internal/onboard"
 	"github.com/myjnathan/agentgate/internal/otel"
 	"github.com/myjnathan/agentgate/internal/pluginpol"
@@ -106,6 +107,11 @@ type Gateway struct {
 	// review layer (F28), process-lifetime only, never persisted.
 	semMu    sync.Mutex
 	semStats semreview.Stats
+	// injMu guards injStats: the runtime counters for the
+	// prompt-injection rule layer (F39), process-lifetime only,
+	// never persisted.
+	injMu    sync.Mutex
+	injStats inject.Stats
 	// autoMu guards autoStats: the runtime counters for smart
 	// routing (F30), process-lifetime only, never persisted.
 	autoMu    sync.Mutex
@@ -1000,6 +1006,47 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if warnedTier {
 		decision = "warn"
 		detail["warn_reason"] = "byoa_tier_would_block"
+	}
+
+	// ---- Prompt-injection rule layer (F39) ----
+	// Deterministic rules over source-tagged messages, before the
+	// semantic review: the rule layer is cheaper and catches the
+	// explicit phrasings (override / jailbreak / exfiltration /
+	// concealment / encoded instruction / control-plane marker)
+	// that sample matching would also catch, so the semantic layer
+	// only spends its budget on what the rules miss. The check
+	// runs on the original per-message text — injection is about
+	// instructions, not PII — and it is purely local, so it also
+	// runs on top-secret content (unlike F28, which never reviews
+	// it). A grant never waives an injection block.
+	injDec := g.runInjectionCheck(req.Messages, level)
+	if injDec.Action == inject.DecisionBlock {
+		if g.dryRun() {
+			// Observe only: record the would-be block, do not block.
+			g.auditInjection(user, tok, req.Model, level,
+				inject.Decision{Action: "dry_run", Source: injDec.Source, RuleID: injDec.RuleID,
+					Category: injDec.Category, Severity: injDec.Severity, Reason: injDec.Reason})
+			detail["prompt_injection"] = "dry_run:would_block"
+		} else {
+			ts.decision, ts.level = "block", level.String()
+			vDetail := mergeDetail(detail, "reason", "prompt_injection_blocked")
+			vDetail["injection_rule"] = injDec.RuleID
+			vDetail["injection_source"] = injDec.Source
+			vDetail["injection_severity"] = injDec.Severity
+			g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
+				Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
+				Detail: vDetail})
+			writeErr(w, http.StatusForbidden, "prompt_injection_blocked", "request blocked by prompt-injection rule (suspicious instruction)")
+			return
+		}
+	} else if injDec.Action == inject.DecisionAlert {
+		g.auditInjection(user, tok, req.Model, level, injDec)
+		detail["prompt_injection"] = "rule:alert"
+	} else if injDec.Action == inject.DecisionObserve {
+		g.auditInjection(user, tok, req.Model, level, injDec)
+		detail["prompt_injection"] = "rule:observe"
+	} else if d := injectionDetail(injDec); d != "" {
+		detail["prompt_injection"] = d
 	}
 
 	// ---- Semantic review (F28) ----
