@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/myjnathan/agentgate/internal/attest"
+	"github.com/myjnathan/agentgate/internal/pluginpol"
 	"github.com/myjnathan/agentgate/internal/store"
 )
 
@@ -35,6 +37,15 @@ const (
 	// after its expiry; nothing is scheduled to flip it.
 	StatusExpired = "expired"
 	StatusRevoked = "revoked"
+)
+
+// Kinds of exception request: "call" is the F24 one-time grant for
+// a blocked high-data-level call; "plugin" is the F38 slice 3
+// time-limited waiver for one plugin triple. Records written before
+// kinds existed carry "" and are treated as "call".
+const (
+	KindCall   = "call"
+	KindPlugin = "plugin"
 )
 
 // MaxHours caps how long a grant may live: an exception is a
@@ -76,6 +87,107 @@ func ValidateRequest(level store.DataLevel, reason, scope string, hours int, all
 		return fmt.Errorf("hours must be between %d and %d", MinHours, MaxHours)
 	}
 	return nil
+}
+
+// ValidatePluginTriple checks the plugin identity of a plugin
+// exception application or a pre-install check (backlog F38 slice
+// 3): the ID is required, the version is an exact version when
+// given (not a constraint — an exception waives one installed
+// version, and a constraint would waive versions never reviewed),
+// the hash is a 64-hex SHA-256 when given, and the source is one
+// of the known install sources when given.
+func ValidatePluginTriple(id, version, hash, source string) error {
+	if len(strings.TrimSpace(id)) == 0 || len(id) > 128 {
+		return errors.New("plugin id must be 1-128 characters")
+	}
+	if version != "" && !attest.ValidVersion(version) {
+		return errors.New("plugin version is invalid")
+	}
+	if hash != "" {
+		if len(hash) != 64 {
+			return errors.New("plugin hash must be a 64-character SHA-256 hex digest")
+		}
+		for _, c := range hash {
+			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+				return errors.New("plugin hash must be hex")
+			}
+		}
+	}
+	switch source {
+	case "", pluginpol.SourcePlatform, pluginpol.SourceMarketplace, pluginpol.SourceLocal:
+	default:
+		return errors.New("plugin source must be platform, marketplace or local")
+	}
+	return nil
+}
+
+// ValidatePluginRequest checks a plugin exception application: the
+// triple plus the same reason/scope/validity shape as a call
+// exception (1–72 hours; a plugin waiver is a short-lived rule,
+// not a standing permission).
+func ValidatePluginRequest(id, version, hash, source, reason, scope string, hours int) error {
+	if err := ValidatePluginTriple(id, version, hash, source); err != nil {
+		return err
+	}
+	if strings.TrimSpace(reason) == "" {
+		return errors.New("reason required")
+	}
+	if len(reason) > 500 {
+		return errors.New("reason too long (max 500 characters)")
+	}
+	if strings.TrimSpace(scope) == "" {
+		return errors.New("scope required")
+	}
+	if len(scope) > 500 {
+		return errors.New("scope too long (max 500 characters)")
+	}
+	if hours < MinHours || hours > MaxHours {
+		return fmt.Errorf("hours must be between %d and %d", MinHours, MaxHours)
+	}
+	return nil
+}
+
+// derefTime unwraps an optional expiry for the ExceptedPlugin
+// value; a nil expiry reads as the zero time (unbounded).
+func derefTime(t *time.Time) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return *t
+}
+
+// ExceptedPluginsByUser groups every approved, unexpired plugin
+// exception by applicant, for views that judge many users at once
+// (the asset view, slice 3). The filtering rule lives here once:
+// any other listing must not re-implement it and drift.
+func ExceptedPluginsByUser(exceptions map[string]*store.Exception, now time.Time) map[string][]pluginpol.ExceptedPlugin {
+	out := map[string][]pluginpol.ExceptedPlugin{}
+	for _, e := range exceptions {
+		if e == nil || e.Kind != KindPlugin {
+			continue
+		}
+		if e.Status != StatusApproved {
+			continue
+		}
+		if e.ExpiresAt != nil && now.After(*e.ExpiresAt) {
+			continue
+		}
+		out[e.ApplicantID] = append(out[e.ApplicantID], pluginpol.ExceptedPlugin{
+			ID: e.PluginID, Version: e.PluginVersion,
+			Hash: e.PluginHash, Source: e.PluginSource,
+			ExpiresAt: derefTime(e.ExpiresAt),
+		})
+	}
+	return out
+}
+
+// ExceptedPlugins collects one applicant's approved, unexpired
+// plugin exceptions as pluginpol values, ready for evaluation.
+// Expired approvals are skipped here as well as flipped lazily by
+// RefreshStatus on read — an exception whose expiry passed never
+// waives anything, even before its status row is rewritten.
+func ExceptedPlugins(exceptions map[string]*store.Exception, applicantID string, now time.Time) []pluginpol.ExceptedPlugin {
+	return ExceptedPluginsByUser(exceptions, now)[applicantID]
 }
 
 // NewGrant mints a one-time grant token and its hash. The token is

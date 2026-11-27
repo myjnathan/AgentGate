@@ -1332,6 +1332,62 @@ def main():
     s, _ = call("/api/plugin/policies/" + ppid2, token=admin_tok, method="DELETE")
     check("plugin policy slice2 deleted", s == 200)
 
+    # F38 slice 3: plugin exceptions + pre-install check. The
+    # exception reuses the F24 approval flow: apply as the
+    # employee, approve as admin (no grant is minted), and the
+    # waiver clears the disposition on the next heartbeat even
+    # though the violating plugin is still installed.
+    s, pp3 = call("/api/plugin/policies",
+                 {"name": "smoke slice3", "mode": "allowlist",
+                  "scope": {"level": "global"}, "action": "downgrade", "enabled": True,
+                  "rules": [{"id": "good-plugin", "version_constraint": ">=1.2.0"}]}, token=admin_tok)
+    check("plugin policy slice3 created", s == 201 and pp3.get("policy", {}).get("id", "").startswith("plg_"))
+    ppid3 = pp3["policy"]["id"]
+    s, chk3 = call("/api/plugin/check", {"plugin_id": "bad-plugin", "plugin_version": "1.0.0"}, token=sess)
+    check("slice3 check denies unlisted plugin",
+          s == 200 and chk3.get("decision") == "deny" and chk3.get("reason") == "plugin_not_allowed")
+    s, chk3g = call("/api/plugin/check", {"plugin_id": "good-plugin", "plugin_version": "1.5.0"}, token=sess)
+    check("slice3 check allows listed plugin",
+          s == 200 and chk3g.get("decision") == "allow")
+    s, _ = call("/api/plugin/check", {"plugin_id": "bad-plugin", "plugin_version": "1.0.0"})
+    check("slice3 check needs auth", s == 401)
+    s, _ = call("/api/plugin/check", {"plugin_id": ""}, token=sess)
+    check("slice3 check rejects empty plugin id", s == 400)
+    s, exc3 = call("/api/exceptions",
+                   {"kind": "plugin", "plugin_id": "bad-plugin", "plugin_version": "1.0.0",
+                    "reason": "XH-200 调试需要该插件", "scope": "dsh 插件 bad-plugin 1.0.0", "hours": 4}, token=sess)
+    check("slice3 plugin exception applied",
+          s == 201 and exc3.get("kind") == "plugin" and exc3.get("status") == "pending"
+          and "grant" not in exc3)
+    exc3id = exc3.get("id", "")
+    s, appr3 = call("/api/exceptions/" + exc3id + "/approve", {}, token=admin_tok)
+    check("slice3 plugin exception approved without a grant",
+          s == 200 and appr3.get("exception", {}).get("status") == "approved"
+          and "grant" not in appr3)
+    s, chk3w = call("/api/plugin/check", {"plugin_id": "bad-plugin", "plugin_version": "1.0.0"}, token=sess)
+    check("slice3 check allows waived plugin",
+          s == 200 and chk3w.get("decision") == "allow" and chk3w.get("excepted") is True
+          and chk3w.get("expires_at"))
+    s, chk3v = call("/api/plugin/check", {"plugin_id": "bad-plugin", "plugin_version": "2.0.0"}, token=sess)
+    check("slice3 check still denies another version",
+          s == 200 and chk3v.get("decision") == "deny")
+    s, hb3 = call("/api/terminals/heartbeat",
+                  {"version": "0.1.0", "config_hash": "ab" * 32, "plugins": [],
+                   "plugin_details": [{"id": "good-plugin", "version": "1.5.0"},
+                                      {"id": "bad-plugin", "version": "1.0.0"}],
+                   "guard_applied": True, "os": "linux"}, token=tok6)
+    check("slice3 waived heartbeat clears disposition",
+          s == 200 and hb3.get("plugin_action") == "")
+    s, assets3 = call("/api/plugin/assets", token=admin_tok, method="GET")
+    rows3 = {r["id"]: r for r in assets3.get("plugins", [])}
+    check("slice3 asset view reads excepted",
+          s == 200 and rows3.get("bad-plugin", {}).get("status") == "excepted")
+    s, assets3f = call("/api/plugin/assets?status=excepted", token=admin_tok, method="GET")
+    check("slice3 asset excepted filter",
+          s == 200 and assets3f.get("total") == 1)
+    s, _ = call("/api/plugin/policies/" + ppid3, token=admin_tok, method="DELETE")
+    check("plugin policy slice3 deleted", s == 200)
+
     # F16: OpenTelemetry export. The collector above has been
     # receiving spans all run; one last marked call proves request
     # content never reaches it, then the status + test endpoints

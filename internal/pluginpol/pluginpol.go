@@ -511,13 +511,116 @@ func BlocksKnowledge(action string) bool {
 	return action == ActionBlockSensitive
 }
 
+// ExceptedPlugin is one approved plugin exception (backlog F38
+// slice 3): the plugin triple it waives, for one applicant, until
+// expiry. Empty Version/Hash/Source mean "any" — an exception that
+// pins only the ID waives every version of that plugin for the
+// applicant. The list is pre-filtered by the caller (approved,
+// unexpired, this applicant); this package only matches triples.
+// ExpiresAt is the waiver's expiry (zero when the caller did not
+// supply one); matching never consults it.
+type ExceptedPlugin struct {
+	ID        string
+	Version   string // "" = any version
+	Hash      string // "" = any hash
+	Source    string // "" = any source
+	ExpiresAt time.Time
+}
+
+// Covers reports whether the exception waives the reported plugin:
+// the ID must match (case-insensitive); a pinned version/hash/
+// source must match the report — and a report that carries no
+// evidence for a pinned field is NOT covered (fail-closed: a
+// name-only report cannot prove it is the excepted version).
+func (x ExceptedPlugin) Covers(ev attest.PluginEvidence) bool {
+	if !strings.EqualFold(strings.TrimSpace(x.ID), strings.TrimSpace(ev.ID)) {
+		return false
+	}
+	if x.Version != "" {
+		if ev.Version == "" || attest.CompareVersion(ev.Version, x.Version) != 0 {
+			return false
+		}
+	}
+	if x.Hash != "" {
+		if ev.Hash == "" || !strings.EqualFold(x.Hash, ev.Hash) {
+			return false
+		}
+	}
+	if x.Source != "" {
+		if ev.Source == "" || !strings.EqualFold(x.Source, ev.Source) {
+			return false
+		}
+	}
+	return true
+}
+
+// coversAny reports whether any exception in the list waives ev.
+func coversAny(excepted []ExceptedPlugin, ev attest.PluginEvidence) bool {
+	for _, x := range excepted {
+		if x.Covers(ev) {
+			return true
+		}
+	}
+	return false
+}
+
+// EvaluateWithExceptions appraises the report like Evaluate, but
+// plugins covered by an approved exception are skipped entirely —
+// no reasons, no unknown flag. The exception list is pre-filtered
+// by the caller (approved, unexpired, this applicant).
+func EvaluateWithExceptions(reported []attest.PluginEvidence, eff *Effective, excepted []ExceptedPlugin) (reasons []string, unknown []string) {
+	if len(excepted) == 0 {
+		return Evaluate(reported, eff)
+	}
+	kept := make([]attest.PluginEvidence, 0, len(reported))
+	for _, ev := range reported {
+		if coversAny(excepted, ev) {
+			continue
+		}
+		kept = append(kept, ev)
+	}
+	return Evaluate(kept, eff)
+}
+
+// EvaluateReportWithExceptions resolves the policies for one user
+// and evaluates the report with their plugin exceptions honoured —
+// the shared entry login attestation and heartbeat drift use, so a
+// waived plugin passes at login and stops drifting afterwards (or
+// vice versa, once the exception expires).
+func EvaluateReportWithExceptions(report *attest.Report, policies map[string]*PluginPolicy, excepted []ExceptedPlugin, department string, groups []string, now time.Time) (reasons []string, unknown []string, action string) {
+	if report == nil {
+		return nil, nil, ""
+	}
+	eff := Resolve(policies, department, groups, now)
+	if eff == nil {
+		return nil, nil, ""
+	}
+	var evidence []attest.PluginEvidence
+	if len(report.PluginDetails) > 0 {
+		evidence = report.PluginDetails
+	} else {
+		for _, name := range report.Plugins {
+			evidence = append(evidence, attest.PluginEvidence{ID: name})
+		}
+	}
+	reasons, unknown = EvaluateWithExceptions(evidence, eff, excepted)
+	return reasons, unknown, eff.Action
+}
+
 // Asset statuses, worst first (used both for sorting and for the
 // per-plugin worst-status rollup).
 const (
 	StatusViolating  = "violating"
 	StatusUnknown    = "unknown"
 	StatusUnverified = "unverified"
-	StatusCompliant  = "compliant"
+	// StatusExcepted is an install that would be violating or
+	// unknown but is waived by an approved, unexpired plugin
+	// exception for that terminal's user (slice 3). It is neither
+	// a violation nor plain compliant — the admin can still see
+	// that an exception is doing the work, and it flips back to
+	// violating/unknown the moment the exception expires.
+	StatusExcepted  = "excepted"
+	StatusCompliant = "compliant"
 )
 
 func statusRank(s string) int {
@@ -528,10 +631,12 @@ func statusRank(s string) int {
 		return 1
 	case StatusUnverified:
 		return 2
-	case StatusCompliant:
+	case StatusExcepted:
 		return 3
+	case StatusCompliant:
+		return 4
 	}
-	return 4
+	return 5
 }
 
 // Classify appraises one reported plugin against the resolved
@@ -605,11 +710,30 @@ func Classify(ev attest.PluginEvidence, eff *Effective) (status, reason string) 
 	return StatusCompliant, ""
 }
 
+// ClassifyWithExceptions classifies one reported plugin like
+// Classify, but an install that would be violating or unknown and
+// is waived by an approved exception reports "excepted" instead.
+// A compliant or unverified install is never re-labelled: the
+// exception is irrelevant to it, and the view should not suggest
+// an exception is doing work it is not.
+func ClassifyWithExceptions(ev attest.PluginEvidence, eff *Effective, excepted []ExceptedPlugin) (status, reason string) {
+	status, reason = Classify(ev, eff)
+	if status == StatusViolating || status == StatusUnknown {
+		if coversAny(excepted, ev) {
+			return StatusExcepted, ""
+		}
+	}
+	return status, reason
+}
+
 // AssetTerminal is one terminal's plugin evidence for aggregation:
 // the triple details when the sidecar reports them, the name-only
-// list otherwise.
+// list otherwise. UserID keys the terminal owner's approved plugin
+// exceptions (slice 3); without it every install is judged on
+// policy alone.
 type AssetTerminal struct {
 	ID         string
+	UserID     string
 	Username   string
 	Department string
 	AgentType  string
@@ -649,7 +773,19 @@ type AssetRow struct {
 // with no evidence of a version or hash is unverified, never failed.
 // Rows sort by worst status, then install count (descending), then
 // ID; installs within a row sort by username, then agent type.
+// No exception is honoured: use AggregateWithExceptions when the
+// caller's approved plugin exceptions are known.
 func Aggregate(terminals []AssetTerminal, policies map[string]*PluginPolicy, now time.Time) []AssetRow {
+	return AggregateWithExceptions(terminals, policies, nil, now)
+}
+
+// AggregateWithExceptions is Aggregate with one terminal owner's
+// approved, unexpired plugin exceptions honoured per install:
+// exceptedByUser maps a terminal's UserID to its waivers, and an
+// install waived for its owner reports "excepted" instead of
+// violating/unknown. An exception for another user never waives
+// this terminal's install.
+func AggregateWithExceptions(terminals []AssetTerminal, policies map[string]*PluginPolicy, exceptedByUser map[string][]ExceptedPlugin, now time.Time) []AssetRow {
 	byDept := map[string]*Effective{}
 	effFor := func(department string) *Effective {
 		if eff, ok := byDept[department]; ok {
@@ -678,7 +814,7 @@ func Aggregate(terminals []AssetTerminal, policies map[string]*PluginPolicy, now
 				continue
 			}
 			seenID[key] = true
-			status, reason := Classify(ev, eff)
+			status, reason := ClassifyWithExceptions(ev, eff, exceptedByUser[t.UserID])
 			row, ok := rows[key]
 			if !ok {
 				row = &AssetRow{ID: ev.ID}

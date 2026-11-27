@@ -114,3 +114,90 @@ func TestRefreshStatus(t *testing.T) {
 		t.Fatal("pending request must never flip to expired")
 	}
 }
+
+func TestValidatePluginRequest(t *testing.T) {
+	hash := strings.Repeat("a", 64)
+	valid := func() error {
+		return exception.ValidatePluginRequest("good", "1.2.3", hash, "platform", "need it", "dsh plugin", 4)
+	}
+	if err := valid(); err != nil {
+		t.Errorf("valid plugin request: %v", err)
+	}
+	// Triple-only variants are fine: ID-only, no hash/source.
+	if err := exception.ValidatePluginRequest("good", "", "", "", "need it", "dsh plugin", 4); err != nil {
+		t.Errorf("ID-only plugin request: %v", err)
+	}
+	if err := exception.ValidatePluginRequest("", "1.2.3", hash, "platform", "need it", "dsh plugin", 4); err == nil {
+		t.Error("empty plugin id must be rejected")
+	}
+	if err := exception.ValidatePluginRequest(strings.Repeat("x", 129), "", "", "", "need it", "dsh plugin", 4); err == nil {
+		t.Error("overlong plugin id must be rejected")
+	}
+	if err := exception.ValidatePluginRequest("good", "not-a-version", hash, "platform", "need it", "dsh plugin", 4); err == nil {
+		t.Error("invalid plugin version must be rejected")
+	}
+	if err := exception.ValidatePluginRequest("good", "1.2.3", "abc", "platform", "need it", "dsh plugin", 4); err == nil {
+		t.Error("short plugin hash must be rejected")
+	}
+	if err := exception.ValidatePluginRequest("good", "1.2.3", strings.Repeat("z", 64), "platform", "need it", "dsh plugin", 4); err == nil {
+		t.Error("non-hex plugin hash must be rejected")
+	}
+	if err := exception.ValidatePluginRequest("good", "1.2.3", hash, "side-load", "need it", "dsh plugin", 4); err == nil {
+		t.Error("unknown plugin source must be rejected")
+	}
+	if err := exception.ValidatePluginRequest("good", "1.2.3", hash, "platform", "", "dsh plugin", 4); err == nil {
+		t.Error("empty reason must be rejected")
+	}
+	if err := exception.ValidatePluginRequest("good", "1.2.3", hash, "platform", "need it", "", 4); err == nil {
+		t.Error("empty scope must be rejected")
+	}
+	if err := exception.ValidatePluginRequest("good", "1.2.3", hash, "platform", "need it", "dsh plugin", 0); err == nil {
+		t.Error("0 hours must be rejected")
+	}
+	if err := exception.ValidatePluginRequest("good", "1.2.3", hash, "platform", "need it", "dsh plugin", 73); err == nil {
+		t.Error("73 hours must be rejected")
+	}
+}
+
+func TestExceptedPlugins(t *testing.T) {
+	now := time.Now()
+	future := now.Add(time.Hour)
+	past := now.Add(-time.Hour)
+	mk := func(kind, status, applicant, id string, exp *time.Time) *store.Exception {
+		return &store.Exception{ID: "exc_" + applicant + "_" + id + "_" + status, Kind: kind,
+			Status: status, ApplicantID: applicant, PluginID: id, ExpiresAt: exp}
+	}
+	exceptions := map[string]*store.Exception{
+		"ok":       mk(exception.KindPlugin, exception.StatusApproved, "u-alice", "bad", &future),
+		"expired":  mk(exception.KindPlugin, exception.StatusApproved, "u-alice", "old", &past),
+		"pending":  mk(exception.KindPlugin, exception.StatusPending, "u-alice", "new", &future),
+		"revoked":  mk(exception.KindPlugin, exception.StatusRevoked, "u-alice", "gone", &future),
+		"call":     mk(exception.KindCall, exception.StatusApproved, "u-alice", "bad", &future),
+		"other":    mk(exception.KindPlugin, exception.StatusApproved, "u-bob", "bad", &future),
+		"noexpiry": {ID: "noexpiry", Kind: exception.KindPlugin, Status: exception.StatusApproved, ApplicantID: "u-alice", PluginID: "open"},
+	}
+	got := exception.ExceptedPlugins(exceptions, "u-alice", now)
+	if len(got) != 2 {
+		t.Fatalf("want 2 waivers (bad + open), got %+v", got)
+	}
+	ids := map[string]bool{}
+	for _, x := range got {
+		ids[x.ID] = true
+	}
+	if !ids["bad"] || !ids["open"] {
+		t.Errorf("waivers %+v, want bad and open", got)
+	}
+	// Grouped view: bob's waiver is separate, alice's is intact.
+	byUser := exception.ExceptedPluginsByUser(exceptions, now)
+	if len(byUser["u-bob"]) != 1 || byUser["u-bob"][0].ID != "bad" {
+		t.Errorf("bob waivers %+v, want [bad]", byUser["u-bob"])
+	}
+	if len(byUser["u-alice"]) != 2 {
+		t.Errorf("alice waivers %+v, want 2", byUser["u-alice"])
+	}
+	// Expiry is honoured even before the lazy status flip: an
+	// approved record past its expiry never waives anything.
+	if got := exception.ExceptedPlugins(exceptions, "u-alice", now.Add(2*time.Hour)); len(got) != 1 || got[0].ID != "open" {
+		t.Errorf("after expiry: %+v, want only the unexpiring waiver", got)
+	}
+}
