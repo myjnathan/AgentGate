@@ -22,6 +22,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/distrib"
 	"github.com/myjnathan/agentgate/internal/federation"
 	"github.com/myjnathan/agentgate/internal/folderkb"
+	"github.com/myjnathan/agentgate/internal/inject"
 	"github.com/myjnathan/agentgate/internal/oidc"
 	"github.com/myjnathan/agentgate/internal/orgsync"
 	"github.com/myjnathan/agentgate/internal/otel"
@@ -57,6 +58,10 @@ type API struct {
 	// counters (backlog F28); nil when the server was started
 	// without a gateway wired in.
 	semReviewStats func() semreview.Stats
+	// injectionStats returns the gateway's prompt-injection
+	// runtime counters (backlog F39); nil when the server was
+	// started without a gateway wired in.
+	injectionStats func() inject.Stats
 	// autoRouteStats returns the gateway's smart-routing runtime
 	// counters (backlog F30); nil when the server was started
 	// without a gateway wired in.
@@ -266,6 +271,10 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/semantic-review", a.requirePerm(roles.Policy, a.updateSemanticReview))
 	mux.HandleFunc("POST /api/semantic-review/samples", a.requirePerm(roles.Policy, a.addSemanticSample))
 	mux.HandleFunc("DELETE /api/semantic-review/samples/{id}", a.requirePerm(roles.Policy, a.deleteSemanticSample))
+	// Prompt injection (F39): policy is admin/security policy
+	// (roles.Policy), same as F28.
+	mux.HandleFunc("GET /api/injection", a.requirePerm(roles.Policy, a.getInjection))
+	mux.HandleFunc("POST /api/injection", a.requirePerm(roles.Policy, a.updateInjection))
 	// Smart routing (F30): policy and complexity-sample library are
 	// admin/security policy (roles.Policy), same as F28.
 	mux.HandleFunc("GET /api/auto-route", a.requirePerm(roles.Policy, a.getAutoRoute))
