@@ -112,6 +112,10 @@ type Gateway struct {
 	// never persisted.
 	injMu    sync.Mutex
 	injStats inject.Stats
+	// injSuspicion is the session-suspicion tracker (F39 slice
+	// 2): the gateway marks, the MCP gateway enforces. Shared
+	// with the MCP server through InjectionSuspicion().
+	injSuspicion *inject.Tracker
 	// autoMu guards autoStats: the runtime counters for smart
 	// routing (F30), process-lifetime only, never persisted.
 	autoMu    sync.Mutex
@@ -150,8 +154,9 @@ func New(st *store.Store, au *auth.Service, box *secretbox.Box, al *audit.Log, p
 		client: &http.Client{Timeout: 10 * time.Minute}, limiter: ratelimit.New(),
 		cache: cache.New(pol.CacheTTL, 0), keyNext: map[string]int{},
 		budgetAlerted: map[string]string{}, phase: phase,
-		bannedWords: append([]string(nil), pol.BannedWords...),
-		customWords: append([]string(nil), pol.CustomWords...)}
+		injSuspicion: inject.NewTracker(),
+		bannedWords:  append([]string(nil), pol.BannedWords...),
+		customWords:  append([]string(nil), pol.CustomWords...)}
 }
 
 // LaunchPhase returns the current rollout phase (F34): observe |
@@ -1036,12 +1041,14 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
 				Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
 				Detail: vDetail})
+			g.markInjectionSuspicion(tok, injDec.Source)
 			writeErr(w, http.StatusForbidden, "prompt_injection_blocked", "request blocked by prompt-injection rule (suspicious instruction)")
 			return
 		}
 	} else if injDec.Action == inject.DecisionAlert {
 		g.auditInjection(user, tok, req.Model, level, injDec)
 		detail["prompt_injection"] = "rule:alert"
+		g.markInjectionSuspicion(tok, injDec.Source)
 	} else if injDec.Action == inject.DecisionObserve {
 		g.auditInjection(user, tok, req.Model, level, injDec)
 		detail["prompt_injection"] = "rule:observe"
@@ -1049,24 +1056,71 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		detail["prompt_injection"] = d
 	}
 
+	// ---- Prompt-injection semantic route (F39 slice 2) ----
+	// Second route for what the rules miss: local sample matching
+	// over the injection library, then the F28 deep guard-model
+	// endpoint when the samples do not fire. It runs when the rule
+	// layer did not block, on the non-user content only. The
+	// review text for the deep layer is the desensitized copy
+	// (built below, shared with F28) so the guard model never
+	// sees raw PII. A hit marks the session suspect — the action
+	// fallback the MCP gateway enforces on high-risk tool calls.
+	reviewBody := body
+	if len(allFindings) > 0 {
+		reviewBody, _ = redactBody(body, det)
+	}
+	semInjDec := g.runInjectionSemanticCheck(r.Context(), req.Messages, reviewBody, level)
+	if semInjDec.Action == inject.DecisionBlock {
+		if g.dryRun() {
+			// Observe only: record the would-be block, do not block.
+			g.auditInjectionSemantic(user, tok, req.Model, level,
+				inject.SemanticDecision{Action: "dry_run", Source: semInjDec.Source, SampleID: semInjDec.SampleID,
+					Category: semInjDec.Category, Severity: semInjDec.Severity, Similarity: semInjDec.Similarity,
+					Reason: semInjDec.Reason})
+			if detail["prompt_injection"] != "dry_run:would_block" {
+				detail["prompt_injection"] = joinInjectionDetail(detail["prompt_injection"], "dry_run:would_block")
+			}
+		} else {
+			ts.decision, ts.level = "block", level.String()
+			vDetail := mergeDetail(detail, "reason", "prompt_injection_blocked")
+			vDetail["injection_source"] = semInjDec.Source
+			vDetail["injection_severity"] = semInjDec.Severity
+			if semInjDec.SampleID != "" {
+				vDetail["injection_sample"] = semInjDec.SampleID
+				vDetail["injection_similarity"] = fmt.Sprintf("%.2f", semInjDec.Similarity)
+			}
+			g.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
+				Kind: "violation", Action: "model_call_blocked", Model: req.Model, DataLevel: level.String(), Decision: "block",
+				Detail: vDetail})
+			g.markInjectionSemanticSuspicion(tok)
+			writeErr(w, http.StatusForbidden, "prompt_injection_blocked", "request blocked by prompt-injection semantic review (suspicious instruction)")
+			return
+		}
+	} else if semInjDec.Action == inject.DecisionAlert {
+		g.auditInjectionSemantic(user, tok, req.Model, level, semInjDec)
+		detail["prompt_injection"] = joinInjectionDetail(detail["prompt_injection"], injectionSemanticDetail(semInjDec))
+		g.markInjectionSemanticSuspicion(tok)
+	} else if semInjDec.Action == inject.DecisionObserve {
+		g.auditInjectionSemantic(user, tok, req.Model, level, semInjDec)
+		detail["prompt_injection"] = joinInjectionDetail(detail["prompt_injection"], injectionSemanticDetail(semInjDec))
+	} else if d := injectionSemanticDetail(semInjDec); d != "" {
+		detail["prompt_injection"] = joinInjectionDetail(detail["prompt_injection"], d)
+	}
+
 	// ---- Semantic review (F28) ----
 	// Second layer above the rule DLP: the local sample-matching
 	// layer catches paraphrased / split / injected requests the
 	// rules missed, and the optional deep layer asks a self-hosted
-	// guard model. The review runs on the desensitized text — when
-	// the request had findings, a redacted copy is built for the
-	// review, so the deep layer never sees raw PII even when the
-	// forwarded body is not redacted (or in DryRun, where the
-	// pipeline observes without redacting). It runs before the
+	// guard model. The review runs on the desensitized text — the
+	// redacted copy built above for the injection semantic route
+	// is reused here, so the deep layer never sees raw PII even
+	// when the forwarded body is not redacted (or in DryRun, where
+	// the pipeline observes without redacting). It runs before the
 	// cache, so a blocked request is never served from cache, and
 	// before the grant is spent, so a grant is never consumed by a
 	// call the review blocks. A grant never waives a review block:
 	// like a banned word, this is a safety layer, not a
 	// classification waiver.
-	reviewBody := body
-	if len(allFindings) > 0 {
-		reviewBody, _ = redactBody(body, det)
-	}
 	semDec := g.runSemanticReview(r.Context(), reviewText(reviewBody, fullText.String()), level)
 	if semDec.Action == semreview.DecisionBlock {
 		if g.dryRun() {

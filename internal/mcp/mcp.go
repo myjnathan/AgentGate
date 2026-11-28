@@ -22,6 +22,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/federation"
 	"github.com/myjnathan/agentgate/internal/folderkb"
 	"github.com/myjnathan/agentgate/internal/guard"
+	"github.com/myjnathan/agentgate/internal/inject"
 	"github.com/myjnathan/agentgate/internal/kb"
 	"github.com/myjnathan/agentgate/internal/knowpack"
 	"github.com/myjnathan/agentgate/internal/otel"
@@ -44,6 +45,10 @@ type Server struct {
 	// means no tracing. Spans carry metadata only — never tool
 	// arguments or results (see docs/opentelemetry.md).
 	tracer *otel.Tracer
+	// injSuspicion is the session-suspicion tracker (F39 slice 2)
+	// shared with the model gateway; nil means the action
+	// fallback is off.
+	injSuspicion *inject.Tracker
 	// ToolMinTier: minimum tier required per tool (default BYOA).
 	ToolMinTier map[string]store.Tier
 }
@@ -64,6 +69,13 @@ func (s *Server) SetFolderKB(fk *folderkb.Registry) {
 // the kb_entries tool.
 func (s *Server) SetSemanticIndex(ix *semidx.Index) {
 	s.semix = ix
+}
+
+// SetInjectionSuspicion wires the session-suspicion tracker
+// (backlog F39, slice 2) shared with the model gateway. Nil
+// means the action fallback is off.
+func (s *Server) SetInjectionSuspicion(tr *inject.Tracker) {
+	s.injSuspicion = tr
 }
 
 func New(st *store.Store, au *auth.Service, al *audit.Log, det *guard.Detector, fed *federation.Registry, rest *restadapter.Adapter) *Server {
@@ -393,6 +405,43 @@ func restToolVisible(rt *store.RESTTool, tok *store.APIToken) bool {
 	return rt.Enabled && tierRank(tok.Tier) >= tierRank(rt.MinTier)
 }
 
+// toolMaxLevel resolves the highest data level a tool may return,
+// the F41 stand-in for tool risk (backlog F39 slice 2): a tool
+// whose declared max level is confidential or above counts as
+// high-risk while its caller's session is injection-suspect.
+// Built-in knowledge tools read up to the caller's tier cap;
+// federated and REST tools carry their own MaxDataLevel. Anything
+// else (whoami, unknown names) is not high-risk — unknown tools
+// keep their "unknown tool" answer from the normal path, so the
+// fallback never changes what an unknown tool looks like.
+func (s *Server) toolMaxLevel(name string, tok *store.APIToken) (store.DataLevel, bool) {
+	if strings.HasPrefix(name, "rest.") {
+		if s.rest == nil {
+			return store.LevelPublic, false
+		}
+		rt, ok := s.rest.Tool(name[len("rest."):])
+		if !ok {
+			return store.LevelPublic, false
+		}
+		return rt.MaxDataLevel, true
+	}
+	if i := strings.Index(name, "."); i > 0 {
+		if s.fed == nil {
+			return store.LevelPublic, false
+		}
+		up, ok := s.fed.Upstream(name[:i])
+		if !ok {
+			return store.LevelPublic, false
+		}
+		return up.MaxDataLevel, true
+	}
+	switch name {
+	case "kb_search", "kb_get", "kb_catalog", "kb_entries", "kb_structure", "kb_section", "kb_pack_list", "kb_pack_get":
+		return kb.MaxLevelForTier(tok.Tier), true
+	}
+	return store.LevelPublic, false
+}
+
 // callFederatedTool forwards a "<namespace>.<tool>" call to its
 // upstream after the platform gates: tier authorization, then a DLP
 // scan of the arguments — banned content is blocked outright, and
@@ -544,6 +593,26 @@ func (s *Server) callTool(w http.ResponseWriter, ctx context.Context, req rpcReq
 		Arguments map[string]any `json:"arguments"`
 	}
 	_ = json.Unmarshal(req.Params, &params)
+
+	// F39 slice 2: the action fallback — a session the injection
+	// layers flagged suspect (an alert or block on non-user
+	// content within SuspicionTTL) may not call a high-risk tool:
+	// one whose declared max data level is confidential or above.
+	// Until F41 lands with real risk grades, the tool's data
+	// level stands in for "high-risk" (see toolMaxLevel). The
+	// denial is the same data-policy refusal (-32004) the other
+	// gates use, and it is audited as a violation. tools/list is
+	// not filtered: suspicion is transient, and the list must not
+	// leak it to the agent (the same reason argument-dependent
+	// gates stay call-side only, backlog F31).
+	if lvl, ok := s.toolMaxLevel(params.Name, tok); ok && lvl >= store.LevelConfidential &&
+		s.injSuspicion != nil && s.injSuspicion.IsSuspect(tok.ID) {
+		s.audit.Append(audit.Event{Actor: user.Username, ActorID: user.ID, AgentType: tok.AgentType, Tier: string(tok.Tier),
+			Kind: "violation", Action: "tool_call_denied", Decision: "block",
+			Detail: map[string]string{"tool": params.Name, "reason": "injection_suspect_session"}})
+		writeRPCError(w, req.ID, -32004, "request blocked by data policy")
+		return
+	}
 
 	// REST-adapted tools ("rest.<name>", F7) take precedence over the
 	// federated namespace dispatch below.

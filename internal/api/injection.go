@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/myjnathan/agentgate/internal/audit"
@@ -43,17 +44,21 @@ func (a *API) getInjection(w http.ResponseWriter, r *http.Request, u *store.User
 		stats = a.injectionStats()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"configured": configured,
-		"enabled":    cfg.Enabled,
-		"mode":       cfg.Mode,
-		"stats":      stats,
+		"configured":         configured,
+		"enabled":            cfg.Enabled,
+		"mode":               cfg.Mode,
+		"semantic_enabled":   inject.SemanticEnabled(cfg),
+		"semantic_threshold": inject.SemanticThreshold(cfg),
+		"stats":              stats,
 	})
 }
 
 func (a *API) updateInjection(w http.ResponseWriter, r *http.Request, u *store.User) {
 	var in struct {
-		Enabled *bool   `json:"enabled"`
-		Mode    *string `json:"mode"`
+		Enabled           *bool    `json:"enabled"`
+		Mode              *string  `json:"mode"`
+		SemanticEnabled   *bool    `json:"semantic_enabled"`
+		SemanticThreshold *float64 `json:"semantic_threshold"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request")
@@ -65,6 +70,12 @@ func (a *API) updateInjection(w http.ResponseWriter, r *http.Request, u *store.U
 	}
 	if in.Mode != nil {
 		cfg.Mode = *in.Mode
+	}
+	if in.SemanticEnabled != nil {
+		cfg.SemanticEnabled = in.SemanticEnabled
+	}
+	if in.SemanticThreshold != nil {
+		cfg.SemanticThreshold = *in.SemanticThreshold
 	}
 	if cfg.Mode == "" {
 		cfg.Mode = inject.DefaultMode
@@ -79,6 +90,9 @@ func (a *API) updateInjection(w http.ResponseWriter, r *http.Request, u *store.U
 		return
 	}
 	a.audit.Append(audit.Event{Actor: u.Username, ActorID: u.ID, Kind: "admin", Action: "injection_policy_updated",
-		Detail: map[string]string{"enabled": boolStr(cfg.Enabled), "mode": cfg.Mode}})
-	writeJSON(w, http.StatusOK, map[string]any{"enabled": cfg.Enabled, "mode": cfg.Mode})
+		Detail: map[string]string{"enabled": boolStr(cfg.Enabled), "mode": cfg.Mode,
+			"semantic_enabled":   boolStr(inject.SemanticEnabled(cfg)),
+			"semantic_threshold": fmt.Sprintf("%.2f", inject.SemanticThreshold(cfg))}})
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": cfg.Enabled, "mode": cfg.Mode,
+		"semantic_enabled": inject.SemanticEnabled(cfg), "semantic_threshold": inject.SemanticThreshold(cfg)})
 }

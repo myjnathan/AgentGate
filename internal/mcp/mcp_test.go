@@ -16,6 +16,7 @@ import (
 	"github.com/myjnathan/agentgate/internal/federation"
 	"github.com/myjnathan/agentgate/internal/folderkb"
 	"github.com/myjnathan/agentgate/internal/guard"
+	"github.com/myjnathan/agentgate/internal/inject"
 	"github.com/myjnathan/agentgate/internal/mcp"
 	"github.com/myjnathan/agentgate/internal/restadapter"
 	"github.com/myjnathan/agentgate/internal/secretbox"
@@ -29,6 +30,7 @@ type testEnv struct {
 	srv     *httptest.Server
 	msrv    *mcp.Server
 	st      *store.Store
+	al      *audit.Log
 	byoaTok string
 	mgdTok  string
 }
@@ -211,7 +213,7 @@ func setup(t *testing.T) *testEnv {
 		}
 		return plain
 	}
-	return &testEnv{srv: srv, msrv: msrv, st: st,
+	return &testEnv{srv: srv, msrv: msrv, st: st, al: al,
 		byoaTok: mkToken("lixiaofeng", store.TierBYOA),
 		mgdTok:  mkToken("chenjing", store.TierManaged)}
 }
@@ -1110,5 +1112,113 @@ func TestPluginBlockSensitiveKnowledgeCut(t *testing.T) {
 	text = resultText(t, e.callTool(t, e.mgdTok, "kb_search", map[string]any{"query": "机密资料"}))
 	if !strings.Contains(text, "机密资料") {
 		t.Fatalf("remediated kb_search: %s, want confidential folder doc", text)
+	}
+}
+
+// F39 slice 2: the action fallback — a session the injection
+// layers flagged suspect may not call a high-risk tool (declared
+// max data level confidential or above). Until F41 lands with
+// real risk grades, the tool's data level stands in for
+// "high-risk". Low-risk tools keep working, and an unknown tool
+// keeps its "unknown tool" answer.
+func TestInjectionSuspectSessionToolFallback(t *testing.T) {
+	e := setup(t)
+	tr := inject.NewTracker()
+	e.msrv.SetInjectionSuspicion(tr)
+	au := auth.New(e.st)
+	mgd, _, ok := au.ResolveToken(e.mgdTok)
+	if !ok {
+		t.Fatal("cannot resolve managed token")
+	}
+	byoa, _, ok := au.ResolveToken(e.byoaTok)
+	if !ok {
+		t.Fatal("cannot resolve byoa token")
+	}
+	// A confidential REST tool (never contacted — the fallback
+	// refuses before the adapter runs, so the URL is unreachable
+	// on purpose).
+	e.st.WithLock(func(s *store.State) {
+		s.RESTTools["rt_conf"] = &store.RESTTool{ID: "rt_conf", Name: "conf_balance",
+			Description: "confidential balance", BaseURL: "http://127.0.0.1:1", Method: "GET", Path: "/hr/leave-balance",
+			InputSchema:  json.RawMessage(`{"type":"object","properties":{"employee_id":{"type":"string"}},"required":["employee_id"]}`),
+			MaxDataLevel: store.LevelConfidential, MinTier: store.TierManaged, Enabled: true}
+	})
+
+	// Unmarked: everything the tier allows works.
+	if text := resultText(t, e.callTool(t, e.mgdTok, "ops.project_status", map[string]any{})); !strings.Contains(text, "XH-200") {
+		t.Fatalf("unmarked managed ops call: %s, want raw result", text)
+	}
+	if text := resultText(t, e.callTool(t, e.mgdTok, "kb_get", map[string]any{"doc_id": "kb_register"})); !strings.Contains(text, "XH-200") {
+		t.Fatalf("unmarked managed kb_get: %s, want full text", text)
+	}
+
+	// Mark the managed session suspect.
+	tr.Mark(mgd.ID)
+	blocked := []struct {
+		tool string
+		args map[string]any
+	}{
+		{"ops.project_status", map[string]any{}},
+		{"ops.leave_balance", map[string]any{}},
+		{"kb_get", map[string]any{"doc_id": "kb_register"}},
+		{"kb_search", map[string]any{"query": "机密资料"}},
+		{"rest.conf_balance", map[string]any{"employee_id": "lixiaofeng"}},
+	}
+	for _, tc := range blocked {
+		r := e.callTool(t, e.mgdTok, tc.tool, tc.args)
+		if r.Error == nil || r.Error.Code != -32004 {
+			t.Errorf("suspect session calling %s: got %+v, want RPC error -32004", tc.tool, r.Error)
+		}
+	}
+	// The denial is audited as a violation, without arguments.
+	found := false
+	for _, ev := range e.al.All() {
+		if ev.Kind == "violation" && ev.Action == "tool_call_denied" &&
+			ev.Detail["tool"] == "ops.project_status" && ev.Detail["reason"] == "injection_suspect_session" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no tool_call_denied violation with reason injection_suspect_session in the audit log")
+	}
+	// Low-risk calls from the same suspect session keep working:
+	// an internal upstream tool, an internal REST tool, and
+	// whoami (identity only, no data).
+	if text := resultText(t, e.callTool(t, e.mgdTok, "hr.leave_balance", map[string]any{})); !strings.Contains(text, "balance") {
+		t.Fatalf("suspect session hr call: %s, want it to proceed", text)
+	}
+	if text := resultText(t, e.callTool(t, e.mgdTok, "rest.fake_balance", map[string]any{"employee_id": "lixiaofeng"})); !strings.Contains(text, "balance_days") {
+		t.Fatalf("suspect session rest call: %s, want it to proceed", text)
+	}
+	if text := resultText(t, e.callTool(t, e.mgdTok, "whoami", map[string]any{})); !strings.Contains(text, "chenjing") {
+		t.Fatalf("suspect session whoami: %s, want it to proceed", text)
+	}
+	// An unknown tool keeps its "unknown tool" answer even for a
+	// suspect session — the fallback never changes what an
+	// unknown tool looks like.
+	r := e.callTool(t, e.mgdTok, "nosuch.tool", map[string]any{})
+	if r.Error == nil || r.Error.Code != -32602 {
+		t.Errorf("suspect session unknown tool: got %+v, want RPC error -32602", r.Error)
+	}
+	// A different (unmarked) token is unaffected, and marking the
+	// BYOA session does not block its internal-level tools.
+	if text := resultText(t, e.callTool(t, e.byoaTok, "hr.leave_balance", map[string]any{})); !strings.Contains(text, "balance") {
+		t.Fatalf("unmarked byoa hr call: %s, want it to proceed", text)
+	}
+	tr.Mark(byoa.ID)
+	if text := resultText(t, e.callTool(t, e.byoaTok, "hr.leave_balance", map[string]any{})); !strings.Contains(text, "balance") {
+		t.Fatalf("suspect byoa hr call: %s, want it to proceed (internal tool)", text)
+	}
+	if text := resultText(t, e.callTool(t, e.byoaTok, "kb_search", map[string]any{"query": "考勤"})); !strings.Contains(text, "考勤") {
+		t.Fatalf("suspect byoa kb_search: %s, want it to proceed (internal cap)", text)
+	}
+}
+
+// F39 slice 2: with no tracker wired (nil), the fallback is off
+// and tool calls behave exactly as before.
+func TestInjectionSuspectSessionNoTracker(t *testing.T) {
+	e := setup(t)
+	if text := resultText(t, e.callTool(t, e.mgdTok, "ops.project_status", map[string]any{})); !strings.Contains(text, "XH-200") {
+		t.Fatalf("no-tracker ops call: %s, want raw result", text)
 	}
 }

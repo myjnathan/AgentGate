@@ -126,12 +126,21 @@ type Decision struct {
 }
 
 // Stats are the runtime counters for the layer (like the F28
-// counters): process-lifetime only, never persisted.
+// counters): process-lifetime only, never persisted. Reviewed /
+// Blocked / Alerted / Observed count rule-layer checks;
+// Semantic* count semantic-route checks (slice 2);
+// SuspectSessions is the number of sessions currently suspect
+// (see Tracker).
 type Stats struct {
-	Reviewed int64 `json:"reviewed"`
-	Blocked  int64 `json:"blocked"`
-	Alerted  int64 `json:"alerted"`
-	Observed int64 `json:"observed"`
+	Reviewed          int64 `json:"reviewed"`
+	Blocked           int64 `json:"blocked"`
+	Alerted           int64 `json:"alerted"`
+	Observed          int64 `json:"observed"`
+	SemanticReviewed  int64 `json:"semantic_reviewed"`
+	SemanticBlocked   int64 `json:"semantic_blocked"`
+	SemanticAlerted   int64 `json:"semantic_alerted"`
+	SemanticDeepCalls int64 `json:"semantic_deep_calls"`
+	SuspectSessions   int64 `json:"suspect_sessions"`
 }
 
 // Message is one tagged input to the detector: Role is the chat
@@ -266,15 +275,19 @@ func ValidateConfig(cfg *store.InjectionConfig) error {
 	if cfg.Mode != "" && !ValidMode(cfg.Mode) {
 		return errInvalidMode(cfg.Mode)
 	}
+	if cfg.SemanticThreshold < 0 || cfg.SemanticThreshold > 1 {
+		return errInvalidThreshold(cfg.SemanticThreshold)
+	}
 	return nil
 }
 
 // DefaultConfig returns the built-in policy used when the store has
 // never been configured: enabled, alert mode — a match is recorded
 // and surfaced, and only a high-severity match on confidential+
-// data blocks on its own.
+// data blocks on its own. The semantic route is on by default.
 func DefaultConfig() *store.InjectionConfig {
-	return &store.InjectionConfig{Enabled: true, Mode: ModeAlert}
+	enabled := true
+	return &store.InjectionConfig{Enabled: true, Mode: ModeAlert, SemanticEnabled: &enabled}
 }
 
 // DefaultMode is the mode used when a stored config leaves it blank.
@@ -586,3 +599,13 @@ type errMode string
 func (e errMode) Error() string { return "unknown injection mode " + string(e) }
 
 func errInvalidMode(m string) error { return errMode(m) }
+
+// errInvalidThreshold is the same stable-error convention for the
+// semantic-route similarity threshold.
+type errThreshold float64
+
+func (e errThreshold) Error() string {
+	return "injection semantic threshold out of range [0, 1]"
+}
+
+func errInvalidThreshold(v float64) error { return errThreshold(v) }
