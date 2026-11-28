@@ -415,6 +415,10 @@ func main() {
 	mcpSrv.SetFolderKB(fk)
 	mcpSrv.SetSemanticIndex(semix)
 	mcpSrv.SetTracer(otelTracer)
+	// F39 slice 2: the session-suspicion tracker is shared by the
+	// model gateway (which marks) and the MCP gateway (which
+	// enforces the action fallback on high-risk tool calls).
+	mcpSrv.SetInjectionSuspicion(gw.InjectionSuspicion())
 	rest := api.New(st, au, box, al)
 	rest.SetTracer(otelTracer)
 	// First-run onboarding (backlog F34): the gateway's runtime

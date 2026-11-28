@@ -207,13 +207,15 @@ func TestInjectionCleanCallAudited(t *testing.T) {
 	found := false
 	for _, ev := range e.al.All() {
 		if ev.Kind == "model_call" && ev.Decision == "allow" {
-			if ev.Detail["prompt_injection"] == "rule:allow" {
+			// Slice 2: both routes reviewed and allowed, so the
+			// detail carries both outcomes joined with "+".
+			if ev.Detail["prompt_injection"] == "rule:allow+sample:allow" {
 				found = true
 			}
 		}
 	}
 	if !found {
-		t.Fatal("no model_call event with prompt_injection=rule:allow")
+		t.Fatal("no model_call event with prompt_injection=rule:allow+sample:allow")
 	}
 }
 

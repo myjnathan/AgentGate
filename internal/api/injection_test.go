@@ -86,13 +86,18 @@ func TestInjectionEndpoints(t *testing.T) {
 		return resp.StatusCode, out
 	}
 
-	// Defaults: enabled, alert mode, never configured.
+	// Defaults: enabled, alert mode, semantic route on at the
+	// built-in threshold, never configured.
 	code, d := call("GET", "/api/injection", adminSess, nil)
 	if code != 200 {
 		t.Fatalf("GET injection: got %d", code)
 	}
 	if d["enabled"] != true || d["mode"] != "alert" || d["configured"] != false {
 		t.Errorf("defaults: %v, want enabled=true mode=alert configured=false", d)
+	}
+	if d["semantic_enabled"] != true || d["semantic_threshold"] != 0.35 {
+		t.Errorf("defaults: semantic_enabled=%v semantic_threshold=%v, want true/0.35",
+			d["semantic_enabled"], d["semantic_threshold"])
 	}
 	if _, ok := d["stats"]; !ok {
 		t.Error("defaults: stats missing")
@@ -110,6 +115,20 @@ func TestInjectionEndpoints(t *testing.T) {
 	if code, _ := call("POST", "/api/injection", adminSess, map[string]any{"mode": "panic"}); code != 400 {
 		t.Errorf("POST injection with bad mode: got %d, want 400", code)
 	}
+	// A bad semantic threshold is rejected; a valid semantic
+	// update persists (the route switch is independent of the
+	// rule layer's mode).
+	if code, _ := call("POST", "/api/injection", adminSess, map[string]any{"semantic_threshold": 1.5}); code != 400 {
+		t.Errorf("POST injection with bad threshold: got %d, want 400", code)
+	}
+	code, d = call("POST", "/api/injection", adminSess, map[string]any{"semantic_enabled": false, "semantic_threshold": 0.5})
+	if code != 200 || d["semantic_enabled"] != false || d["semantic_threshold"] != 0.5 {
+		t.Fatalf("POST injection semantic update: got %d %v", code, d)
+	}
+	code, d = call("GET", "/api/injection", adminSess, nil)
+	if code != 200 || d["semantic_enabled"] != false || d["semantic_threshold"] != 0.5 {
+		t.Errorf("GET after semantic update: got %d %v, want semantic_enabled=false threshold=0.5", code, d)
+	}
 	code, d = call("POST", "/api/injection", adminSess, map[string]any{"mode": "block"})
 	if code != 200 || d["mode"] != "block" {
 		t.Fatalf("POST injection block mode: got %d %v", code, d)
@@ -119,17 +138,15 @@ func TestInjectionEndpoints(t *testing.T) {
 		t.Errorf("GET after update: got %d %v, want mode=block configured=true", code, d)
 	}
 
-	// The update is audited (policy only, no request text).
+	// The updates are audited (policy only, no request text);
+	// the block-mode update is among them.
 	found := false
 	for _, ev := range al.All() {
-		if ev.Kind == "admin" && ev.Action == "injection_policy_updated" {
+		if ev.Kind == "admin" && ev.Action == "injection_policy_updated" && ev.Detail["mode"] == "block" {
 			found = true
-			if ev.Detail["mode"] != "block" {
-				t.Errorf("audit mode = %q, want block", ev.Detail["mode"])
-			}
 		}
 	}
 	if !found {
-		t.Error("no injection_policy_updated audit event")
+		t.Error("no injection_policy_updated audit event with mode=block")
 	}
 }
